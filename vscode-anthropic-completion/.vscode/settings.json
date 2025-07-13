@@ -1,0 +1,8 @@
+{
+    "xai-grok.apiKey": "xai-aJukzQNkZuhRZ7IJSjk9p3BrNs2ObLPK2fLV3iAskcKD1arfelnc9IfDavtOdKtNbo0748BV9VlJ33bC",
+    "xai-grok.model": "grok-4",
+    "xai-grok.sdkType": "openai",
+    "xai-grok.temperature": 0.1,
+    "xai-grok.maxTokens": 150,
+    "xai-grok.apiEndpoint": "https://api.x.ai/v1"
+}

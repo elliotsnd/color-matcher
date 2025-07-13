@@ -1,0 +1,6 @@
+{
+  "name": "Color Matcher proper calibration",
+  "description": "A web interface for a hardware color scanner. Scan, name, and save colors.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

@@ -1,0 +1,102 @@
+{
+  "name": "xai-grok-completion",
+  "displayName": "xAI Grok Completion",
+  "description": "VS Code extension for xAI Grok API with OpenAI/Anthropic SDK compatibility",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "xai-grok.complete",
+        "title": "Complete Text with Grok",
+        "category": "xAI Grok"
+      },
+      {
+        "command": "xai-grok.completeSelection",
+        "title": "Complete Selected Text with Grok",
+        "category": "xAI Grok"
+      },
+      {
+        "command": "xai-grok.configure",
+        "title": "Configure xAI API Settings",
+        "category": "xAI Grok"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "xai-grok.complete",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "xai-grok.completeSelection",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s",
+        "when": "editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "title": "xAI Grok Completion",
+      "properties": {
+        "xai-grok.apiEndpoint": {
+          "type": "string",
+          "default": "https://api.x.ai/v1",
+          "description": "xAI API endpoint (default: https://api.x.ai/v1)"
+        },
+        "xai-grok.model": {
+          "type": "string",
+          "default": "grok-4",
+          "enum": ["grok-4", "grok-3", "grok-2"],
+          "description": "Grok model to use for completions"
+        },
+        "xai-grok.maxTokens": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum tokens to generate"
+        },
+        "xai-grok.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Temperature for text generation"
+        },
+        "xai-grok.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "xAI API key (get from xAI Console)"
+        },
+        "xai-grok.sdkType": {
+          "type": "string",
+          "default": "openai",
+          "enum": ["openai", "anthropic"],
+          "description": "SDK compatibility mode (OpenAI or Anthropic)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "openai": "^4.20.0",
+    "@anthropic-ai/sdk": "^0.24.0",
+    "axios": "^1.6.0"
+  }
+}
