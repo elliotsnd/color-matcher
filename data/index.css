@@ -1,0 +1,308 @@
+/* CSS Variables */
+:root {
+    --primary-color: #3b82f6;
+    --secondary-color: #03dac6;
+    --bg-color: #1a1a1a;
+    --surface-color: #2d2d2d;
+    --text-color: #ffffff;
+    --text-color-secondary: #a0a0a0;
+    --border-radius: 12px;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* Reset and Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 1rem;
+}
+
+main {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+/* Header */
+h1 {
+    text-align: center;
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+h1 i {
+    margin-right: 0.5rem;
+    color: var(--secondary-color);
+    -webkit-text-fill-color: var(--secondary-color);
+}
+
+/* Cards */
+.card {
+    background: var(--surface-color);
+    border-radius: var(--border-radius);
+    padding: 2rem;
+    box-shadow: var(--shadow);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card h2 {
+    font-size: 1.5rem;
+    margin-bottom: 1.5rem;
+    color: var(--text-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.card h2 i {
+    color: var(--secondary-color);
+}
+
+/* Scanner Control */
+.scanner-control {
+    text-align: center;
+}
+
+.scan-button {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    border-radius: var(--border-radius);
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow);
+}
+
+.scan-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 25px rgba(59, 130, 246, 0.4);
+}
+
+.scan-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.scan-button i {
+    margin-right: 0.5rem;
+}
+
+/* View Container */
+.view-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+@media (max-width: 768px) {
+    .view-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Color Display */
+.color-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.color-swatch {
+    width: 150px;
+    height: 150px;
+    border-radius: var(--border-radius);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    transition: background-color 0.8s ease, border-color 0.3s ease;
+    box-shadow: var(--shadow);
+    box-sizing: border-box; /* Ensure border doesn't affect size */
+}
+
+.live-swatch {
+    border-color: var(--secondary-color);
+    /* Removed animation to prevent layout jitter */
+}
+
+.color-details {
+    text-align: center;
+    width: 100%;
+}
+
+.color-name {
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    min-height: 38px;
+    color: var(--text-color);
+}
+
+.color-values {
+    font-size: 1rem;
+    color: var(--text-color-secondary);
+    font-family: 'Courier New', monospace;
+    margin: 0.25rem 0;
+}
+
+/* Placeholder */
+.placeholder-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 2rem;
+    min-height: 200px;
+    width: 100%; /* Ensure consistent width */
+}
+
+/* Color Display Container */
+.color-display {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    min-height: 200px; /* Match placeholder height */
+    width: 100%; /* Ensure consistent width */
+}
+
+.placeholder-text {
+    color: var(--text-color-secondary);
+    text-align: center;
+    font-size: 1.1rem;
+}
+
+.placeholder-container i {
+    font-size: 2rem;
+    color: var(--secondary-color);
+}
+
+/* Pulse Animation - Disabled to prevent jitter */
+/*
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(3, 218, 198, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(3, 218, 198, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(3, 218, 198, 0); }
+}
+*/
+
+/* Save Button */
+.save-button {
+    background: var(--secondary-color);
+    color: var(--bg-color);
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 1rem;
+}
+
+.save-button:hover {
+    background: #02c0a8;
+    transform: translateY(-1px);
+}
+
+.save-button i {
+    margin-right: 0.5rem;
+}
+
+/* Saved Colors */
+.saved-colors-section {
+    margin-top: 1rem;
+}
+
+.saved-colors-section.hidden {
+    display: none;
+}
+
+.saved-colors-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.saved-color-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s ease;
+}
+
+.saved-color-card:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+.saved-color-swatch {
+    width: 50px;
+    height: 50px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.saved-color-info {
+    flex: 1;
+}
+
+.saved-color-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
+}
+
+.saved-color-values {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: var(--text-color-secondary);
+}
+
+.delete-button {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.delete-button:hover {
+    background: #dc2626;
+    transform: scale(1.1);
+}
+
+/* Spinner Animation */
+.fa-spinner {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

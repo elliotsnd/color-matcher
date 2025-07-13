@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
+#include "CIEDE2000.h"
 
 // Binary format constants
 #define DULUX_MAGIC_NUMBER 0x584C5544  // "DULX" in little-endian
@@ -210,6 +211,40 @@ public:
     }
     
     /**
+     * @brief Get color by index (for k-d tree building)
+     */
+    bool getColorByIndex(uint32_t index, SimpleColor& color) {
+        if (!file_open || index >= total_colors) {
+            return false;
+        }
+        
+        // Calculate file position for this color
+        // Header: 16 bytes
+        // Each color entry size varies due to string lengths
+        // For now, do sequential read up to the index (not optimal but safe)
+        
+        if (!reset()) return false;
+        
+        // Skip to the desired index
+        for (uint32_t i = 0; i < index; i++) {
+            SimpleColor temp;
+            if (!readNextColor(temp)) {
+                return false;
+            }
+        }
+        
+        // Read the color at the index
+        return readNextColor(color);
+    }
+    
+    /**
+     * @brief Check if database is open
+     */
+    bool isOpen() const {
+        return file_open;
+    }
+    
+    /**
      * @brief Reset to beginning of color data
      */
     bool reset() {
@@ -230,57 +265,88 @@ public:
         // Check cache first
         if (cache.valid && cache.r == target_r && cache.g == target_g && cache.b == target_b) {
             result = cache.result;
-            Serial.printf("Cache hit for RGB(%d,%d,%d)\n", target_r, target_g, target_b);
             return true;
         }
 
         // Reset to beginning
         if (!reset()) return false;
-        
+
         float min_distance = 999999.0f;
         bool found = false;
         SimpleColor current_color;
-        
-        Serial.printf("Searching for closest match to RGB(%d,%d,%d)\n", target_r, target_g, target_b);
-        
+
+        // Convert target RGB to LAB once (optimization)
+        CIEDE2000::LAB target_lab;
+        rgbToLAB(target_r, target_g, target_b, target_lab);
+
         uint32_t colors_checked = 0;
+        unsigned long start_time = millis();
+        const unsigned long MAX_SEARCH_TIME = 2000; // Max 2000ms search time for thorough search
+
         while (readNextColor(current_color)) {
-            // Calculate distance
-            float dr = (float)target_r - (float)current_color.r;
-            float dg = (float)target_g - (float)current_color.g;
-            float db = (float)target_b - (float)current_color.b;
-            float distance = sqrt(dr*dr + dg*dg + db*db);
+            // Timeout check for responsive live view
+            if (millis() - start_time > MAX_SEARCH_TIME) {
+                Serial.printf("Search timeout after %ums, checked %u colors\n", MAX_SEARCH_TIME, colors_checked);
+                break;
+            }
+            // Calculate distance - use simple RGB for whites/near-whites, CIEDE2000 for others
+            float distance;
             
+            // Check if both colors are light (potential whites)
+            bool is_light_target = (target_r > 200 && target_g > 200 && target_b > 200);
+            bool is_light_current = (current_color.r > 200 && current_color.g > 200 && current_color.b > 200);
+            
+            if (is_light_target && is_light_current) {
+                // Use simple RGB distance for whites/light colors (more accurate for close matches)
+                float dr = (float)(target_r - current_color.r);
+                float dg = (float)(target_g - current_color.g);
+                float db = (float)(target_b - current_color.b);
+                distance = sqrt(dr*dr + dg*dg + db*db);
+            } else {
+                // Use CIEDE2000 for other colors
+                CIEDE2000::LAB current_lab;
+                rgbToLAB(current_color.r, current_color.g, current_color.b, current_lab);
+                distance = (float)CIEDE2000::CIEDE2000(target_lab, current_lab);
+            }
+
             if (distance < min_distance) {
                 min_distance = distance;
                 result = current_color;
                 found = true;
-                
-                // Early exit for perfect matches
-                if (distance < 0.1f) {
-                    Serial.printf("Perfect match found after checking %u colors\n", colors_checked + 1);
+
+                // Debug output for very close matches
+                if ((is_light_target && is_light_current && distance < 10.0f) || 
+                    (!is_light_target || !is_light_current) && distance < 5.0f) {
+                    Serial.printf("Close match: %s (%d,%d,%d) distance: %.2f\n",
+                                current_color.name, current_color.r, current_color.g, current_color.b, distance);
+                }
+
+                // Early exit for very close matches
+                if ((is_light_target && is_light_current && distance < 3.0f) || 
+                    ((!is_light_target || !is_light_current) && distance < 1.0f)) {
+                    Serial.printf("Excellent match found, stopping search\n");
                     break;
                 }
             }
             
             colors_checked++;
-            
-            // Progress indicator
-            if (colors_checked % 1000 == 0) {
-                Serial.printf("Checked %u colors, best distance so far: %.2f\n", colors_checked, min_distance);
+
+            // Progress indicator (less frequent)
+            if (colors_checked % 2000 == 0) {
+                Serial.printf("Searching... checked %u colors\n", colors_checked);
             }
         }
         
         if (found) {
-            Serial.printf("Best match: %s (%s) - distance: %.2f\n",
-                         result.name, result.code, min_distance);
-
             // Cache the result
             cache.r = target_r;
             cache.g = target_g;
             cache.b = target_b;
             cache.result = result;
             cache.valid = true;
+
+            Serial.printf("Final match: %s (%d,%d,%d) distance: %.2f after checking %u colors\n",
+                        result.name, result.r, result.g, result.b, min_distance, colors_checked);
         }
 
         return found;

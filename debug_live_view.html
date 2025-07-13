@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Live View</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .color-box {
+            width: 100px;
+            height: 100px;
+            border: 2px solid #333;
+            margin: 10px 0;
+            display: inline-block;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success { background-color: #155724; color: #d4edda; }
+        .error { background-color: #721c24; color: #f8d7da; }
+        .info { background-color: #0c5460; color: #d1ecf1; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        pre {
+            background-color: #1a1a1a;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            color: #00ff00;
+        }
+        .debug-section {
+            border: 1px solid #444;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Live View Debug Tool</h1>
+        
+        <div id="status" class="status info">
+            Starting diagnostic tests...
+        </div>
+        
+        <button onclick="runDiagnostics()">🔄 Run Full Diagnostics</button>
+        <button onclick="testAPI()">🌐 Test API Only</button>
+        <button onclick="testLiveView()">👁️ Test Live View Function</button>
+        
+        <div class="debug-section">
+            <h2>🎨 Current Color Display:</h2>
+            <div id="colorDisplay">
+                <div id="colorBox" class="color-box" style="background-color: #cccccc;"></div>
+                <div id="colorInfo">
+                    <p><strong>Color Name:</strong> <span id="colorName">-</span></p>
+                    <p><strong>RGB:</strong> <span id="rgbValues">-</span></p>
+                    <p><strong>HEX:</strong> <span id="hexValue">-</span></p>
+                    <p><strong>Timestamp:</strong> <span id="timestamp">-</span></p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="debug-section">
+            <h2>📡 API Response:</h2>
+            <pre id="rawResponse">No data yet...</pre>
+        </div>
+        
+        <div class="debug-section">
+            <h2>🔧 Live View Container Test:</h2>
+            <div id="liveColorDisplay" style="border: 2px solid #444; padding: 10px; min-height: 100px;">
+                <div class="placeholder-container">
+                    <p>Waiting for test...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="debug-section">
+            <h2>📋 Diagnostic Log:</h2>
+            <div id="log" style="max-height: 300px; overflow-y: auto; background-color: #1a1a1a; padding: 10px; border-radius: 5px;">
+                <p style="color: #00ff00;">Diagnostic tool loaded...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let diagnosticCount = 0;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff4444' : type === 'success' ? '#44ff44' : '#4444ff';
+            logDiv.innerHTML += `<p style="color: ${color}; margin: 2px 0;">[${timestamp}] ${message}</p>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        function rgbToHex(r, g, b) {
+            return "#" + [r, g, b].map(x => {
+                const hex = x.toString(16);
+                return hex.length === 1 ? '0' + hex : hex;
+            }).join('');
+        }
+        
+        function updateColorDisplay(data) {
+            document.getElementById('colorName').textContent = data.colorName || 'Unknown';
+            document.getElementById('rgbValues').textContent = `${data.r}, ${data.g}, ${data.b}`;
+            document.getElementById('timestamp').textContent = new Date(data.timestamp).toLocaleTimeString();
+            
+            const hex = rgbToHex(data.r, data.g, data.b);
+            document.getElementById('hexValue').textContent = hex;
+            document.getElementById('colorBox').style.backgroundColor = hex;
+        }
+        
+        // Copy of the main app's updateLiveColorDisplay function
+        function updateLiveColorDisplay(colorData) {
+            log('updateLiveColorDisplay called with data: ' + JSON.stringify(colorData), 'info');
+            const container = document.getElementById('liveColorDisplay');
+            const hex = rgbToHex(colorData.r, colorData.g, colorData.b);
+            
+            container.innerHTML = `
+                <div class="color-display">
+                    <div class="color-swatch live-swatch" style="background-color: ${hex}; width: 100px; height: 100px; border: 2px solid #666;"></div>
+                    <div class="color-details">
+                        <p class="color-name">${colorData.colorName || 'Live Sensor Feed'}</p>
+                        <p class="color-values">RGB: ${colorData.r}, ${colorData.g}, ${colorData.b}</p>
+                        <p class="color-values">HEX: ${hex}</p>
+                    </div>
+                </div>
+            `;
+            
+            log('Live color display updated successfully', 'success');
+        }
+        
+        async function testAPI() {
+            diagnosticCount++;
+            log(`Starting API test #${diagnosticCount}...`);
+            updateStatus('Testing API connection...', 'info');
+            
+            try {
+                const startTime = Date.now();
+                const response = await fetch('/api/color');
+                const endTime = Date.now();
+                
+                log(`Response received in ${endTime - startTime}ms`, 'success');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                log(`Data parsed successfully: ${JSON.stringify(data)}`, 'success');
+                
+                document.getElementById('rawResponse').textContent = JSON.stringify(data, null, 2);
+                updateColorDisplay(data);
+                updateStatus(`✅ API working! Last update: ${new Date().toLocaleTimeString()}`, 'success');
+                
+                return data;
+                
+            } catch (error) {
+                log(`API Error: ${error.message}`, 'error');
+                updateStatus(`❌ API Error: ${error.message}`, 'error');
+                document.getElementById('rawResponse').textContent = `Error: ${error.message}`;
+                return null;
+            }
+        }
+        
+        async function testLiveView() {
+            log('Testing live view function...', 'info');
+            
+            // Test if the container exists
+            const container = document.getElementById('liveColorDisplay');
+            if (!container) {
+                log('ERROR: liveColorDisplay container not found!', 'error');
+                return;
+            }
+            log('✓ liveColorDisplay container found', 'success');
+            
+            // Test API call
+            const data = await testAPI();
+            if (!data) {
+                log('Cannot test live view - API call failed', 'error');
+                return;
+            }
+            
+            // Test the updateLiveColorDisplay function
+            try {
+                updateLiveColorDisplay(data);
+                log('✓ updateLiveColorDisplay function executed successfully', 'success');
+            } catch (error) {
+                log(`ERROR in updateLiveColorDisplay: ${error.message}`, 'error');
+            }
+        }
+        
+        async function runDiagnostics() {
+            log('=== STARTING FULL DIAGNOSTICS ===', 'info');
+            
+            // Test 1: Check DOM elements
+            log('Test 1: Checking DOM elements...', 'info');
+            const elements = ['liveColorDisplay', 'colorBox', 'colorName', 'rgbValues', 'hexValue'];
+            elements.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    log(`✓ Element '${id}' found`, 'success');
+                } else {
+                    log(`✗ Element '${id}' NOT found`, 'error');
+                }
+            });
+            
+            // Test 2: Check functions
+            log('Test 2: Checking functions...', 'info');
+            const functions = ['rgbToHex', 'updateLiveColorDisplay', 'updateColorDisplay'];
+            functions.forEach(funcName => {
+                if (typeof window[funcName] === 'function') {
+                    log(`✓ Function '${funcName}' available`, 'success');
+                } else {
+                    log(`✗ Function '${funcName}' NOT available`, 'error');
+                }
+            });
+            
+            // Test 3: Test API connectivity
+            log('Test 3: Testing API connectivity...', 'info');
+            await testAPI();
+            
+            // Test 4: Test live view update
+            log('Test 4: Testing live view update...', 'info');
+            await testLiveView();
+            
+            log('=== DIAGNOSTICS COMPLETE ===', 'info');
+        }
+        
+        // Auto-run diagnostics on page load
+        window.addEventListener('load', () => {
+            log('Debug tool loaded, running initial diagnostics...', 'info');
+            setTimeout(runDiagnostics, 1000);
+        });
+    </script>
+</body>
+</html>

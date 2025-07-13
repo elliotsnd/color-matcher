@@ -17,6 +17,12 @@
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include "dulux_simple_reader.h"
+#include "CIEDE2000.h"
+// Use lightweight KD-tree optimized for embedded systems
+#define ENABLE_KDTREE 1  // Enable with new lightweight implementation
+#if ENABLE_KDTREE
+#include "lightweight_kdtree.h"
+#endif
 
 // Custom PSRAM allocator for ArduinoJson v7
 class PsramAllocator : public ArduinoJson::Allocator {
@@ -105,7 +111,7 @@ const char* ssid = "Wifi 6";
 const char* password = "Scrofani1985";
 
 // AP mode credentials
-const char* ap_ssid = "colormatcher";
+const char* ap_ssid = "color matcher";
 const char* ap_password = "Scrofani1985";
 
 // Static IP configuration
@@ -124,32 +130,36 @@ DFRobot_TCS3430 TCS3430;
 
 // Set the optimized LED brightness
 int LEDpin = 5;
-int ledBrightness = 100; // Final optimized brightness
+int ledBrightness = 80;  // Reduced from 100; test 80-90 range
 
 const uint16_t SATURATION_THRESHOLD = 65000;
 
 // === START OF FINAL, DEFINITIVE CALIBRATION PARAMETERS ===
-// Confirmed to produce accurate results for both targets.
+// Confirmed to produce accurate results for three targets.
 
-// IR Compensation Factor
-const float IR_COMPENSATION = 0.5f;
+// IR Compensation Factor (optimized with LRV/SA)
+const float IR_COMPENSATION = 0.32f;
 
 // Red Channel Calibration (maps from X)
-const float R_SLOPE = 0.01180f;
-const float R_OFFSET = 52.28f;
+const float R_SLOPE = 0.01352f;
+const float R_OFFSET = 59.18f;
 
 // Green Channel Calibration (maps from Y)
-const float G_SLOPE = 0.01359f;
-const float G_OFFSET = 24.06f;
+const float G_SLOPE = 0.01535f;
+const float G_OFFSET = 34.92f;
 
 // Blue Channel Calibration (maps from Z)
-const float B_SLOPE = 0.01904f;
-const float B_OFFSET = 79.37f;
+const float B_SLOPE = 0.02065f;
+const float B_OFFSET = 85.94f;
 
 // === END OF CALIBRATION PARAMETERS ===
 
 // Simple binary color database reader
+// Color database instances
 DuluxSimpleReader simpleColorDB;
+#if ENABLE_KDTREE
+LightweightKDTree kdTreeColorDB;
+#endif
 
 // Legacy compatibility structure (for fallback colors only)
 struct DuluxColor {
@@ -235,6 +245,97 @@ bool loadColorDatabase() {
     Logger::info("Colors available: " + String(simpleColorDB.getColorCount()));
     Logger::info("Open time: " + String(loadTime) + "ms");
     Logger::info("PSRAM free after open: " + String(ESP.getFreePsram() / 1024) + " KB");
+    
+#if ENABLE_KDTREE
+    // Initialize KD-tree with data from binary database
+    Logger::info("Building lightweight KD-tree for optimized color search...");
+    unsigned long kdStartTime = millis();
+    
+    size_t colorCount = simpleColorDB.getColorCount();
+    Logger::info("Loading " + String(colorCount) + " colors into KD-tree...");
+    
+    // Safety check for large datasets
+    if (colorCount > 10000) {
+      Logger::warn("Large color dataset detected (" + String(colorCount) + " colors)");
+      Logger::warn("This may take significant time and memory");
+    }
+    
+    // Create vector of color points for the lightweight KD-tree
+    PSRAMColorVector colorPoints;
+    colorPoints.reserve(colorCount);
+    
+    // Load colors with progress logging and timeout protection
+    size_t loadedCount = 0;
+    unsigned long loadStartTime = millis();
+    const unsigned long maxLoadTime = 20000; // 20 second timeout for loading
+    
+    for (size_t i = 0; i < colorCount; i++) {
+      // Check for timeout during loading
+      if (millis() - loadStartTime > maxLoadTime) {
+        Logger::warn("Color loading timeout after " + String((millis() - loadStartTime) / 1000) + " seconds");
+        Logger::warn("Loaded " + String(loadedCount) + " of " + String(colorCount) + " colors before timeout");
+        break;
+      }
+      
+      SimpleColor color;
+      if (simpleColorDB.getColorByIndex(i, color)) {
+        ColorPoint point(color.r, color.g, color.b, (uint16_t)i);
+        colorPoints.push_back(point);
+        loadedCount++;
+        
+        // Progress logging for large datasets with memory monitoring
+        if (colorCount > 1000 && (i % 500 == 0 || i == colorCount - 1)) {
+          Logger::info("Loaded " + String(i + 1) + "/" + String(colorCount) + " colors");
+          
+          // Check available memory and performance
+          size_t freeHeap = ESP.getFreeHeap();
+          size_t freePsram = ESP.getFreePsram();
+          unsigned long elapsedTime = millis() - loadStartTime;
+          
+          Logger::info("Memory: Heap=" + String(freeHeap) + ", PSRAM=" + String(freePsram) + ", Time=" + String(elapsedTime) + "ms");
+          
+          if (freeHeap < 50000 || freePsram < 500000) {
+            Logger::warn("Low memory during color loading - may need to limit dataset");
+            // Consider breaking early if memory is very low
+            if (freeHeap < 30000) {
+              Logger::error("Critical memory low - stopping color loading");
+              break;
+            }
+          }
+          
+          // Yield to watchdog and other tasks
+          delay(1);
+        }
+      } else {
+        // Log failed color reads
+        if (i % 1000 == 0) {
+          Logger::warn("Failed to read color at index " + String(i));
+        }
+      }
+    }
+    
+    Logger::info("Successfully loaded " + String(loadedCount) + " colors");
+    
+    if (loadedCount == 0) {
+      Logger::error("No colors loaded - skipping KD-tree construction");
+    } else {
+      Logger::info("Starting lightweight KD-tree construction...");
+      Logger::info("Free memory before KD-tree: Heap=" + String(ESP.getFreeHeap()) + ", PSRAM=" + String(ESP.getFreePsram()));
+      
+      if (kdTreeColorDB.build(colorPoints)) {
+        unsigned long kdLoadTime = millis() - kdStartTime;
+        Logger::info("Lightweight KD-tree built successfully in " + String(kdLoadTime) + "ms");
+        Logger::info("KD-tree nodes: " + String(kdTreeColorDB.getNodeCount()));
+        Logger::info("KD-tree memory usage: " + String(kdTreeColorDB.getMemoryUsage()) + " bytes");
+        Logger::info("PSRAM free after KD-tree: " + String(ESP.getFreePsram() / 1024) + " KB");
+      } else {
+        Logger::error("Failed to build KD-tree - falling back to binary database only");
+      }
+    }
+#else
+    Logger::info("KD-tree disabled - using binary database only");
+#endif
+    
     return true;
   }
 
@@ -278,20 +379,40 @@ bool loadColorDatabase() {
   Logger::error("JSON fallback loading not implemented in binary version - using fallback colors");
   return loadFallbackColors();
 }
-// Calculate color distance using weighted Euclidean distance
+// Calculate color distance using CIEDE2000 algorithm
 float calculateColorDistance(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2) {
-  // Weighted RGB distance - human eye is more sensitive to green
-  float dr = (r1 - r2) * 0.30f;
-  float dg = (g1 - g2) * 0.59f; 
-  float db = (b1 - b2) * 0.11f;
-  return sqrt(dr*dr + dg*dg + db*db);
+  // Convert both colors to LAB colorspace
+  CIEDE2000::LAB lab1, lab2;
+  rgbToLAB(r1, g1, b1, lab1);
+  rgbToLAB(r2, g2, b2, lab2);
+
+  // Calculate CIEDE2000 distance
+  double distance = CIEDE2000::CIEDE2000(lab1, lab2);
+  return (float)distance;
 }
 
-// Find the closest Dulux color match using binary database
+// Find the closest Dulux color match using KD-tree (optimized)
 String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
   Logger::debug("Finding closest color for RGB(" + String(r) + "," + String(g) + "," + String(b) + ")");
 
-  // Try simple binary database first
+#if ENABLE_KDTREE
+  // Try KD-tree search first (fastest - O(log n) average case)
+  if (kdTreeColorDB.isBuilt()) {
+    ColorPoint closest = kdTreeColorDB.findNearest(r, g, b);
+    if (closest.index > 0) {
+      // Get the full color data using the index
+      SimpleColor color;
+      if (simpleColorDB.getColorByIndex(closest.index, color)) {
+        String bestMatch = String(color.name) + " (" + String(color.code) + ")";
+        Logger::debug("KD-tree color matching completed. Best match: " + bestMatch);
+        return bestMatch;
+      }
+    }
+    Logger::warn("KD-tree search failed, falling back to binary database");
+  }
+#endif
+
+  // Fallback to simple binary database with optimized search
   SimpleColor closestColor;
   if (simpleColorDB.findClosestColor(r, g, b, closestColor)) {
     String bestMatch = String(closestColor.name) + " (" + String(closestColor.code) + ")";
@@ -301,13 +422,13 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
 
   // Fallback to legacy database if available
   if (fallbackColorDatabase != nullptr && fallbackColorCount > 0) {
-    Logger::debug("Using fallback color database with " + String(fallbackColorCount) + " colors...");
+    Logger::warn("Using slow fallback color database with " + String(fallbackColorCount) + " colors...");
 
     float minDistance = 999999.0f;
     String bestMatch = "Unknown";
     int bestIndex = -1;
 
-    // Search through fallback color database
+    // Search through fallback color database (SLOW - O(n) operation)
     for (int i = 0; i < fallbackColorCount; i++) {
       float distance = calculateColorDistance(r, g, b,
         fallbackColorDatabase[i].r, fallbackColorDatabase[i].g, fallbackColorDatabase[i].b);
@@ -360,7 +481,8 @@ void cleanupColorDatabase() {
 // Global variables to store current sensor data
 struct ColorData {
   uint16_t x, y, z, ir1, ir2;
-  uint8_t r, g, b;
+  uint8_t r, g, b;  // Integer values for web interface
+  float r_precise, g_precise, b_precise;  // Float values for precision logging
   String colorName;
   unsigned long timestamp;
 } currentColorData;
@@ -437,28 +559,34 @@ void handleColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Color API response sent successfully");
 }
 
-// This function applies the final calibration
+// This function applies the final calibration with optimized quadratic precision
 void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint8_t &R, uint8_t &G, uint8_t &B) {
   Serial.print("[DEBUG] Converting XYZ to RGB - X:");
   Serial.print(X); Serial.print(" Y:"); Serial.print(Y); Serial.print(" Z:"); Serial.print(Z); Serial.print(" IR1:"); Serial.println(IR1);
   
-  // Apply IR compensation
-  float X_adj = X - IR_COMPENSATION * IR1;
-  float Y_adj = Y - IR_COMPENSATION * IR1;
-  float Z_adj = Z - IR_COMPENSATION * IR1;
+  // Apply optimized IR compensation (latest optimization result)
+  const float IR_COMPENSATION_LOCAL = 0.8314994624f;
+  float X_adj = X - IR_COMPENSATION_LOCAL * IR1;
+  float Y_adj = Y - IR_COMPENSATION_LOCAL * IR1;
+  float Z_adj = Z - IR_COMPENSATION_LOCAL * IR1;
 
   Serial.print("[DEBUG] After IR compensation - X_adj:");
   Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
 
-  // Calculate each channel using its unique linear formula
-  float r_final = R_SLOPE * X_adj + R_OFFSET;
-  float g_final = G_SLOPE * Y_adj + G_OFFSET;
-  float b_final = B_SLOPE * Z_adj + B_OFFSET;
+  // Latest optimized quadratic parameters (balanced for all three targets)
+  const float A_R = 5.756615248518086e-06f, B_R = -0.10824971353127427f, C_R = 663.2283515839658f;  // Increased by 3 for Vivid White compromise
+  const float A_G = 7.700364703908128e-06f, B_G = -0.14873455804115546f, C_G = 855.288778468652f;   // Increased by 3 for Vivid White compromise  
+  const float A_B = -2.7588632792769936e-06f, B_B = 0.04959423885676833f, C_B = 35.55576869603341f; // Increased by 1.5 for Vivid White compromise
+
+  // Calculate each channel
+  float r_final = A_R * X_adj * X_adj + B_R * X_adj + C_R;
+  float g_final = A_G * Y_adj * Y_adj + B_G * Y_adj + C_G;
+  float b_final = A_B * Z_adj * Z_adj + B_B * Z_adj + C_B;
 
   Serial.print("[DEBUG] Raw RGB calculations - r:");
   Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
 
-  // Clamp the values to the valid 0-255 range and assign to the output
+  // Clamp to 0-255
   R = (uint8_t)max(0.0f, min(255.0f, r_final));
   G = (uint8_t)max(0.0f, min(255.0f, g_final));
   B = (uint8_t)max(0.0f, min(255.0f, b_final));
@@ -473,6 +601,102 @@ void convertXYZtoRGB_Uncalibrated(uint16_t X, uint16_t Y, uint16_t Z, uint8_t &R
     float r_linear = 3.2406f*x-1.5372f*y-0.4986f*z; float g_linear=-0.9689f*x+1.8758f*y+0.0415f*z; float b_linear=0.0557f*x-0.2040f*y+1.0570f*z;
     r_linear=max(0.0f,min(1.0f,r_linear)); g_linear=max(0.0f,min(1.0f,g_linear)); b_linear=max(0.0f,min(1.0f,b_linear));
     float gamma=1.0f/2.2f; R=(uint8_t)(pow(r_linear,gamma)*255.0f); G=(uint8_t)(pow(g_linear,gamma)*255.0f); B=(uint8_t)(pow(b_linear,gamma)*255.0f);
+}
+
+// Function to scan for WiFi networks and start AP mode if target SSID not found
+bool connectToWiFiOrStartAP() {
+  Logger::info("Scanning for available WiFi networks...");
+  
+  // Scan for networks
+  int numNetworks = WiFi.scanNetworks();
+  bool targetFound = false;
+  
+  if (numNetworks == 0) {
+    Logger::warn("No WiFi networks found");
+  } else {
+    Logger::info("Found " + String(numNetworks) + " WiFi networks:");
+    for (int i = 0; i < numNetworks; i++) {
+      String foundSSID = WiFi.SSID(i);
+      Logger::info("  " + String(i + 1) + ": " + foundSSID + " (Signal: " + String(WiFi.RSSI(i)) + " dBm)");
+      
+      if (foundSSID == String(ssid)) {
+        targetFound = true;
+        Logger::info("Target SSID '" + String(ssid) + "' found!");
+      }
+    }
+  }
+  
+  if (!targetFound) {
+    Logger::warn("Target SSID '" + String(ssid) + "' not found in scan results");
+    Logger::info("Starting Access Point mode...");
+    
+    // Start AP mode
+    WiFi.mode(WIFI_AP);
+    bool apStarted = WiFi.softAP(ap_ssid, ap_password);
+    
+    if (apStarted) {
+      IPAddress apIP = WiFi.softAPIP();
+      Logger::info("Access Point started successfully!");
+      Logger::info("AP SSID: " + String(ap_ssid));
+      Logger::info("AP Password: " + String(ap_password));
+      Logger::info("AP IP address: " + apIP.toString());
+      Logger::info("Connect to the AP and visit http://" + apIP.toString() + " to access the color matcher");
+      return true; // AP mode started successfully
+    } else {
+      Logger::error("Failed to start Access Point mode!");
+      return false;
+    }
+  }
+  
+  // Target SSID found, attempt to connect
+  Logger::info("Attempting to connect to WiFi network: " + String(ssid));
+  
+  // Configure static IP for station mode
+  WiFi.mode(WIFI_STA);
+  if (!WiFi.config(local_IP, gateway, subnet)) {
+    Logger::error("Static IP configuration failed, using DHCP");
+  } else {
+    Logger::debug("Static IP configuration successful");
+  }
+  
+  WiFi.begin(ssid, password);
+  
+  unsigned long wifiStartTime = millis();
+  const unsigned long wifiTimeout = 30000; // 30 seconds timeout
+  
+  Logger::info("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStartTime) < wifiTimeout) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Logger::info("WiFi connected successfully!");
+    Logger::info("IP address: " + WiFi.localIP().toString());
+    Logger::info("Connection time: " + String((millis() - wifiStartTime) / 1000) + " seconds");
+    return true;
+  } else {
+    Serial.println();
+    Logger::warn("WiFi connection failed after timeout, starting Access Point mode...");
+    
+    // Start AP mode as fallback
+    WiFi.mode(WIFI_AP);
+    bool apStarted = WiFi.softAP(ap_ssid, ap_password);
+    
+    if (apStarted) {
+      IPAddress apIP = WiFi.softAPIP();
+      Logger::info("Fallback Access Point started successfully!");
+      Logger::info("AP SSID: " + String(ap_ssid));
+      Logger::info("AP Password: " + String(ap_password));
+      Logger::info("AP IP address: " + apIP.toString());
+      Logger::info("Connect to the AP and visit http://" + apIP.toString() + " to access the color matcher");
+      return true;
+    } else {
+      Logger::error("Failed to start fallback Access Point mode!");
+      return false;
+    }
+  }
 }
 
 void setup() {
@@ -524,8 +748,10 @@ void setup() {
   Logger::debug("Auto zero mode set to 1");
   TCS3430.setAutoZeroNTHIteration(0);
   Logger::debug("Auto zero NTH iteration set to 0");
-  TCS3430.setIntegrationTime(0x23);
-  Logger::debug("Integration time set to 0x23");
+  TCS3430.setHighGAIN(false);  // Disable high gain to prevent saturation
+  Logger::debug("High gain disabled to prevent saturation on bright colors");
+  TCS3430.setIntegrationTime(0x23);  // Moderate integration time to prevent saturation
+  Logger::debug("Integration time set to 0x23 (moderate timing)");
   TCS3430.setALSGain(3);
   Logger::debug("ALS gain set to 3");
 
@@ -591,45 +817,10 @@ void setup() {
     Logger::error("Could not load color database - color matching may not work");
   }
 
-  // Configure static IP
-  Logger::debug("Configuring static IP address...");
-  if (!WiFi.config(local_IP, gateway, subnet)) {
-    Logger::error("Static IP configuration failed, using DHCP");
-  } else {
-    Logger::debug("Static IP configuration successful");
+  // Connect to WiFi or start AP mode
+  if (!connectToWiFiOrStartAP()) {
+    Logger::error("Failed to establish network connectivity - system may not function properly");
   }
-
-  // Try to connect to WiFi
-  Logger::info("Starting WiFi connection to SSID: " + String(ssid));
-  WiFi.begin(ssid, password);
-  
-  unsigned long wifiStartTime = millis();
-  int retryCount = 0;
-  
-  // Keep trying to connect until successful
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    
-    // Restart WiFi connection attempt every 30 seconds if still not connected
-    static unsigned long lastAttempt = 0;
-    if (millis() - lastAttempt > 30000) {
-      retryCount++;
-      Serial.println();
-      Logger::debug("WiFi connection attempt #" + String(retryCount) + " failed, retrying...");
-      WiFi.disconnect();
-      Logger::debug("WiFi disconnected");
-      delay(1000);
-      WiFi.begin(ssid, password);
-      Logger::debug("WiFi reconnection initiated");
-      lastAttempt = millis();
-    }
-  }
-  
-  Serial.println();
-  Logger::info("WiFi connected successfully!");
-  Logger::info("IP address: " + WiFi.localIP().toString());
-  Logger::info("Total connection time: " + String((millis() - wifiStartTime) / 1000) + " seconds");
 
   // Serve static files
   Logger::debug("Setting up web server routes...");
@@ -668,28 +859,63 @@ void setup() {
 void loop() {
   // AsyncWebServer handles requests automatically, no need for handleClient()
   
-  // Read sensor data (simplified logging)
-  uint16_t XData = TCS3430.getXData();
-  uint16_t YData = TCS3430.getYData();
-  uint16_t ZData = TCS3430.getZData();
-  uint16_t IR1Data = TCS3430.getIR1Data();
-  uint16_t IR2Data = TCS3430.getIR2Data();
+  // Read and average sensor data - optimized for responsiveness
+  const int num_samples = 3;  // Reduced from 5 for faster response
+  uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
+  for (int i = 0; i < num_samples; i++) {
+    sumX += TCS3430.getXData();
+    sumY += TCS3430.getYData();
+    sumZ += TCS3430.getZData();
+    sumIR1 += TCS3430.getIR1Data();
+    sumIR2 += TCS3430.getIR2Data();
+    delay(2);  // Reduced delay for faster sampling
+  }
+  uint16_t XData = sumX / num_samples;
+  uint16_t YData = sumY / num_samples;
+  uint16_t ZData = sumZ / num_samples;
+  uint16_t IR1Data = sumIR1 / num_samples;
+  uint16_t IR2Data = sumIR2 / num_samples;
 
   uint8_t R, G, B;
-  
-  // Convert to RGB using calibration
+
+  // Convert to RGB using quadratic calibration
   convertXYZtoRGB_Calibrated(XData, YData, ZData, IR1Data, R, G, B);
 
-  // Find closest Dulux color name
-  String colorName = findClosestDuluxColor(R, G, B);
+  // Lightweight smoothing filter for responsive color changes
+  static float smoothed_R = R, smoothed_G = G, smoothed_B = B;
+  const float smoothing_factor = 0.1f;  // Reduced from 0.3 for maximum responsiveness
+  smoothed_R = smoothed_R * smoothing_factor + R * (1.0f - smoothing_factor);
+  smoothed_G = smoothed_G * smoothing_factor + G * (1.0f - smoothing_factor);
+  smoothed_B = smoothed_B * smoothing_factor + B * (1.0f - smoothing_factor);
 
-  // Update current color data for API
-  currentColorData = {XData, YData, ZData, IR1Data, IR2Data, R, G, B, colorName, millis()};
+  // Find closest Dulux color name (using rounded smoothed values) with timing
+  unsigned long colorSearchStart = micros();
+  String colorName = findClosestDuluxColor((uint8_t)round(smoothed_R), (uint8_t)round(smoothed_G), (uint8_t)round(smoothed_B));
+  unsigned long colorSearchTime = micros() - colorSearchStart;
 
-  // Print only essential result information
-  Logger::info("XYZ: " + String(XData) + "," + String(YData) + "," + String(ZData) + 
-               " | RGB: " + String(R) + "," + String(G) + "," + String(B) + 
-               " | Color: " + colorName);
+  // Update current color data for API (use smoothed values)
+  currentColorData = {XData, YData, ZData, IR1Data, IR2Data,
+                      (uint8_t)round(smoothed_R), (uint8_t)round(smoothed_G), (uint8_t)round(smoothed_B),  // Integer values for web
+                      smoothed_R, smoothed_G, smoothed_B,  // Float values for precision
+                      colorName, millis()};
 
-  delay(1000); // Slower update rate for cleaner output
+  // Print result information less frequently for better performance
+  static unsigned long lastLogTime = 0;
+  if (millis() - lastLogTime > 5000) { // Log every 5 seconds to reduce overhead
+    String searchMethod = "Fallback";
+#if ENABLE_KDTREE
+    if (kdTreeColorDB.isBuilt()) {
+      searchMethod = "KD-Tree";
+    } else
+#endif
+    if (simpleColorDB.isOpen()) {
+      searchMethod = "Binary DB";
+    }
+    Logger::info("XYZ: " + String(XData) + "," + String(YData) + "," + String(ZData) +
+                 " | RGB: R" + String(smoothed_R, 2) + " G" + String(smoothed_G, 2) + " B" + String(smoothed_B, 2) +
+                 " | Color: " + colorName + " | Search: " + String(colorSearchTime) + "μs (" + searchMethod + ")");
+    lastLogTime = millis();
+  }
+
+  delay(100); 
 }
