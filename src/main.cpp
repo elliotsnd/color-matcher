@@ -9,6 +9,10 @@
  * @get from https://www.dfrobot.com
  * @url  https://github.com/DFRobot/DFRobot_TCS3430
  */
+
+// 🎛️ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
+#include "sensor_settings.h"
+
 #include <DFRobot_TCS3430.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -19,7 +23,6 @@
 #include "dulux_simple_reader.h"
 #include "CIEDE2000.h"
 // Use lightweight KD-tree optimized for embedded systems
-#define ENABLE_KDTREE 1  // Enable with new lightweight implementation
 #if ENABLE_KDTREE
 #include "lightweight_kdtree.h"
 #endif
@@ -104,23 +107,35 @@ public:
 };
 
 // Initialize static member
-LogLevel Logger::currentLevel = LOG_INFO; // Default to INFO level
+LogLevel Logger::currentLevel = DEFAULT_LOG_LEVEL; // Configurable default log level
 
 // WiFi credentials
-const char* ssid = "Wifi 6";
-const char* password = "Scrofani1985";
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 // AP mode credentials
-const char* ap_ssid = "color matcher";
-const char* ap_password = "Scrofani1985";
+const char* ap_ssid = AP_SSID;
+const char* ap_password = AP_PASSWORD;
 
 // Static IP configuration
-IPAddress local_IP(192, 168, 0, 152);
-IPAddress gateway(192, 168, 0, 1);
-IPAddress subnet(255, 255, 255, 0);
+IPAddress local_IP, gateway, subnet;
+void initializeIPAddresses() {
+  local_IP.fromString(STATIC_IP);
+  gateway.fromString(GATEWAY_IP);
+  subnet.fromString(SUBNET_MASK);
+}
 
 // Web server on port 80
 AsyncWebServer server(80);
+
+// Function declarations
+void handleGetSettings(AsyncWebServerRequest *request);
+void handleSetLedBrightness(AsyncWebServerRequest *request);
+void handleSetIntegrationTime(AsyncWebServerRequest *request);
+void handleSetIRCompensation(AsyncWebServerRequest *request);
+void handleSetColorSamples(AsyncWebServerRequest *request);
+void handleSetSampleDelay(AsyncWebServerRequest *request);
+void handleSetDebugSettings(AsyncWebServerRequest *request);
 
 DFRobot_TCS3430 TCS3430;
 
@@ -128,29 +143,64 @@ DFRobot_TCS3430 TCS3430;
 #define SDA_PIN 3
 #define SCL_PIN 4
 
-// Set the optimized LED brightness
-int LEDpin = 5;
-int ledBrightness = 80;  // Reduced from 100; test 80-90 range
+// Set the optimized LED pin
+int LEDpin = LED_PIN;
 
-const uint16_t SATURATION_THRESHOLD = 65000;
+const uint16_t SATURATION_THRESHOLD = SENSOR_SATURATION_THRESHOLD;
 
 // === START OF FINAL, DEFINITIVE CALIBRATION PARAMETERS ===
 // Confirmed to produce accurate results for three targets.
 
-// IR Compensation Factor (optimized with LRV/SA)
-const float IR_COMPENSATION = 0.32f;
+// Runtime Settings Structure - Can be modified via web interface
+struct RuntimeSettings {
+  // Color Detection Settings
+  int colorReadingSamples = COLOR_READING_SAMPLES;
+  int colorStabilityThreshold = COLOR_STABILITY_THRESHOLD;
+  int sensorSampleDelay = SENSOR_SAMPLE_DELAY;
+  int optimalSensorDistance = OPTIMAL_SENSOR_DISTANCE_MM;
+  
+  // Sensor Hardware Settings
+  uint8_t sensorIntegrationTime = SENSOR_INTEGRATION_TIME;
+  uint16_t sensorSaturationThreshold = SENSOR_SATURATION_THRESHOLD;
+  int ledBrightness = LED_BRIGHTNESS;
+  
+  // Color Calibration Settings
+  float irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
+  float irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
+  uint8_t rgbSaturationLimit = RGB_SATURATION_LIMIT;
+  
+  // Calibration Parameters
+  float irCompensation = CALIBRATION_IR_COMPENSATION;
+  float rSlope = CALIBRATION_R_SLOPE;
+  float rOffset = CALIBRATION_R_OFFSET;
+  float gSlope = CALIBRATION_G_SLOPE;
+  float gOffset = CALIBRATION_G_OFFSET;
+  float bSlope = CALIBRATION_B_SLOPE;
+  float bOffset = CALIBRATION_B_OFFSET;
+  
+  // Yellow Detection Settings
+  bool yellowDistanceCompensation = YELLOW_DISTANCE_COMPENSATION;
+  float yellowMinRatio = YELLOW_MIN_RATIO;
+  int yellowBrightnessThreshold = YELLOW_BRIGHTNESS_THRESHOLD;
+  
+  // Performance Settings
+  int kdtreeMaxColors = KDTREE_MAX_COLORS;
+  int kdtreeSearchTimeout = KDTREE_SEARCH_TIMEOUT_MS;
+  int binarySearchTimeout = BINARY_SEARCH_TIMEOUT_MS;
+  bool enableKdtree = ENABLE_KDTREE;
+  
+  // Debug Settings
+  bool debugSensorReadings = DEBUG_SENSOR_READINGS;
+  bool debugColorMatching = DEBUG_COLOR_MATCHING;
+  bool debugMemoryUsage = DEBUG_MEMORY_USAGE;
+  bool debugPerformanceTiming = DEBUG_PERFORMANCE_TIMING;
+  int sensorReadingInterval = SENSOR_READING_INTERVAL_MS;
+};
 
-// Red Channel Calibration (maps from X)
-const float R_SLOPE = 0.01352f;
-const float R_OFFSET = 59.18f;
+// Global runtime settings instance
+RuntimeSettings settings;
 
-// Green Channel Calibration (maps from Y)
-const float G_SLOPE = 0.01535f;
-const float G_OFFSET = 34.92f;
 
-// Blue Channel Calibration (maps from Z)
-const float B_SLOPE = 0.02065f;
-const float B_OFFSET = 85.94f;
 
 // === END OF CALIBRATION PARAMETERS ===
 
@@ -267,7 +317,7 @@ bool loadColorDatabase() {
     // Load colors with progress logging and timeout protection
     size_t loadedCount = 0;
     unsigned long loadStartTime = millis();
-    const unsigned long maxLoadTime = 20000; // 20 second timeout for loading
+    const unsigned long maxLoadTime = KDTREE_LOAD_TIMEOUT_MS; // Configurable timeout for loading
     
     for (size_t i = 0; i < colorCount; i++) {
       // Check for timeout during loading
@@ -559,19 +609,131 @@ void handleColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Color API response sent successfully");
 }
 
-// This function applies the final calibration with optimized quadratic precision
-void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint8_t &R, uint8_t &G, uint8_t &B) {
-  Serial.print("[DEBUG] Converting XYZ to RGB - X:");
-  Serial.print(X); Serial.print(" Y:"); Serial.print(Y); Serial.print(" Z:"); Serial.print(Z); Serial.print(" IR1:"); Serial.println(IR1);
+// Settings API handlers
+void handleGetSettings(AsyncWebServerRequest *request) {
+  Logger::debug("Handling get settings API request");
+  JsonDocument doc;
   
-  // Apply optimized IR compensation (latest optimization result)
-  const float IR_COMPENSATION_LOCAL = 0.8314994624f;
-  float X_adj = X - IR_COMPENSATION_LOCAL * IR1;
-  float Y_adj = Y - IR_COMPENSATION_LOCAL * IR1;
-  float Z_adj = Z - IR_COMPENSATION_LOCAL * IR1;
+  // Color Detection Settings
+  doc["colorReadingSamples"] = settings.colorReadingSamples;
+  doc["colorStabilityThreshold"] = settings.colorStabilityThreshold;
+  doc["sensorSampleDelay"] = settings.sensorSampleDelay;
+  doc["optimalSensorDistance"] = settings.optimalSensorDistance;
+  
+  // Sensor Hardware Settings
+  doc["sensorIntegrationTime"] = settings.sensorIntegrationTime;
+  doc["sensorSaturationThreshold"] = settings.sensorSaturationThreshold;
+  doc["ledBrightness"] = settings.ledBrightness;
+  
+  // Color Calibration Settings
+  doc["irCompensationFactor1"] = settings.irCompensationFactor1;
+  doc["irCompensationFactor2"] = settings.irCompensationFactor2;
+  doc["rgbSaturationLimit"] = settings.rgbSaturationLimit;
+  
+  // Calibration Parameters
+  doc["irCompensation"] = settings.irCompensation;
+  doc["rSlope"] = settings.rSlope;
+  doc["rOffset"] = settings.rOffset;
+  doc["gSlope"] = settings.gSlope;
+  doc["gOffset"] = settings.gOffset;
+  doc["bSlope"] = settings.bSlope;
+  doc["bOffset"] = settings.bOffset;
+  
+  // Yellow Detection Settings
+  doc["yellowDistanceCompensation"] = settings.yellowDistanceCompensation;
+  doc["yellowMinRatio"] = settings.yellowMinRatio;
+  doc["yellowBrightnessThreshold"] = settings.yellowBrightnessThreshold;
+  
+  // Performance Settings
+  doc["kdtreeMaxColors"] = settings.kdtreeMaxColors;
+  doc["kdtreeSearchTimeout"] = settings.kdtreeSearchTimeout;
+  doc["binarySearchTimeout"] = settings.binarySearchTimeout;
+  doc["enableKdtree"] = settings.enableKdtree;
+  
+  // Debug Settings
+  doc["debugSensorReadings"] = settings.debugSensorReadings;
+  doc["debugColorMatching"] = settings.debugColorMatching;
+  doc["debugMemoryUsage"] = settings.debugMemoryUsage;
+  doc["debugPerformanceTiming"] = settings.debugPerformanceTiming;
+  doc["sensorReadingInterval"] = settings.sensorReadingInterval;
 
-  Serial.print("[DEBUG] After IR compensation - X_adj:");
-  Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
+  String response;
+  serializeJson(doc, response);
+  
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+}
+
+// Quick individual setting update endpoints for real-time control
+void handleSetLedBrightness(AsyncWebServerRequest *request) {
+  if (request->hasParam("value")) {
+    int brightness = request->getParam("value")->value().toInt();
+    if (brightness >= 0 && brightness <= 255) {
+      settings.ledBrightness = brightness;
+      analogWrite(LEDpin, settings.ledBrightness);
+      Logger::info("LED brightness updated to: " + String(brightness));
+      request->send(200, "application/json", "{\"status\":\"success\",\"brightness\":" + String(brightness) + "}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Brightness must be 0-255\"}");
+    }
+  } else {
+    request->send(400, "application/json", "{\"error\":\"Missing value parameter\"}");
+  }
+}
+
+void handleSetIntegrationTime(AsyncWebServerRequest *request) {
+  if (request->hasParam("value")) {
+    int integrationTime = request->getParam("value")->value().toInt();
+    if (integrationTime >= 0 && integrationTime <= 255) {
+      settings.sensorIntegrationTime = integrationTime;
+      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
+      Logger::info("Integration time updated to: 0x" + String(integrationTime, HEX));
+      request->send(200, "application/json", "{\"status\":\"success\",\"integrationTime\":" + String(integrationTime) + "}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Integration time must be 0-255\"}");
+    }
+  } else {
+    request->send(400, "application/json", "{\"error\":\"Missing value parameter\"}");
+  }
+}
+
+void handleSetIRCompensation(AsyncWebServerRequest *request) {
+  if (request->hasParam("ir1") && request->hasParam("ir2")) {
+    float ir1 = request->getParam("ir1")->value().toFloat();
+    float ir2 = request->getParam("ir2")->value().toFloat();
+    if (ir1 >= 0 && ir1 <= 2.0 && ir2 >= 0 && ir2 <= 2.0) {
+      settings.irCompensationFactor1 = ir1;
+      settings.irCompensationFactor2 = ir2;
+      Logger::info("IR compensation updated - IR1: " + String(ir1) + " IR2: " + String(ir2));
+      request->send(200, "application/json", "{\"status\":\"success\",\"ir1\":" + String(ir1) + ",\"ir2\":" + String(ir2) + "}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"IR compensation factors must be 0-2.0\"}");
+    }
+  } else {
+    request->send(400, "application/json", "{\"error\":\"Missing ir1 or ir2 parameters\"}");
+  }
+}
+
+// This function applies the final calibration with optimized quadratic precision
+void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint16_t IR2, uint8_t &R, uint8_t &G, uint8_t &B) {
+  if (settings.debugSensorReadings) {
+    Serial.print("[DEBUG] Converting XYZ to RGB - X:");
+    Serial.print(X); Serial.print(" Y:"); Serial.print(Y); Serial.print(" Z:"); Serial.print(Z); 
+    Serial.print(" IR1:"); Serial.print(IR1); Serial.print(" IR2:"); Serial.println(IR2);
+  }
+  
+  // Apply configurable IR compensation using runtime settings
+  float X_adj = X - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
+  float Y_adj = Y - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
+  float Z_adj = Z - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
+
+  if (settings.debugSensorReadings) {
+    Serial.print("[DEBUG] After IR compensation - X_adj:");
+    Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
+    Serial.print("[DEBUG] IR compensation factors - IR1_factor:");
+    Serial.print(settings.irCompensationFactor1); Serial.print(" IR2_factor:"); Serial.println(settings.irCompensationFactor2);
+  }
 
   // Latest optimized quadratic parameters (balanced for all three targets)
   const float A_R = 5.756615248518086e-06f, B_R = -0.10824971353127427f, C_R = 663.2283515839658f;  // Increased by 3 for Vivid White compromise
@@ -583,16 +745,20 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   float g_final = A_G * Y_adj * Y_adj + B_G * Y_adj + C_G;
   float b_final = A_B * Z_adj * Z_adj + B_B * Z_adj + C_B;
 
-  Serial.print("[DEBUG] Raw RGB calculations - r:");
-  Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
+  if (settings.debugSensorReadings) {
+    Serial.print("[DEBUG] Raw RGB calculations - r:");
+    Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
+  }
 
-  // Clamp to 0-255
-  R = (uint8_t)max(0.0f, min(255.0f, r_final));
-  G = (uint8_t)max(0.0f, min(255.0f, g_final));
-  B = (uint8_t)max(0.0f, min(255.0f, b_final));
+  // Clamp to 0-RGB_SATURATION_LIMIT using configurable limit
+  R = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, r_final));
+  G = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, g_final));
+  B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_final));
   
-  Serial.print("[DEBUG] Final clamped RGB - R:");
-  Serial.print(R); Serial.print(" G:"); Serial.print(G); Serial.print(" B:"); Serial.println(B);
+  if (settings.debugSensorReadings) {
+    Serial.print("[DEBUG] Final clamped RGB - R:");
+    Serial.print(R); Serial.print(" G:"); Serial.print(G); Serial.print(" B:"); Serial.println(B);
+  }
 }
 
 // Uncalibrated function for comparison
@@ -662,7 +828,7 @@ bool connectToWiFiOrStartAP() {
   WiFi.begin(ssid, password);
   
   unsigned long wifiStartTime = millis();
-  const unsigned long wifiTimeout = 30000; // 30 seconds timeout
+  const unsigned long wifiTimeout = WIFI_TIMEOUT_MS; // Configurable WiFi timeout
   
   Logger::info("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED && (millis() - wifiStartTime) < wifiTimeout) {
@@ -702,6 +868,9 @@ bool connectToWiFiOrStartAP() {
 void setup() {
   Serial.begin(115200);
   Logger::info("System startup initiated - Serial communication started at 115200 baud");
+  
+  // Initialize IP addresses from string settings
+  initializeIPAddresses();
 
   // Check if PSRAM is available and properly configured
   if (psramFound()) {
@@ -725,14 +894,17 @@ void setup() {
   Logger::info("Total heap size: " + String(ESP.getHeapSize() / 1024) + " KB");
   Logger::info("Free heap size: " + String(ESP.getFreeHeap() / 1024) + " KB");
 
+  // Display current settings configuration
+  displayCurrentSettings();
+
   // Initialize I2C with custom pins for ESP32-S3 ProS3
   Wire.begin(SDA_PIN, SCL_PIN);
   Logger::debug("I2C initialized with SDA=3, SCL=4");
 
   pinMode(LEDpin, OUTPUT);
-  // Set the final, lower brightness
-  analogWrite(LEDpin, ledBrightness);
-  Logger::debug("LED pin configured, brightness set to: " + String(ledBrightness));
+  // Set the LED brightness from runtime settings
+  analogWrite(LEDpin, settings.ledBrightness);
+  Logger::debug("LED pin configured, brightness set to: " + String(settings.ledBrightness));
 
   Logger::info("Initializing TCS3430 sensor...");
 
@@ -750,8 +922,8 @@ void setup() {
   Logger::debug("Auto zero NTH iteration set to 0");
   TCS3430.setHighGAIN(false);  // Disable high gain to prevent saturation
   Logger::debug("High gain disabled to prevent saturation on bright colors");
-  TCS3430.setIntegrationTime(0x23);  // Moderate integration time to prevent saturation
-  Logger::debug("Integration time set to 0x23 (moderate timing)");
+  TCS3430.setIntegrationTime(settings.sensorIntegrationTime);  // Use runtime setting
+  Logger::debug("Integration time set to 0x" + String(settings.sensorIntegrationTime, HEX));
   TCS3430.setALSGain(3);
   Logger::debug("ALS gain set to 3");
 
@@ -835,6 +1007,29 @@ void setup() {
   server.on("/api/color", HTTP_GET, handleColorAPI);
   Logger::debug("Route registered: /api/color -> handleColorAPI");
 
+  // Settings API endpoints - Simplified approach
+  server.on("/api/settings", HTTP_GET, handleGetSettings);
+  Logger::debug("Route registered: /api/settings (GET) -> handleGetSettings");
+  
+  // Individual setting update endpoints for real-time adjustment (GET method for simplicity)
+  server.on("/api/set-led-brightness", HTTP_GET, handleSetLedBrightness);
+  Logger::debug("Route registered: /api/set-led-brightness (GET) -> handleSetLedBrightness");
+  
+  server.on("/api/set-integration-time", HTTP_GET, handleSetIntegrationTime);
+  Logger::debug("Route registered: /api/set-integration-time (GET) -> handleSetIntegrationTime");
+  
+  server.on("/api/set-ir-factors", HTTP_GET, handleSetIRCompensation);
+  Logger::debug("Route registered: /api/set-ir-factors (GET) -> handleSetIRCompensation");
+  
+  server.on("/api/set-color-samples", HTTP_GET, handleSetColorSamples);
+  Logger::debug("Route registered: /api/set-color-samples (GET) -> handleSetColorSamples");
+  
+  server.on("/api/set-sample-delay", HTTP_GET, handleSetSampleDelay);
+  Logger::debug("Route registered: /api/set-sample-delay (GET) -> handleSetSampleDelay");
+  
+  server.on("/api/set-debug", HTTP_GET, handleSetDebugSettings);
+  Logger::debug("Route registered: /api/set-debug (GET) -> handleSetDebugSettings");
+
   // Debug endpoint for testing
   server.on("/api/debug", HTTP_GET, [](AsyncWebServerRequest *request){
     String response = "{\"status\":\"ok\",\"message\":\"ESP32 API is working\",\"timestamp\":" + String(millis()) + "}";
@@ -856,11 +1051,29 @@ void setup() {
   Logger::info("=== SYSTEM INITIALIZATION COMPLETE ===");
 }
 
+// Function to display current settings (defined here since Serial is available)
+void displayCurrentSettings() {
+    Serial.println("=== COLOR SENSOR SETTINGS ===");
+    Serial.printf("WiFi: %s | Port: %d\n", WIFI_SSID, WEB_SERVER_PORT);
+    Serial.printf("Static IP: %s | Gateway: %s\n", STATIC_IP, GATEWAY_IP);
+    Serial.printf("KD-Tree: %s | Max Colors: %d\n", 
+                  settings.enableKdtree ? "ENABLED" : "DISABLED", settings.kdtreeMaxColors);
+    Serial.printf("Color Samples: %d | Stability: %d\n", 
+                  settings.colorReadingSamples, settings.colorStabilityThreshold);
+    Serial.printf("Sensor Distance: %dmm | LED Brightness: %d\n",
+                  settings.optimalSensorDistance, settings.ledBrightness);
+    Serial.printf("IR Compensation: IR1=%.3f | IR2=%.3f | RGB Limit=%d\n",
+                  settings.irCompensationFactor1, settings.irCompensationFactor2, settings.rgbSaturationLimit);
+    Serial.printf("Integration Time: 0x%02X | Debug Level: %s\n", 
+                  settings.sensorIntegrationTime, settings.debugSensorReadings ? "DETAILED" : "BASIC");
+    Serial.println("=============================");
+}
+
 void loop() {
   // AsyncWebServer handles requests automatically, no need for handleClient()
   
-  // Read and average sensor data - optimized for responsiveness
-  const int num_samples = 3;  // Reduced from 5 for faster response
+  // Read and average sensor data using runtime settings
+  const int num_samples = settings.colorReadingSamples;
   uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
   for (int i = 0; i < num_samples; i++) {
     sumX += TCS3430.getXData();
@@ -868,7 +1081,7 @@ void loop() {
     sumZ += TCS3430.getZData();
     sumIR1 += TCS3430.getIR1Data();
     sumIR2 += TCS3430.getIR2Data();
-    delay(2);  // Reduced delay for faster sampling
+    delay(settings.sensorSampleDelay);  // Use runtime setting
   }
   uint16_t XData = sumX / num_samples;
   uint16_t YData = sumY / num_samples;
@@ -878,8 +1091,8 @@ void loop() {
 
   uint8_t R, G, B;
 
-  // Convert to RGB using quadratic calibration
-  convertXYZtoRGB_Calibrated(XData, YData, ZData, IR1Data, R, G, B);
+  // Convert to RGB using quadratic calibration with IR1 and IR2 compensation
+  convertXYZtoRGB_Calibrated(XData, YData, ZData, IR1Data, IR2Data, R, G, B);
 
   // Lightweight smoothing filter for responsive color changes
   static float smoothed_R = R, smoothed_G = G, smoothed_B = B;
@@ -918,4 +1131,62 @@ void loop() {
   }
 
   delay(100); 
+}
+
+// Simplified individual setting handlers using GET requests for reliability
+void handleSetColorSamples(AsyncWebServerRequest *request) {
+  if (request->hasParam("value")) {
+    int samples = request->getParam("value")->value().toInt();
+    if (samples >= 1 && samples <= 10) {
+      settings.colorReadingSamples = samples;
+      Logger::info("Color samples updated to: " + String(samples));
+      request->send(200, "application/json", "{\"status\":\"success\",\"colorSamples\":" + String(samples) + "}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Color samples must be 1-10\"}");
+    }
+  } else {
+    request->send(400, "application/json", "{\"error\":\"Missing value parameter\"}");
+  }
+}
+
+void handleSetSampleDelay(AsyncWebServerRequest *request) {
+  if (request->hasParam("value")) {
+    int delay = request->getParam("value")->value().toInt();
+    if (delay >= 1 && delay <= 50) {
+      settings.sensorSampleDelay = delay;
+      Logger::info("Sample delay updated to: " + String(delay) + "ms");
+      request->send(200, "application/json", "{\"status\":\"success\",\"sampleDelay\":" + String(delay) + "}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Sample delay must be 1-50ms\"}");
+    }
+  } else {
+    request->send(400, "application/json", "{\"error\":\"Missing value parameter\"}");
+  }
+}
+
+void handleSetDebugSettings(AsyncWebServerRequest *request) {
+  bool updated = false;
+  String response = "{\"status\":\"success\"";
+  
+  if (request->hasParam("sensor")) {
+    bool enable = request->getParam("sensor")->value() == "true";
+    settings.debugSensorReadings = enable;
+    response += ",\"debugSensor\":" + String(enable ? "true" : "false");
+    updated = true;
+  }
+  
+  if (request->hasParam("colors")) {
+    bool enable = request->getParam("colors")->value() == "true";
+    settings.debugColorMatching = enable;
+    response += ",\"debugColors\":" + String(enable ? "true" : "false");
+    updated = true;
+  }
+  
+  response += "}";
+
+  // Immediate response for debug settings
+  request->send(200, "application/json", response);
+
+  // Log updated settings immediately
+  Logger::info("Debug settings updated: " + response);
 }
