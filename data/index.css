@@ -52,6 +52,45 @@ h1 i {
     -webkit-text-fill-color: var(--secondary-color);
 }
 
+/* Header Container */
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 2rem;
+}
+
+/* Battery Status - Small Compact Version */
+.battery-status-small {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+    margin-top: 0.5rem;
+}
+
+.battery-status-small i {
+    font-size: 1rem;
+    color: var(--primary-color);
+}
+
+.battery-status-small i.excellent {
+    color: #10b981; /* Green */
+}
+
+.battery-status-small i.good {
+    color: #f59e0b; /* Yellow */
+}
+
+.battery-status-small i.low {
+    color: #f97316; /* Orange */
+}
+
+.battery-status-small i.critical {
+    color: #ef4444; /* Red */
+}
+
 /* Cards */
 .card {
     background: var(--surface-color);
@@ -337,6 +376,15 @@ h1 i {
     padding-bottom: 0.5rem;
 }
 
+.setting-group h4 {
+    margin: 1rem 0 0.5rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-color);
+    border-left: 3px solid var(--primary-color);
+    padding-left: 0.5rem;
+}
+
 .setting-item {
     margin-bottom: 1rem;
     display: flex;
@@ -364,6 +412,7 @@ h1 i {
     background: rgba(255, 255, 255, 0.2);
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
 }
 
 .setting-item input[type="range"]::-webkit-slider-thumb {
@@ -419,63 +468,67 @@ h1 i {
     font-weight: bold;
 }
 
-.settings-actions {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
+/* Help text styling for settings */
+.setting-help {
+    display: block;
+    color: #888;
+    font-size: 11px;
+    font-style: italic;
+    margin-top: 3px;
+    margin-left: 0 !important;
+    line-height: 1.3;
+    opacity: 0.8;
 }
 
-.btn-primary, .btn-secondary, .btn-warning {
-    padding: 0.75rem 1.5rem;
+/* Adjust setting item layout for help text */
+.setting-item span:not(.setting-help) {
+    margin-left: 10px;
+}
+
+.btn-target {
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    color: white;
     border: none;
-    border-radius: 8px;
-    font-weight: 600;
+    padding: 0.75rem 1rem;
+    border-radius: var(--border-radius);
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.3s ease;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
+    margin-right: 0.5rem;
+    margin-bottom: 0.5rem;
     font-size: 0.9rem;
 }
 
-.btn-primary {
-    background: var(--primary-color);
-    color: white;
-}
-
-.btn-primary:hover {
-    background: #2563eb;
+.btn-target:hover {
+    background: linear-gradient(135deg, #7c3aed, #9333ea);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
 }
 
-.btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-color);
+/* Number input styling */
+input[type="number"] {
+    width: 100px;
+    padding: 0.5rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-color);
+    font-size: 0.9rem;
 }
 
-.btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: translateY(-2px);
-}
-
-.btn-warning {
-    background: #f59e0b;
-    color: white;
-}
-
-.btn-warning:hover {
-    background: #d97706;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+input[type="number"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
 
 /* Hide saved colors section by default */
-.saved-colors-section.hidden {
+.saved-colors-section {
     display: none;
+}
+
+.saved-colors-section.visible {
+    display: block;
 }
 
 /* Responsive Design for Settings */

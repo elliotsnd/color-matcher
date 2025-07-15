@@ -26,6 +26,11 @@
 #if ENABLE_KDTREE
 #include "lightweight_kdtree.h"
 #endif
+#include <UMS3.h>
+
+// Battery monitoring for ProS3 - using official UMS3 library
+// ProS3 has built-in battery monitoring circuit and I2C fuel gauge
+UMS3 ums3;
 
 // Custom PSRAM allocator for ArduinoJson v7
 class PsramAllocator : public ArduinoJson::Allocator {
@@ -137,11 +142,31 @@ void handleSetColorSamples(AsyncWebServerRequest *request);
 void handleSetSampleDelay(AsyncWebServerRequest *request);
 void handleSetDebugSettings(AsyncWebServerRequest *request);
 
+// Fast live feed and color name API handlers
+void handleFastColorAPI(AsyncWebServerRequest *request);
+void handleColorNameAPI(AsyncWebServerRequest *request);
+void handleForceColorLookup(AsyncWebServerRequest *request);
+
+// Calibration API handlers
+void handleGetCalibration(AsyncWebServerRequest *request);
+void handleTuneVividWhite(AsyncWebServerRequest *request);
+void convertXYZtoRGB_Uncalibrated(uint16_t X, uint16_t Y, uint16_t Z, uint8_t &R, uint8_t &G, uint8_t &B);
+void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint16_t IR2, uint8_t &R, uint8_t &G, uint8_t &B);
+
+// Battery voltage monitoring
+float getBatteryVoltage();
+// Detect if VBUS (USB power) is present
+bool getVbusPresent();
+void handleBatteryAPI(AsyncWebServerRequest *request);
+
 DFRobot_TCS3430 TCS3430;
 
 // I2C pin definitions for ESP32-S3 ProS3
 #define SDA_PIN 3
 #define SCL_PIN 4
+
+// Battery monitoring for ProS3 - using official UMSeriesD library
+// The library handles GPIO pins and voltage dividers automatically
 
 // Set the optimized LED pin
 int LEDpin = LED_PIN;
@@ -164,12 +189,26 @@ struct RuntimeSettings {
   uint16_t sensorSaturationThreshold = SENSOR_SATURATION_THRESHOLD;
   int ledBrightness = LED_BRIGHTNESS;
   
+  // Calibration Mode Selection
+  bool useDFRobotLibraryCalibration = false;  // false = custom quadratic, true = DFRobot library matrix
+  
   // Color Calibration Settings
   float irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
   float irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
   uint8_t rgbSaturationLimit = RGB_SATURATION_LIMIT;
   
-  // Calibration Parameters
+  // Quadratic Calibration Coefficients (Runtime Adjustable)
+  float redA = 5.756615248518086e-06f;   // Red channel quadratic coefficient A
+  float redB = -0.10824971353127427f;    // Red channel linear coefficient B
+  float redC = 663.2283515839658f;       // Red channel constant coefficient C
+  float greenA = 7.700364703908128e-06f; // Green channel quadratic coefficient A
+  float greenB = -0.14873455804115546f;  // Green channel linear coefficient B
+  float greenC = 855.288778468652f;      // Green channel constant coefficient C
+  float blueA = -2.7588632792769936e-06f; // Blue channel quadratic coefficient A
+  float blueB = 0.04959423885676833f;    // Blue channel linear coefficient B
+  float blueC = 35.55576869603341f;      // Blue channel constant coefficient C
+  
+  // Legacy Calibration Parameters (for compatibility)
   float irCompensation = CALIBRATION_IR_COMPENSATION;
   float rSlope = CALIBRATION_R_SLOPE;
   float rOffset = CALIBRATION_R_OFFSET;
@@ -195,6 +234,59 @@ struct RuntimeSettings {
   bool debugMemoryUsage = DEBUG_MEMORY_USAGE;
   bool debugPerformanceTiming = DEBUG_PERFORMANCE_TIMING;
   int sensorReadingInterval = SENSOR_READING_INTERVAL_MS;
+  
+
+  
+  // White Optimized Coefficients
+  float whiteRedA = 0.000001f;
+  float whiteRedB = -0.01278f;
+  float whiteRedC = 280.0f;
+  float whiteGreenA = 0.000002f;
+  float whiteGreenB = -0.031f;
+  float whiteGreenC = 360.0f;
+  float whiteBlueA = 0.0000008f;
+  float whiteBlueB = 0.019f;
+  float whiteBlueC = 160.0f;
+  // Grey Optimized Coefficients
+  float greyRedA = 0.000001f;
+  float greyRedB = -0.015f;
+  float greyRedC = 220.0f;
+  float greyGreenA = 0.000006f;
+  float greyGreenB = -0.06f;
+  float greyGreenC = 360.0f;
+  float greyBlueA = 0.0000008f;
+  float greyBlueB = 0.003f;
+  float greyBlueC = 140.0f;
+  // Dynamic calibration
+  bool enableDynamicCalibration = true;
+  float dynamicThreshold = 7500.0f;
+  
+  // Dynamic IR compensation
+  bool enableDynamicIR = true;
+  float irHighThreshold = 500.0f;
+  float irLowFactor = 0.25f;
+  float irHighFactor = 0.15f;
+  
+  // Auto-adjust integration
+  bool enableAutoAdjust = true;
+  float autoSatHigh = 0.9f;
+  float autoSatLow = 0.1f;
+  uint8_t minIntegrationTime = 0x10;
+  uint8_t maxIntegrationTime = 0x80;
+  uint8_t integrationStep = 0x10;
+  
+  // Matrix-based calibration (wide-range)
+  bool useMatrixCalibration = true; // true = use 3×3 matrix+offset instead of per-channel quadratic
+  // Bright-range matrix (used when Y > dynamicThreshold)
+  float brightMatrix[9] = { 3.2406f, -1.5372f, -0.4986f,
+                            -0.9689f,  1.8758f,  0.0415f,
+                             0.0557f, -0.2040f,  1.0570f };
+  float brightOffset[3] = { 0.0f, 0.0f, 0.0f };
+  // Dark-range matrix (used when Y <= dynamicThreshold)
+  float darkMatrix[9]   = { 3.2406f, -1.5372f, -0.4986f,
+                           -0.9689f,  1.8758f,  0.0415f,
+                            0.0557f, -0.2040f,  1.0570f };
+  float darkOffset[3]   = { 0.0f, 0.0f, 0.0f };
 };
 
 // Global runtime settings instance
@@ -277,11 +369,22 @@ bool loadColorDatabase() {
   unsigned long startTime = millis(); // Track load time
 
   // Check available memory before starting
-  Logger::info("Free heap before loading: " + String(esp_get_free_heap_size()));
+  size_t freeHeap = esp_get_free_heap_size();
+  size_t freePsram = psramFound() ? ESP.getFreePsram() : 0;
+  
+  Logger::info("Free heap before loading: " + String(freeHeap / 1024) + " KB");
   if (psramFound()) {
-    Logger::info("Free PSRAM before loading: " + String(ESP.getFreePsram() / 1024) + " KB");
+    Logger::info("Free PSRAM before loading: " + String(freePsram / 1024) + " KB");
+    
+    // Performance optimization: Check if we have enough PSRAM for optimal performance
+    if (freePsram < (PSRAM_SAFETY_MARGIN_KB * 1024)) {
+      Logger::warn("Low PSRAM detected (" + String(freePsram / 1024) + " KB < " + String(PSRAM_SAFETY_MARGIN_KB) + " KB safety margin)");
+      Logger::warn("KD-tree will be disabled to conserve memory");
+      settings.enableKdtree = false;  // Disable KD-tree for low memory situations
+    }
   } else {
     Logger::error("PSRAM not available - using fallback color database");
+    settings.enableKdtree = false;  // Disable KD-tree without PSRAM
     return loadFallbackColors();
   }
 
@@ -291,39 +394,67 @@ bool loadColorDatabase() {
   Logger::info("Attempting to open binary color database: /dulux.bin");
   if (simpleColorDB.openDatabase("/dulux.bin")) {
     unsigned long loadTime = millis() - startTime;
+    size_t colorCount = simpleColorDB.getColorCount();
+    
     Logger::info("Binary color database opened successfully!");
-    Logger::info("Colors available: " + String(simpleColorDB.getColorCount()));
+    Logger::info("Colors available: " + String(colorCount));
     Logger::info("Open time: " + String(loadTime) + "ms");
     Logger::info("PSRAM free after open: " + String(ESP.getFreePsram() / 1024) + " KB");
     
+    // Performance optimization: Conditionally enable KD-tree based on database size
+    bool shouldUseKdtree = settings.enableKdtree;  // Start with user/memory setting
+    
+    if (shouldUseKdtree && colorCount <= 1000) {
+      Logger::info("Small database detected (" + String(colorCount) + " colors ≤ 1000)");
+      Logger::info("KD-tree overhead not justified - using direct binary search for optimal performance");
+      shouldUseKdtree = false;
+    } else if (shouldUseKdtree && colorCount > 1000) {
+      Logger::info("Large database detected (" + String(colorCount) + " colors > 1000)");
+      Logger::info("KD-tree will provide significant search speed improvements");
+    }
+    
+    // Update runtime setting based on optimization analysis
+    settings.enableKdtree = shouldUseKdtree;
+    
 #if ENABLE_KDTREE
+    if (shouldUseKdtree) {
     // Initialize KD-tree with data from binary database
     Logger::info("Building lightweight KD-tree for optimized color search...");
     unsigned long kdStartTime = millis();
     
-    size_t colorCount = simpleColorDB.getColorCount();
     Logger::info("Loading " + String(colorCount) + " colors into KD-tree...");
+    
+    // Performance monitoring: Check available memory before KD-tree construction
+    size_t heapBeforeKd = ESP.getFreeHeap();
+    size_t psramBeforeKd = ESP.getFreePsram();
+    Logger::info("Memory before KD-tree: Heap=" + String(heapBeforeKd / 1024) + " KB, PSRAM=" + String(psramBeforeKd / 1024) + " KB");
     
     // Safety check for large datasets
     if (colorCount > 10000) {
-      Logger::warn("Large color dataset detected (" + String(colorCount) + " colors)");
-      Logger::warn("This may take significant time and memory");
+      Logger::warn("Very large color dataset detected (" + String(colorCount) + " colors)");
+      Logger::warn("This may take significant time and memory - consider reducing KDTREE_MAX_COLORS");
+    }
+    
+    // Limit colors to KDTREE_MAX_COLORS setting for memory management
+    size_t effectiveColorCount = min(colorCount, (size_t)settings.kdtreeMaxColors);
+    if (effectiveColorCount < colorCount) {
+      Logger::warn("Limiting KD-tree to " + String(effectiveColorCount) + " colors (from " + String(colorCount) + ") due to KDTREE_MAX_COLORS setting");
     }
     
     // Create vector of color points for the lightweight KD-tree
     PSRAMColorVector colorPoints;
-    colorPoints.reserve(colorCount);
+    colorPoints.reserve(effectiveColorCount);
     
     // Load colors with progress logging and timeout protection
     size_t loadedCount = 0;
     unsigned long loadStartTime = millis();
     const unsigned long maxLoadTime = KDTREE_LOAD_TIMEOUT_MS; // Configurable timeout for loading
     
-    for (size_t i = 0; i < colorCount; i++) {
+    for (size_t i = 0; i < effectiveColorCount; i++) {
       // Check for timeout during loading
       if (millis() - loadStartTime > maxLoadTime) {
         Logger::warn("Color loading timeout after " + String((millis() - loadStartTime) / 1000) + " seconds");
-        Logger::warn("Loaded " + String(loadedCount) + " of " + String(colorCount) + " colors before timeout");
+        Logger::warn("Loaded " + String(loadedCount) + " of " + String(effectiveColorCount) + " colors before timeout");
         break;
       }
       
@@ -334,23 +465,25 @@ bool loadColorDatabase() {
         loadedCount++;
         
         // Progress logging for large datasets with memory monitoring
-        if (colorCount > 1000 && (i % 500 == 0 || i == colorCount - 1)) {
-          Logger::info("Loaded " + String(i + 1) + "/" + String(colorCount) + " colors");
+        if (effectiveColorCount > 1000 && (i % 500 == 0 || i == effectiveColorCount - 1)) {
+          Logger::info("Loaded " + String(i + 1) + "/" + String(effectiveColorCount) + " colors");
           
-          // Check available memory and performance
-          size_t freeHeap = ESP.getFreeHeap();
-          size_t freePsram = ESP.getFreePsram();
+          // Performance monitoring: Check memory usage during loading
+          size_t currentFreeHeap = ESP.getFreeHeap();
+          size_t currentFreePsram = ESP.getFreePsram();
           unsigned long elapsedTime = millis() - loadStartTime;
           
-          Logger::info("Memory: Heap=" + String(freeHeap) + ", PSRAM=" + String(freePsram) + ", Time=" + String(elapsedTime) + "ms");
+          Logger::info("Memory: Heap=" + String(currentFreeHeap / 1024) + " KB, PSRAM=" + String(currentFreePsram / 1024) + " KB, Time=" + String(elapsedTime) + "ms");
           
-          if (freeHeap < 50000 || freePsram < 500000) {
-            Logger::warn("Low memory during color loading - may need to limit dataset");
-            // Consider breaking early if memory is very low
-            if (freeHeap < 30000) {
-              Logger::error("Critical memory low - stopping color loading");
-              break;
-            }
+          // Performance optimization: Monitor memory usage and abort if critical
+          if (currentFreeHeap < 50000) {
+            Logger::error("Critical heap memory low (" + String(currentFreeHeap) + " bytes) - stopping KD-tree construction");
+            Logger::error("Consider reducing KDTREE_MAX_COLORS or increasing PSRAM_SAFETY_MARGIN_KB");
+            break;
+          }
+          
+          if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * 1024 / 2)) {
+            Logger::warn("PSRAM approaching safety margin (" + String(currentFreePsram / 1024) + " KB) - may limit performance");
           }
           
           // Yield to watchdog and other tasks
@@ -364,26 +497,41 @@ bool loadColorDatabase() {
       }
     }
     
-    Logger::info("Successfully loaded " + String(loadedCount) + " colors");
+    Logger::info("Successfully loaded " + String(loadedCount) + " colors for KD-tree");
     
     if (loadedCount == 0) {
       Logger::error("No colors loaded - skipping KD-tree construction");
+      Logger::warn("Falling back to binary database search");
+      settings.enableKdtree = false;  // Disable failed KD-tree
     } else {
       Logger::info("Starting lightweight KD-tree construction...");
-      Logger::info("Free memory before KD-tree: Heap=" + String(ESP.getFreeHeap()) + ", PSRAM=" + String(ESP.getFreePsram()));
       
       if (kdTreeColorDB.build(colorPoints)) {
         unsigned long kdLoadTime = millis() - kdStartTime;
-        Logger::info("Lightweight KD-tree built successfully in " + String(kdLoadTime) + "ms");
-        Logger::info("KD-tree nodes: " + String(kdTreeColorDB.getNodeCount()));
-        Logger::info("KD-tree memory usage: " + String(kdTreeColorDB.getMemoryUsage()) + " bytes");
-        Logger::info("PSRAM free after KD-tree: " + String(ESP.getFreePsram() / 1024) + " KB");
+        size_t memoryUsage = kdTreeColorDB.getMemoryUsage();
+        
+        Logger::info("🎯 KD-tree built successfully in " + String(kdLoadTime) + "ms");
+        Logger::info("📊 KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " + String(memoryUsage) + " bytes");
+        Logger::info("🚀 Search performance: O(log " + String(loadedCount) + ") vs O(" + String(loadedCount) + ") linear");
+        Logger::info("💾 PSRAM after KD-tree: " + String(ESP.getFreePsram() / 1024) + " KB free");
+        
+        // Performance validation: Estimate search speed improvement
+        float speedupFactor = (float)loadedCount / log2(loadedCount);
+        Logger::info("⚡ Estimated search speedup: " + String(speedupFactor, 1) + "x faster than linear search");
+        
       } else {
         Logger::error("Failed to build KD-tree - falling back to binary database only");
+        Logger::warn("This may indicate insufficient memory or corrupted color data");
+        settings.enableKdtree = false;  // Disable failed KD-tree
       }
     }
+    
+    } else {
+      Logger::info("KD-tree disabled by optimization logic - using binary database only");
+      Logger::info("This provides optimal performance for current configuration");
+    }
 #else
-    Logger::info("KD-tree disabled - using binary database only");
+    Logger::info("KD-tree disabled at compile time - using binary database only");
 #endif
     
     return true;
@@ -443,35 +591,54 @@ float calculateColorDistance(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uin
 
 // Find the closest Dulux color match using KD-tree (optimized)
 String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
-  Logger::debug("Finding closest color for RGB(" + String(r) + "," + String(g) + "," + String(b) + ")");
+  if (settings.debugColorMatching) {
+    Logger::debug("Finding closest color for RGB(" + String(r) + "," + String(g) + "," + String(b) + ")");
+  }
+
+  unsigned long searchStartTime = micros();  // Performance monitoring
+  String searchMethod = "Unknown";
+  String result = "Unknown Color";
 
 #if ENABLE_KDTREE
-  // Try KD-tree search first (fastest - O(log n) average case)
-  if (kdTreeColorDB.isBuilt()) {
+  // Try KD-tree search first (fastest - O(log n) average case) if enabled and built
+  if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
+    searchMethod = "KD-Tree";
     ColorPoint closest = kdTreeColorDB.findNearest(r, g, b);
     if (closest.index > 0) {
       // Get the full color data using the index
       SimpleColor color;
       if (simpleColorDB.getColorByIndex(closest.index, color)) {
-        String bestMatch = String(color.name) + " (" + String(color.code) + ")";
-        Logger::debug("KD-tree color matching completed. Best match: " + bestMatch);
-        return bestMatch;
+        result = String(color.name) + " (" + String(color.code) + ")";
+        
+        if (settings.debugColorMatching) {
+          unsigned long searchTime = micros() - searchStartTime;
+          Logger::debug("KD-tree search completed in " + String(searchTime) + "μs. Best match: " + result);
+        }
+        return result;
       }
     }
     Logger::warn("KD-tree search failed, falling back to binary database");
+  } else if (settings.enableKdtree && !kdTreeColorDB.isBuilt()) {
+    Logger::warn("KD-tree enabled but not built - check initialization");
   }
 #endif
 
-  // Fallback to simple binary database with optimized search
+  // Fallback to simple binary database with optimized search (O(n) but optimized)
   SimpleColor closestColor;
   if (simpleColorDB.findClosestColor(r, g, b, closestColor)) {
-    String bestMatch = String(closestColor.name) + " (" + String(closestColor.code) + ")";
-    Logger::debug("Binary color matching completed. Best match: " + bestMatch);
-    return bestMatch;
+    searchMethod = "Binary DB";
+    result = String(closestColor.name) + " (" + String(closestColor.code) + ")";
+    
+    if (settings.debugColorMatching) {
+      unsigned long searchTime = micros() - searchStartTime;
+      Logger::debug("Binary search completed in " + String(searchTime) + "μs. Best match: " + result);
+    }
+    return result;
   }
 
-  // Fallback to legacy database if available
+  // Fallback to legacy database if available (slowest - O(n) unoptimized)
   if (fallbackColorDatabase != nullptr && fallbackColorCount > 0) {
+    searchMethod = "Fallback DB";
     Logger::warn("Using slow fallback color database with " + String(fallbackColorCount) + " colors...");
 
     float minDistance = 999999.0f;
@@ -490,24 +657,110 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
 
         // Early exit for perfect matches
         if (distance < 0.1f) {
-          Logger::debug("Perfect match found: " + bestMatch);
+          if (settings.debugColorMatching) {
+            Logger::debug("Perfect match found: " + bestMatch);
+          }
           break;
         }
       }
     }
 
-    Logger::debug("Fallback color matching completed. Best match: " + bestMatch + " (distance: " + String(minDistance) + ")");
-    return bestMatch;
+    result = bestMatch;
+    
+    if (settings.debugColorMatching) {
+      unsigned long searchTime = micros() - searchStartTime;
+      Logger::debug("Fallback search completed in " + String(searchTime) + "μs. Best match: " + result + " (distance: " + String(minDistance) + ")");
+    }
+    return result;
   }
 
   // Final fallback to basic color names
+  searchMethod = "Basic Classification";
   Logger::warn("No color database available, using basic color classification");
-  if (r > 200 && g > 200 && b > 200) return "Light Color";
-  if (r < 50 && g < 50 && b < 50) return "Dark Color";
-  if (r > g && r > b) return "Red Tone";
-  if (g > r && g > b) return "Green Tone";
-  if (b > r && b > g) return "Blue Tone";
-  return "Mixed Color";
+  if (r > 200 && g > 200 && b > 200) result = "Light Color";
+  else if (r < 50 && g < 50 && b < 50) result = "Dark Color";
+  else if (r > g && r > b) result = "Red Tone";
+  else if (g > r && g > b) result = "Green Tone";
+  else if (b > r && b > g) result = "Blue Tone";
+  else result = "Mixed Color";
+  
+  if (settings.debugColorMatching) {
+    unsigned long searchTime = micros() - searchStartTime;
+    Logger::debug(searchMethod + " completed in " + String(searchTime) + "μs. Result: " + result);
+  }
+  
+  return result;
+}
+
+// Performance monitoring and optimization analysis
+void analyzeSystemPerformance() {
+  Logger::info("=== SYSTEM PERFORMANCE ANALYSIS ===");
+  
+  // Memory analysis
+  size_t totalHeap = ESP.getHeapSize();
+  size_t freeHeap = ESP.getFreeHeap();
+  size_t totalPsram = psramFound() ? ESP.getPsramSize() : 0;
+  size_t freePsram = psramFound() ? ESP.getFreePsram() : 0;
+  
+  Logger::info("💾 Memory Status:");
+  Logger::info("  Heap: " + String(freeHeap / 1024) + " KB free / " + String(totalHeap / 1024) + " KB total (" + String((freeHeap * 100) / totalHeap) + "% free)");
+  if (psramFound()) {
+    Logger::info("  PSRAM: " + String(freePsram / 1024) + " KB free / " + String(totalPsram / 1024) + " KB total (" + String((freePsram * 100) / totalPsram) + "% free)");
+  } else {
+    Logger::warn("  PSRAM: Not available - performance will be limited");
+  }
+  
+  // Color database analysis
+  Logger::info("🎨 Color Database Performance:");
+  size_t colorCount = simpleColorDB.isOpen() ? simpleColorDB.getColorCount() : fallbackColorCount;
+  Logger::info("  Colors loaded: " + String(colorCount));
+  
+  // Search method analysis
+  String activeMethod = "Basic Classification";
+  String performanceNote = "Minimal functionality";
+  
+#if ENABLE_KDTREE
+  if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
+    activeMethod = "KD-Tree Search";
+    float logN = log2(colorCount);
+    performanceNote = "O(log " + String(colorCount) + ") ≈ " + String(logN, 1) + " operations";
+  } else
+#endif
+  if (simpleColorDB.isOpen()) {
+    activeMethod = "Binary Database Search";
+    performanceNote = "O(" + String(colorCount) + ") optimized operations";
+  } else if (fallbackColorDatabase != nullptr) {
+    activeMethod = "Fallback Database Search";
+    performanceNote = "O(" + String(colorCount) + ") unoptimized operations";
+  }
+  
+  Logger::info("  Active search method: " + activeMethod);
+  Logger::info("  Performance complexity: " + performanceNote);
+  
+  // Performance optimization recommendations
+  Logger::info("🚀 Performance Recommendations:");
+  
+  if (colorCount <= 1000 && settings.enableKdtree) {
+    Logger::info("  ✅ Small database - KD-tree overhead avoided (optimal)");
+  } else if (colorCount > 1000 && !settings.enableKdtree) {
+    Logger::warn("  ⚠️ Large database without KD-tree - consider enabling for " + String((float)colorCount / log2(colorCount), 1) + "x speedup");
+  } else if (colorCount > 1000 && settings.enableKdtree) {
+    Logger::info("  ✅ Large database with KD-tree - optimal performance achieved");
+  }
+  
+  if (freePsram < (PSRAM_SAFETY_MARGIN_KB * 1024)) {
+    Logger::warn("  ⚠️ Low PSRAM - increase safety margin or reduce database size");
+  } else {
+    Logger::info("  ✅ PSRAM adequate for current configuration");
+  }
+  
+  if (freeHeap < 100000) {
+    Logger::warn("  ⚠️ Low heap memory - monitor for stability issues");
+  } else {
+    Logger::info("  ✅ Heap memory sufficient");
+  }
+  
+  Logger::info("=====================================");
 }
 
 // Clean up color database memory
@@ -529,13 +782,30 @@ void cleanupColorDatabase() {
 }
 
 // Global variables to store current sensor data
-struct ColorData {
+struct FastColorData {
   uint16_t x, y, z, ir1, ir2;
   uint8_t r, g, b;  // Integer values for web interface
   float r_precise, g_precise, b_precise;  // Float values for precision logging
-  String colorName;
+  float batteryVoltage;  // Battery voltage in volts
   unsigned long timestamp;
+};
+
+struct FullColorData {
+  FastColorData fast;
+  String colorName;
+  unsigned long colorNameTimestamp;
+  unsigned long colorSearchDuration; // Time taken for color search in microseconds
 } currentColorData;
+
+// Color name lookup state
+struct ColorNameLookup {
+  bool inProgress = false;
+  unsigned long lastLookupTime = 0;
+  unsigned long lookupInterval = 2000; // Look up color name every 2 seconds
+  uint8_t lastR = 0, lastG = 0, lastB = 0;
+  bool needsUpdate = true;
+  String currentColorName = "Initializing...";
+} colorLookup;
 
 // Handle root path - serve index.html
 void handleRoot(AsyncWebServerRequest *request) {
@@ -587,16 +857,17 @@ void handleColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling color API request");
   // Create JSON response
   JsonDocument doc;  // ArduinoJson v7 syntax
-  doc["r"] = currentColorData.r;
-  doc["g"] = currentColorData.g;
-  doc["b"] = currentColorData.b;
-  doc["x"] = currentColorData.x;
-  doc["y"] = currentColorData.y;
-  doc["z"] = currentColorData.z;
-  doc["ir1"] = currentColorData.ir1;
-  doc["ir2"] = currentColorData.ir2;
+  doc["r"] = currentColorData.fast.r;
+  doc["g"] = currentColorData.fast.g;
+  doc["b"] = currentColorData.fast.b;
+  doc["x"] = currentColorData.fast.x;
+  doc["y"] = currentColorData.fast.y;
+  doc["z"] = currentColorData.fast.z;
+  doc["ir1"] = currentColorData.fast.ir1;
+  doc["ir2"] = currentColorData.fast.ir2;
   doc["colorName"] = currentColorData.colorName;
-  doc["timestamp"] = currentColorData.timestamp;
+  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
+  doc["timestamp"] = currentColorData.fast.timestamp;
 
   String response;
   serializeJson(doc, response);
@@ -607,6 +878,115 @@ void handleColorAPI(AsyncWebServerRequest *request) {
   apiResponse->addHeader("Access-Control-Allow-Origin", "*");
   request->send(apiResponse);
   Logger::debug("Color API response sent successfully");
+}
+
+// Handle fast color API endpoint (no color name lookup - optimized for speed)
+void handleFastColorAPI(AsyncWebServerRequest *request) {
+  Logger::debug("Handling fast color API request");
+  // Create JSON response with only fast sensor data
+  JsonDocument doc;
+  doc["r"] = currentColorData.fast.r;
+  doc["g"] = currentColorData.fast.g;
+  doc["b"] = currentColorData.fast.b;
+  doc["x"] = currentColorData.fast.x;
+  doc["y"] = currentColorData.fast.y;
+  doc["z"] = currentColorData.fast.z;
+  doc["ir1"] = currentColorData.fast.ir1;
+  doc["ir2"] = currentColorData.fast.ir2;
+  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
+  doc["timestamp"] = currentColorData.fast.timestamp;
+
+  String response;
+  serializeJson(doc, response);
+  
+  // Add CORS headers
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+  Logger::debug("Fast color API response sent successfully");
+}
+
+// Handle color name API endpoint (color name lookup only)
+void handleColorNameAPI(AsyncWebServerRequest *request) {
+  Logger::debug("Handling color name API request");
+  // Create JSON response with color name information
+  JsonDocument doc;
+  doc["colorName"] = currentColorData.colorName;
+  doc["colorNameTimestamp"] = currentColorData.colorNameTimestamp;
+  doc["searchDuration"] = currentColorData.colorSearchDuration;
+  doc["lookupInProgress"] = colorLookup.inProgress;
+  doc["lastLookupTime"] = colorLookup.lastLookupTime;
+  doc["lookupInterval"] = colorLookup.lookupInterval;
+  
+  // Include the RGB values that were used for the current color name
+  doc["colorNameBasedOnR"] = colorLookup.lastR;
+  doc["colorNameBasedOnG"] = colorLookup.lastG;
+  doc["colorNameBasedOnB"] = colorLookup.lastB;
+
+  String response;
+  serializeJson(doc, response);
+  
+  // Add CORS headers
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+  Logger::debug("Color name API response sent successfully");
+}
+
+// Handle force color lookup API endpoint (triggers immediate color name lookup)
+void handleForceColorLookup(AsyncWebServerRequest *request) {
+  Logger::debug("Handling force color lookup request");
+  
+  // Check if a lookup is already in progress
+  if (colorLookup.inProgress) {
+    request->send(429, "application/json", "{\"error\":\"Color lookup already in progress\",\"message\":\"Please wait for current lookup to complete\"}");
+    return;
+  }
+  
+  // Force immediate color lookup
+  uint8_t currentR = currentColorData.fast.r;
+  uint8_t currentG = currentColorData.fast.g;
+  uint8_t currentB = currentColorData.fast.b;
+  
+  colorLookup.inProgress = true;
+  unsigned long lookupStart = micros();
+  
+  String colorName = findClosestDuluxColor(currentR, currentG, currentB);
+  unsigned long lookupDuration = micros() - lookupStart;
+  
+  // Update color name data
+  unsigned long currentTime = millis();
+  currentColorData.colorName = colorName;
+  currentColorData.colorNameTimestamp = currentTime;
+  currentColorData.colorSearchDuration = lookupDuration;
+  colorLookup.currentColorName = colorName;
+  colorLookup.lastLookupTime = currentTime;
+  colorLookup.lastR = currentR;
+  colorLookup.lastG = currentG;
+  colorLookup.lastB = currentB;
+  colorLookup.inProgress = false;
+  
+  // Create response
+  JsonDocument doc;
+  doc["colorName"] = colorName;
+  doc["searchDuration"] = lookupDuration;
+  doc["rgb"] = JsonDocument();
+  doc["rgb"]["r"] = currentR;
+  doc["rgb"]["g"] = currentG;
+  doc["rgb"]["b"] = currentB;
+  doc["timestamp"] = currentTime;
+  doc["forced"] = true;
+
+  String response;
+  serializeJson(doc, response);
+  
+  // Add CORS headers
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+  
+  Logger::info("Forced color lookup: RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + 
+               ") -> " + colorName + " | Duration: " + String(lookupDuration) + "μs");
 }
 
 // Settings API handlers
@@ -629,6 +1009,10 @@ void handleGetSettings(AsyncWebServerRequest *request) {
   doc["irCompensationFactor1"] = settings.irCompensationFactor1;
   doc["irCompensationFactor2"] = settings.irCompensationFactor2;
   doc["rgbSaturationLimit"] = settings.rgbSaturationLimit;
+  
+  // Calibration Mode
+  doc["useDFRobotLibraryCalibration"] = settings.useDFRobotLibraryCalibration;
+  doc["calibrationMode"] = settings.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
   
   // Calibration Parameters
   doc["irCompensation"] = settings.irCompensation;
@@ -656,7 +1040,15 @@ void handleGetSettings(AsyncWebServerRequest *request) {
   doc["debugMemoryUsage"] = settings.debugMemoryUsage;
   doc["debugPerformanceTiming"] = settings.debugPerformanceTiming;
   doc["sensorReadingInterval"] = settings.sensorReadingInterval;
-
+  
+  // Auto-adjust settings
+  doc["enableAutoAdjust"] = settings.enableAutoAdjust;
+  doc["autoSatHigh"] = settings.autoSatHigh;
+  doc["autoSatLow"] = settings.autoSatLow;
+  doc["minIntegrationTime"] = settings.minIntegrationTime;
+  doc["maxIntegrationTime"] = settings.maxIntegrationTime;
+  doc["integrationStep"] = settings.integrationStep;
+  
   String response;
   serializeJson(doc, response);
   
@@ -722,32 +1114,124 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
     Serial.print(X); Serial.print(" Y:"); Serial.print(Y); Serial.print(" Z:"); Serial.print(Z); 
     Serial.print(" IR1:"); Serial.print(IR1); Serial.print(" IR2:"); Serial.println(IR2);
   }
+
+  // Check if we should use DFRobot library's built-in calibration
+  if (settings.useDFRobotLibraryCalibration) {
+    // Use DFRobot library's standard XYZ to RGB conversion matrix
+    convertXYZtoRGB_Uncalibrated(X, Y, Z, R, G, B);
+    
+    if (settings.debugSensorReadings) {
+      Serial.print("[DEBUG] DFRobot Library Result - R:");
+      Serial.print(R); Serial.print(" G:"); Serial.print(G); Serial.print(" B:"); Serial.println(B);
+    }
+    return;
+  }
   
   // Apply configurable IR compensation using runtime settings
-  float X_adj = X - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
-  float Y_adj = Y - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
-  float Z_adj = Z - (settings.irCompensationFactor1 * IR1) - (settings.irCompensationFactor2 * IR2);
+  float localIR1Factor = settings.irCompensationFactor1;
+  float localIR2Factor = settings.irCompensationFactor2;
+  if (settings.enableDynamicIR) {
+    if (IR1 > settings.irHighThreshold) {
+      localIR1Factor = settings.irHighFactor;
+      localIR2Factor = settings.irHighFactor;
+    } else {
+      localIR1Factor = settings.irLowFactor;
+      localIR2Factor = settings.irLowFactor;
+    }
+  }
+  float X_adj = X - (localIR1Factor * IR1) - (localIR2Factor * IR2);
+  float Y_adj = Y - (localIR1Factor * IR1) - (localIR2Factor * IR2);
+  float Z_adj = Z - (localIR1Factor * IR1) - (localIR2Factor * IR2);
+
+  // Dynamic coefficient selection
+  float redA_local = settings.redA;
+  float redB_local = settings.redB;
+  float redC_local = settings.redC;
+  float greenA_local = settings.greenA;
+  float greenB_local = settings.greenB;
+  float greenC_local = settings.greenC;
+  float blueA_local = settings.blueA;
+  float blueB_local = settings.blueB;
+  float blueC_local = settings.blueC;
+
+  // === NEW MATRIX-BASED CALIBRATION ===
+  if (settings.useMatrixCalibration) {
+    // pick matrix / offset depending on brightness
+    const float *M;
+    const float *O;
+    if (settings.enableDynamicCalibration) {
+      if (Y_adj > settings.dynamicThreshold) {
+        M = settings.brightMatrix;
+        O = settings.brightOffset;
+      } else {
+        M = settings.darkMatrix;
+        O = settings.darkOffset;
+      }
+    } else {
+      // default to bright matrix
+      M = settings.brightMatrix;
+      O = settings.brightOffset;
+    }
+
+    float r_final = M[0]*X_adj + M[1]*Y_adj + M[2]*Z_adj + O[0];
+    float g_final = M[3]*X_adj + M[4]*Y_adj + M[5]*Z_adj + O[1];
+    float b_final = M[6]*X_adj + M[7]*Y_adj + M[8]*Z_adj + O[2];
+
+    // Clamp
+    R = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, r_final));
+    G = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, g_final));
+    B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_final));
+    return; // matrix path done
+  }
+  // === END MATRIX PATH ===
+
+  if (settings.enableDynamicCalibration) {
+    if (Y_adj > settings.dynamicThreshold) {
+      // Use white optimized coefficients
+      redA_local = settings.whiteRedA;
+      redB_local = settings.whiteRedB;
+      redC_local = settings.whiteRedC;
+      greenA_local = settings.whiteGreenA;
+      greenB_local = settings.whiteGreenB;
+      greenC_local = settings.whiteGreenC;
+      blueA_local = settings.whiteBlueA;
+      blueB_local = settings.whiteBlueB;
+      blueC_local = settings.whiteBlueC;
+    } else {
+      // Use grey optimized coefficients
+      redA_local = settings.greyRedA;
+      redB_local = settings.greyRedB;
+      redC_local = settings.greyRedC;
+      greenA_local = settings.greyGreenA;
+      greenB_local = settings.greyGreenB;
+      greenC_local = settings.greyGreenC;
+      blueA_local = settings.greyBlueA;
+      blueB_local = settings.greyBlueB;
+      blueC_local = settings.greyBlueC;
+    }
+  }
 
   if (settings.debugSensorReadings) {
     Serial.print("[DEBUG] After IR compensation - X_adj:");
     Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
     Serial.print("[DEBUG] IR compensation factors - IR1_factor:");
-    Serial.print(settings.irCompensationFactor1); Serial.print(" IR2_factor:"); Serial.println(settings.irCompensationFactor2);
+    Serial.print(localIR1Factor); Serial.print(" IR2_factor:"); Serial.println(localIR2Factor);
   }
 
-  // Latest optimized quadratic parameters (balanced for all three targets)
-  const float A_R = 5.756615248518086e-06f, B_R = -0.10824971353127427f, C_R = 663.2283515839658f;  // Increased by 3 for Vivid White compromise
-  const float A_G = 7.700364703908128e-06f, B_G = -0.14873455804115546f, C_G = 855.288778468652f;   // Increased by 3 for Vivid White compromise  
-  const float A_B = -2.7588632792769936e-06f, B_B = 0.04959423885676833f, C_B = 35.55576869603341f; // Increased by 1.5 for Vivid White compromise
-
-  // Calculate each channel
-  float r_final = A_R * X_adj * X_adj + B_R * X_adj + C_R;
-  float g_final = A_G * Y_adj * Y_adj + B_G * Y_adj + C_G;
-  float b_final = A_B * Z_adj * Z_adj + B_B * Z_adj + C_B;
+  // Use runtime adjustable quadratic parameters instead of hardcoded constants
+  float r_final = redA_local * X_adj * X_adj + redB_local * X_adj + redC_local;
+  float g_final = greenA_local * Y_adj * Y_adj + greenB_local * Y_adj + greenC_local;
+  float b_final = blueA_local * Z_adj * Z_adj + blueB_local * Z_adj + blueC_local;
 
   if (settings.debugSensorReadings) {
     Serial.print("[DEBUG] Raw RGB calculations - r:");
     Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
+    Serial.print("[DEBUG] Quadratic coefficients - Red(A:");
+    Serial.print(redA_local, 10); Serial.print(" B:"); Serial.print(redB_local, 6); Serial.print(" C:"); Serial.print(redC_local, 2); Serial.println(")");
+    Serial.print("[DEBUG] Green(A:");
+    Serial.print(greenA_local, 10); Serial.print(" B:"); Serial.print(greenB_local, 6); Serial.print(" C:"); Serial.print(greenC_local, 2); Serial.println(")");
+    Serial.print("[DEBUG] Blue(A:");
+    Serial.print(blueA_local, 10); Serial.print(" B:"); Serial.print(blueB_local, 6); Serial.print(" C:"); Serial.print(blueC_local, 2); Serial.println(")");
   }
 
   // Clamp to 0-RGB_SATURATION_LIMIT using configurable limit
@@ -767,6 +1251,91 @@ void convertXYZtoRGB_Uncalibrated(uint16_t X, uint16_t Y, uint16_t Z, uint8_t &R
     float r_linear = 3.2406f*x-1.5372f*y-0.4986f*z; float g_linear=-0.9689f*x+1.8758f*y+0.0415f*z; float b_linear=0.0557f*x-0.2040f*y+1.0570f*z;
     r_linear=max(0.0f,min(1.0f,r_linear)); g_linear=max(0.0f,min(1.0f,g_linear)); b_linear=max(0.0f,min(1.0f,b_linear));
     float gamma=1.0f/2.2f; R=(uint8_t)(pow(r_linear,gamma)*255.0f); G=(uint8_t)(pow(g_linear,gamma)*255.0f); B=(uint8_t)(pow(b_linear,gamma)*255.0f);
+}
+
+
+
+// Battery voltage monitoring function for ProS3
+// Get the battery voltage in volts
+float getBatteryVoltage() {
+  // Use official UMS3 library for accurate battery voltage reading
+  // The library handles voltage dividers and ADC configuration automatically
+  float batteryVoltage = ums3.getBatteryVoltage();
+  
+  // Log battery readings for debugging
+  Serial.print("[BATTERY] ProS3 Official Library: ");
+  Serial.print(batteryVoltage, 3);
+  Serial.print("V");
+  
+  if (batteryVoltage < 0.5f) {
+    Serial.println(" [WARNING: Very low reading - check battery connection/charge]");
+  } else {
+    Serial.println(" [Good reading]");
+  }
+  
+  return batteryVoltage;
+}
+
+// Detect if VBUS (USB power) is present
+bool getVbusPresent() {
+  // Use official UMS3 library for VBUS detection
+  // The library handles the hardware-specific implementation
+  bool vbusPresent = ums3.getVbusPresent();
+  
+  Serial.print("[VBUS] ProS3 Official Library: USB ");
+  Serial.println(vbusPresent ? "Present" : "Not Present");
+  
+  return vbusPresent;
+}
+
+// Battery API handler
+void handleBatteryAPI(AsyncWebServerRequest *request) {
+  Logger::debug("Handling battery API request");
+  
+  float batteryVoltage = getBatteryVoltage();
+  bool usbPresent = getVbusPresent();
+  
+  // Create JSON response
+  JsonDocument doc;
+  doc["batteryVoltage"] = batteryVoltage;
+  doc["timestamp"] = millis();
+  doc["source"] = "adc_gpio1";  // Indicate this is from GPIO1 ADC reading
+  doc["usbPowerPresent"] = usbPresent;
+  
+  // Battery status interpretation for LiPo batteries
+  if (batteryVoltage > 4.0f) {
+    doc["status"] = "excellent";
+    doc["percentage"] = 100;
+  } else if (batteryVoltage > 3.7f) {
+    doc["status"] = "good";
+    doc["percentage"] = (int)((batteryVoltage - 3.0f) / 1.2f * 100);
+  } else if (batteryVoltage > 3.4f) {
+    doc["status"] = "low";
+    doc["percentage"] = (int)((batteryVoltage - 3.0f) / 1.2f * 100);
+  } else {
+    doc["status"] = "critical";
+    doc["percentage"] = 0;
+  }
+  
+  // Determine power source
+  if (usbPresent && batteryVoltage > 2.5f) {
+    doc["powerSource"] = "usb_and_battery";
+  } else if (usbPresent) {
+    doc["powerSource"] = "usb_only";
+  } else if (batteryVoltage > 2.5f) {
+    doc["powerSource"] = "battery_only";
+  } else {
+    doc["powerSource"] = "unknown";
+  }
+
+  String response;
+  serializeJson(doc, response);
+  
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+  
+  Logger::debug("Battery API response sent: " + String(batteryVoltage, 3) + "V (GPIO1 ADC)");
 }
 
 // Function to scan for WiFi networks and start AP mode if target SSID not found
@@ -906,6 +1475,18 @@ void setup() {
   analogWrite(LEDpin, settings.ledBrightness);
   Logger::debug("LED pin configured, brightness set to: " + String(settings.ledBrightness));
 
+  // Initialize UMS3 library for ProS3 board peripherals
+  ums3.begin();
+  Logger::debug("UMS3 library initialized - ProS3 board peripherals ready");
+  
+  // Set NeoPixel brightness to 1/3 for battery status indication
+  ums3.setPixelBrightness(255 / 3);
+  Logger::debug("NeoPixel brightness set for battery status indication");
+  
+  // Log initial battery voltage using official library
+  float initialBatteryVoltage = getBatteryVoltage();
+  Logger::info("Initial battery voltage: " + String(initialBatteryVoltage, 3) + "V");
+
   Logger::info("Initializing TCS3430 sensor...");
 
   while (!TCS3430.begin()) {
@@ -924,8 +1505,8 @@ void setup() {
   Logger::debug("High gain disabled to prevent saturation on bright colors");
   TCS3430.setIntegrationTime(settings.sensorIntegrationTime);  // Use runtime setting
   Logger::debug("Integration time set to 0x" + String(settings.sensorIntegrationTime, HEX));
-  TCS3430.setALSGain(3);
-  Logger::debug("ALS gain set to 3");
+  TCS3430.setALSGain(2);  // Reduced to 16x gain for better linearity and less artifacts
+  Logger::debug("ALS gain set to 2 (16x) for optimal accuracy");
 
   Logger::info("Sensor ready with final calibration parameters loaded");
 
@@ -985,6 +1566,9 @@ void setup() {
     // Monitor memory usage after loading
     Logger::debug("Free heap after loading: " + String(esp_get_free_heap_size()));
     Logger::debug("Free PSRAM after loading: " + String(ESP.getFreePsram()));
+    
+    // Perform performance analysis and optimization recommendations
+    analyzeSystemPerformance();
   } else {
     Logger::error("Could not load color database - color matching may not work");
   }
@@ -1006,6 +1590,20 @@ void setup() {
   Logger::debug("Route registered: /index.js -> handleJS");
   server.on("/api/color", HTTP_GET, handleColorAPI);
   Logger::debug("Route registered: /api/color -> handleColorAPI");
+
+  // Fast live feed and color name API endpoints
+  server.on("/api/color-fast", HTTP_GET, handleFastColorAPI);
+  Logger::debug("Route registered: /api/color-fast -> handleFastColorAPI (fast sensor data only)");
+  server.on("/api/color-name", HTTP_GET, handleColorNameAPI);
+  Logger::debug("Route registered: /api/color-name -> handleColorNameAPI (color name lookup only)");
+  server.on("/api/force-color-lookup", HTTP_GET, handleForceColorLookup);
+  Logger::debug("Route registered: /api/force-color-lookup -> handleForceColorLookup (immediate color name lookup)");
+  
+  // Battery monitoring API endpoint
+  server.on("/api/battery", HTTP_GET, handleBatteryAPI);
+  Logger::debug("Route registered: /api/battery -> handleBatteryAPI (battery voltage monitoring)");
+  
+
 
   // Settings API endpoints - Simplified approach
   server.on("/api/settings", HTTP_GET, handleGetSettings);
@@ -1029,6 +1627,262 @@ void setup() {
   
   server.on("/api/set-debug", HTTP_GET, handleSetDebugSettings);
   Logger::debug("Route registered: /api/set-debug (GET) -> handleSetDebugSettings");
+
+  // Calibration API endpoints
+  server.on("/api/calibration", HTTP_GET, handleGetCalibration);
+  Logger::debug("Route registered: /api/calibration (GET) -> handleGetCalibration");
+  
+  server.on("/api/calibration", HTTP_POST, 
+    [](AsyncWebServerRequest *request){
+      // Simple GET-style parameter handling for calibration updates
+      bool updated = false;
+      String response = "{\"status\":\"success\"";
+      
+      // Handle individual coefficient updates via query parameters
+      if (request->hasParam("redA")) {
+        settings.redA = request->getParam("redA")->value().toFloat();
+        response += ",\"redA\":" + String(settings.redA, 10);
+        updated = true;
+      }
+      if (request->hasParam("redB")) {
+        settings.redB = request->getParam("redB")->value().toFloat();
+        response += ",\"redB\":" + String(settings.redB, 6);
+        updated = true;
+      }
+      if (request->hasParam("redC")) {
+        settings.redC = request->getParam("redC")->value().toFloat();
+        response += ",\"redC\":" + String(settings.redC, 2);
+        updated = true;
+      }
+      if (request->hasParam("greenA")) {
+        settings.greenA = request->getParam("greenA")->value().toFloat();
+        response += ",\"greenA\":" + String(settings.greenA, 10);
+        updated = true;
+      }
+      if (request->hasParam("greenB")) {
+        settings.greenB = request->getParam("greenB")->value().toFloat();
+        response += ",\"greenB\":" + String(settings.greenB, 6);
+        updated = true;
+      }
+      if (request->hasParam("greenC")) {
+        settings.greenC = request->getParam("greenC")->value().toFloat();
+        response += ",\"greenC\":" + String(settings.greenC, 2);
+        updated = true;
+      }
+      if (request->hasParam("blueA")) {
+        settings.blueA = request->getParam("blueA")->value().toFloat();
+        response += ",\"blueA\":" + String(settings.blueA, 10);
+        updated = true;
+      }
+      if (request->hasParam("blueB")) {
+        settings.blueB = request->getParam("blueB")->value().toFloat();
+        response += ",\"blueB\":" + String(settings.blueB, 6);
+        updated = true;
+      }
+      if (request->hasParam("blueC")) {
+        settings.blueC = request->getParam("blueC")->value().toFloat();
+        response += ",\"blueC\":" + String(settings.blueC, 2);
+        updated = true;
+      }
+      // White coefficients
+      if (request->hasParam("whiteRedA")) {
+        settings.whiteRedA = request->getParam("whiteRedA")->value().toFloat();
+        response += ",\"whiteRedA\":" + String(settings.whiteRedA, 10);
+        updated = true;
+      }
+      if (request->hasParam("whiteRedB")) {
+        settings.whiteRedB = request->getParam("whiteRedB")->value().toFloat();
+        response += ",\"whiteRedB\":" + String(settings.whiteRedB, 6);
+        updated = true;
+      }
+      if (request->hasParam("whiteRedC")) {
+        settings.whiteRedC = request->getParam("whiteRedC")->value().toFloat();
+        response += ",\"whiteRedC\":" + String(settings.whiteRedC, 2);
+        updated = true;
+      }
+      if (request->hasParam("whiteGreenA")) {
+        settings.whiteGreenA = request->getParam("whiteGreenA")->value().toFloat();
+        response += ",\"whiteGreenA\":" + String(settings.whiteGreenA, 10);
+        updated = true;
+      }
+      if (request->hasParam("whiteGreenB")) {
+        settings.whiteGreenB = request->getParam("whiteGreenB")->value().toFloat();
+        response += ",\"whiteGreenB\":" + String(settings.whiteGreenB, 6);
+        updated = true;
+      }
+      if (request->hasParam("whiteGreenC")) {
+        settings.whiteGreenC = request->getParam("whiteGreenC")->value().toFloat();
+        response += ",\"whiteGreenC\":" + String(settings.whiteGreenC, 2);
+        updated = true;
+      }
+      if (request->hasParam("whiteBlueA")) {
+        settings.whiteBlueA = request->getParam("whiteBlueA")->value().toFloat();
+        response += ",\"whiteBlueA\":" + String(settings.whiteBlueA, 10);
+        updated = true;
+      }
+      if (request->hasParam("whiteBlueB")) {
+        settings.whiteBlueB = request->getParam("whiteBlueB")->value().toFloat();
+        response += ",\"whiteBlueB\":" + String(settings.whiteBlueB, 6);
+        updated = true;
+      }
+      if (request->hasParam("whiteBlueC")) {
+        settings.whiteBlueC = request->getParam("whiteBlueC")->value().toFloat();
+        response += ",\"whiteBlueC\":" + String(settings.whiteBlueC, 2);
+        updated = true;
+      }
+      // Grey coefficients
+      if (request->hasParam("greyRedA")) {
+        settings.greyRedA = request->getParam("greyRedA")->value().toFloat();
+        response += ",\"greyRedA\":" + String(settings.greyRedA, 10);
+        updated = true;
+      }
+      if (request->hasParam("greyRedB")) {
+        settings.greyRedB = request->getParam("greyRedB")->value().toFloat();
+        response += ",\"greyRedB\":" + String(settings.greyRedB, 6);
+        updated = true;
+      }
+      if (request->hasParam("greyRedC")) {
+        settings.greyRedC = request->getParam("greyRedC")->value().toFloat();
+        response += ",\"greyRedC\":" + String(settings.greyRedC, 2);
+        updated = true;
+      }
+      if (request->hasParam("greyGreenA")) {
+        settings.greyGreenA = request->getParam("greyGreenA")->value().toFloat();
+        response += ",\"greyGreenA\":" + String(settings.greyGreenA, 10);
+        updated = true;
+      }
+      if (request->hasParam("greyGreenB")) {
+        settings.greyGreenB = request->getParam("greyGreenB")->value().toFloat();
+        response += ",\"greyGreenB\":" + String(settings.greyGreenB, 6);
+        updated = true;
+      }
+      if (request->hasParam("greyGreenC")) {
+        settings.greyGreenC = request->getParam("greyGreenC")->value().toFloat();
+        response += ",\"greyGreenC\":" + String(settings.greyGreenC, 2);
+        updated = true;
+      }
+      if (request->hasParam("greyBlueA")) {
+        settings.greyBlueA = request->getParam("greyBlueA")->value().toFloat();
+        response += ",\"greyBlueA\":" + String(settings.greyBlueA, 10);
+        updated = true;
+      }
+      if (request->hasParam("greyBlueB")) {
+        settings.greyBlueB = request->getParam("greyBlueB")->value().toFloat();
+        response += ",\"greyBlueB\":" + String(settings.greyBlueB, 6);
+        updated = true;
+      }
+      if (request->hasParam("greyBlueC")) {
+        settings.greyBlueC = request->getParam("greyBlueC")->value().toFloat();
+        response += ",\"greyBlueC\":" + String(settings.greyBlueC, 2);
+        updated = true;
+      }
+      // Dynamic settings
+      if (request->hasParam("enableDynamicCalibration")) {
+        settings.enableDynamicCalibration = request->getParam("enableDynamicCalibration")->value() == "true";
+        response += ",\"enableDynamicCalibration\":" + String(settings.enableDynamicCalibration ? "true" : "false");
+        updated = true;
+      }
+      if (request->hasParam("dynamicThreshold")) {
+        settings.dynamicThreshold = request->getParam("dynamicThreshold")->value().toFloat();
+        response += ",\"dynamicThreshold\":" + String(settings.dynamicThreshold, 2);
+        updated = true;
+      }
+      
+      // Matrix calibration parameters
+      if (request->hasParam("useMatrixCalibration")) {
+        settings.useMatrixCalibration = request->getParam("useMatrixCalibration")->value() == "true";
+        response += ",\"useMatrixCalibration\":" + String(settings.useMatrixCalibration ? "true" : "false");
+        updated = true;
+      }
+      // Helper lambda to update array elements
+      auto updateMatrixArray = [&](const char *prefix, float *arr, size_t len){
+        for (size_t idx = 0; idx < len; ++idx) {
+          String key = String(prefix) + String(idx);
+          if (request->hasParam(key)) {
+            arr[idx] = request->getParam(key)->value().toFloat();
+            response += ",\"" + key + "\":" + String(arr[idx], 6);
+            updated = true;
+          }
+        }
+      };
+      updateMatrixArray("brightMatrix", settings.brightMatrix, 9);
+      updateMatrixArray("brightOffset", settings.brightOffset, 3);
+      updateMatrixArray("darkMatrix", settings.darkMatrix, 9);
+      updateMatrixArray("darkOffset", settings.darkOffset, 3);
+      
+      response += "}";
+      
+      if (updated) {
+        Logger::info("Calibration coefficients updated");
+        Logger::info("Red: A=" + String(settings.redA, 10) + " B=" + String(settings.redB, 6) + " C=" + String(settings.redC, 2));
+        Logger::info("Green: A=" + String(settings.greenA, 10) + " B=" + String(settings.greenB, 6) + " C=" + String(settings.greenC, 2));
+        Logger::info("Blue: A=" + String(settings.blueA, 10) + " B=" + String(settings.blueB, 6) + " C=" + String(settings.blueC, 2));
+        
+        AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+        apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+        request->send(apiResponse);
+      } else {
+        request->send(400, "application/json", "{\"error\":\"No valid calibration parameters provided\"}");
+      }
+    });
+  Logger::debug("Route registered: /api/calibration (POST) -> handleSetCalibration");
+  
+  server.on("/api/tune-vivid-white", HTTP_POST, handleTuneVividWhite);
+  Logger::debug("Route registered: /api/tune-vivid-white (POST) -> handleTuneVividWhite");
+
+  // Reset and calibration mode endpoints
+  server.on("/api/reset-to-dfrobot", HTTP_POST, [](AsyncWebServerRequest *request){
+    // Reset to DFRobot library defaults
+    settings.useDFRobotLibraryCalibration = true;
+    settings.ledBrightness = LED_BRIGHTNESS;
+    settings.sensorIntegrationTime = SENSOR_INTEGRATION_TIME;
+    settings.colorReadingSamples = COLOR_READING_SAMPLES;
+    settings.sensorSampleDelay = SENSOR_SAMPLE_DELAY;
+    settings.irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
+    settings.irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
+    
+    Logger::info("Settings reset to DFRobot library defaults");
+    request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Reset to DFRobot library defaults\",\"mode\":\"dfrobot\"}");
+  });
+  Logger::debug("Route registered: /api/reset-to-dfrobot (POST) -> reset to DFRobot defaults");
+
+  server.on("/api/reset-to-custom", HTTP_POST, [](AsyncWebServerRequest *request){
+    // Reset to custom quadratic calibration defaults
+    settings.useDFRobotLibraryCalibration = false;
+    settings.redA = 5.756615248518086e-06f;
+    settings.redB = -0.10824971353127427f;
+    settings.redC = 663.2283515839658f;
+    settings.greenA = 7.700364703908128e-06f;
+    settings.greenB = -0.14873455804115546f;
+    settings.greenC = 855.288778468652f;
+    settings.blueA = -2.7588632792769936e-06f;
+    settings.blueB = 0.04959423885676833f;
+    settings.blueC = 35.55576869603341f;
+    
+    Logger::info("Settings reset to custom quadratic calibration defaults");
+    request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Reset to custom calibration defaults\",\"mode\":\"custom\"}");
+  });
+  Logger::debug("Route registered: /api/reset-to-custom (POST) -> reset to custom defaults");
+
+  server.on("/api/set-calibration-mode", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (request->hasParam("mode")) {
+      String mode = request->getParam("mode")->value();
+      if (mode == "dfrobot") {
+        settings.useDFRobotLibraryCalibration = true;
+        Logger::info("Calibration mode set to DFRobot library");
+        request->send(200, "application/json", "{\"status\":\"success\",\"mode\":\"dfrobot\"}");
+      } else if (mode == "custom") {
+        settings.useDFRobotLibraryCalibration = false;
+        Logger::info("Calibration mode set to custom quadratic");
+        request->send(200, "application/json", "{\"status\":\"success\",\"mode\":\"custom\"}");
+      } else {
+        request->send(400, "application/json", "{\"error\":\"Invalid mode. Use 'dfrobot' or 'custom'\"}");
+      }
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Missing mode parameter\"}");
+    }
+  });
+  Logger::debug("Route registered: /api/set-calibration-mode (GET) -> set calibration mode");
 
   // Debug endpoint for testing
   server.on("/api/debug", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1089,48 +1943,134 @@ void loop() {
   uint16_t IR1Data = sumIR1 / num_samples;
   uint16_t IR2Data = sumIR2 / num_samples;
 
+  // Auto-adjust integration time if enabled
+  if (settings.enableAutoAdjust) {
+    uint16_t maxChannel = max(max(XData, YData), ZData);
+    float satLevel = (float)maxChannel / settings.sensorSaturationThreshold;
+    if (satLevel > settings.autoSatHigh && settings.sensorIntegrationTime > settings.minIntegrationTime) {
+      int newTime = (int)settings.sensorIntegrationTime - (int)settings.integrationStep;
+      settings.sensorIntegrationTime = (uint8_t)max((int)settings.minIntegrationTime, newTime);
+      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
+      if (settings.debugSensorReadings) Serial.println("[AUTO] Decreased integration to " + String(settings.sensorIntegrationTime, HEX));
+    } else if (satLevel < settings.autoSatLow && settings.sensorIntegrationTime < settings.maxIntegrationTime) {
+      int newTime = (int)settings.sensorIntegrationTime + (int)settings.integrationStep;
+      settings.sensorIntegrationTime = (uint8_t)min((int)settings.maxIntegrationTime, newTime);
+      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
+      if (settings.debugSensorReadings) Serial.println("[AUTO] Increased integration to " + String(settings.sensorIntegrationTime, HEX));
+    }
+  }
+
   uint8_t R, G, B;
 
   // Convert to RGB using quadratic calibration with IR1 and IR2 compensation
   convertXYZtoRGB_Calibrated(XData, YData, ZData, IR1Data, IR2Data, R, G, B);
 
-  // Lightweight smoothing filter for responsive color changes
+  // Minimal smoothing filter for maximum color accuracy
   static float smoothed_R = R, smoothed_G = G, smoothed_B = B;
-  const float smoothing_factor = 0.1f;  // Reduced from 0.3 for maximum responsiveness
+  const float smoothing_factor = 0.05f;  // Very light smoothing to reduce artifacts without lag
   smoothed_R = smoothed_R * smoothing_factor + R * (1.0f - smoothing_factor);
   smoothed_G = smoothed_G * smoothing_factor + G * (1.0f - smoothing_factor);
   smoothed_B = smoothed_B * smoothing_factor + B * (1.0f - smoothing_factor);
 
-  // Find closest Dulux color name (using rounded smoothed values) with timing
-  unsigned long colorSearchStart = micros();
-  String colorName = findClosestDuluxColor((uint8_t)round(smoothed_R), (uint8_t)round(smoothed_G), (uint8_t)round(smoothed_B));
-  unsigned long colorSearchTime = micros() - colorSearchStart;
+  // Read battery voltage
+  float batteryVoltage = getBatteryVoltage();
 
-  // Update current color data for API (use smoothed values)
-  currentColorData = {XData, YData, ZData, IR1Data, IR2Data,
+  // Update current fast color data for API (use smoothed values) - NO COLOR NAME SEARCH
+  currentColorData.fast = {XData, YData, ZData, IR1Data, IR2Data,
                       (uint8_t)round(smoothed_R), (uint8_t)round(smoothed_G), (uint8_t)round(smoothed_B),  // Integer values for web
                       smoothed_R, smoothed_G, smoothed_B,  // Float values for precision
-                      colorName, millis()};
+                      batteryVoltage,  // Battery voltage
+                      millis()};
+
+  // Separate color name lookup - runs independently on a timer basis
+  unsigned long currentTime = millis();
+  if (!colorLookup.inProgress && (currentTime - colorLookup.lastLookupTime > colorLookup.lookupInterval)) {
+    // Check if RGB values changed significantly (threshold of 5 to avoid constant lookup)
+    uint8_t currentR = (uint8_t)round(smoothed_R);
+    uint8_t currentG = (uint8_t)round(smoothed_G);
+    uint8_t currentB = (uint8_t)round(smoothed_B);
+    
+    int rgbDiff = abs(currentR - colorLookup.lastR) + abs(currentG - colorLookup.lastG) + abs(currentB - colorLookup.lastB);
+    
+    if (colorLookup.needsUpdate || rgbDiff > 5) {
+      colorLookup.inProgress = true;
+      colorLookup.lastLookupTime = currentTime;
+      colorLookup.lastR = currentR;
+      colorLookup.lastG = currentG;
+      colorLookup.lastB = currentB;
+      
+      // Perform color name lookup (this is the expensive operation)
+      unsigned long colorSearchStart = micros();
+      String colorName = findClosestDuluxColor(currentR, currentG, currentB);
+      unsigned long colorSearchTime = micros() - colorSearchStart;
+      
+      // Update color name data
+      currentColorData.colorName = colorName;
+      currentColorData.colorNameTimestamp = currentTime;
+      currentColorData.colorSearchDuration = colorSearchTime;
+      colorLookup.currentColorName = colorName;
+      colorLookup.needsUpdate = false;
+      colorLookup.inProgress = false;
+      
+      if (settings.debugColorMatching) {
+        String searchMethod = "Fallback";
+#if ENABLE_KDTREE
+        if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
+          searchMethod = "KD-Tree";
+        } else
+#endif
+        if (simpleColorDB.isOpen()) {
+          searchMethod = "Binary DB";
+        }
+        
+        Logger::debug("Color lookup: RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + 
+                     ") -> " + colorName + " | Search: " + String(colorSearchTime) + "μs (" + searchMethod + ")");
+      }
+    }
+  }
 
   // Print result information less frequently for better performance
   static unsigned long lastLogTime = 0;
+  static unsigned long lastPerfCheck = 0;
+  
   if (millis() - lastLogTime > 5000) { // Log every 5 seconds to reduce overhead
-    String searchMethod = "Fallback";
-#if ENABLE_KDTREE
-    if (kdTreeColorDB.isBuilt()) {
-      searchMethod = "KD-Tree";
-    } else
-#endif
-    if (simpleColorDB.isOpen()) {
-      searchMethod = "Binary DB";
-    }
     Logger::info("XYZ: " + String(XData) + "," + String(YData) + "," + String(ZData) +
                  " | RGB: R" + String(smoothed_R, 2) + " G" + String(smoothed_G, 2) + " B" + String(smoothed_B, 2) +
-                 " | Color: " + colorName + " | Search: " + String(colorSearchTime) + "μs (" + searchMethod + ")");
+                 " | Color: " + currentColorData.colorName + " | Last search: " + String(currentColorData.colorSearchDuration) + "μs");
     lastLogTime = millis();
   }
-
-  delay(100); 
+  
+  // Periodic performance monitoring (every 30 seconds)
+  if (millis() - lastPerfCheck > 30000) {
+    size_t currentFreeHeap = ESP.getFreeHeap();
+    size_t currentFreePsram = psramFound() ? ESP.getFreePsram() : 0;
+    
+    // Check for memory leaks or degradation
+    static size_t lastFreeHeap = currentFreeHeap;
+    static size_t lastFreePsram = currentFreePsram;
+    
+    if (settings.debugMemoryUsage) {
+      Logger::debug("Performance Monitor: Heap=" + String(currentFreeHeap / 1024) + "KB, PSRAM=" + String(currentFreePsram / 1024) + "KB");
+      
+      if (lastFreeHeap > 0 && currentFreeHeap < lastFreeHeap - 10000) {
+        Logger::warn("Heap memory decrease detected: " + String((lastFreeHeap - currentFreeHeap) / 1024) + "KB");
+      }
+      
+      if (lastFreePsram > 0 && currentFreePsram < lastFreePsram - 100000) {
+        Logger::warn("PSRAM decrease detected: " + String((lastFreePsram - currentFreePsram) / 1024) + "KB");
+      }
+    }
+    
+    // Performance optimization: Check if we need to adjust search method
+    if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * 1024) && settings.enableKdtree) {
+      Logger::warn("PSRAM low - disabling KD-tree to conserve memory");
+      settings.enableKdtree = false;
+    }
+    
+    lastFreeHeap = currentFreeHeap;
+    lastFreePsram = currentFreePsram;
+    lastPerfCheck = millis();
+  }
 }
 
 // Simplified individual setting handlers using GET requests for reliability
@@ -1190,3 +2130,142 @@ void handleSetDebugSettings(AsyncWebServerRequest *request) {
   // Log updated settings immediately
   Logger::info("Debug settings updated: " + response);
 }
+
+// Calibration API handlers
+
+// GET /api/calibration - Returns current calibration coefficients
+void handleGetCalibration(AsyncWebServerRequest *request) {
+  PsramAllocator allocator;
+  JsonDocument doc(&allocator);
+  
+  doc["useDFRobotLibraryCalibration"] = settings.useDFRobotLibraryCalibration;
+  doc["calibrationMode"] = settings.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
+  
+  doc["redA"] = settings.redA;
+  doc["redB"] = settings.redB;
+  doc["redC"] = settings.redC;
+  doc["greenA"] = settings.greenA;
+  doc["greenB"] = settings.greenB;
+  doc["greenC"] = settings.greenC;
+  doc["blueA"] = settings.blueA;
+  doc["blueB"] = settings.blueB;
+  doc["blueC"] = settings.blueC;
+  // White coefficients
+  doc["whiteRedA"] = settings.whiteRedA;
+  doc["whiteRedB"] = settings.whiteRedB;
+  doc["whiteRedC"] = settings.whiteRedC;
+  doc["whiteGreenA"] = settings.whiteGreenA;
+  doc["whiteGreenB"] = settings.whiteGreenB;
+  doc["whiteGreenC"] = settings.whiteGreenC;
+  doc["whiteBlueA"] = settings.whiteBlueA;
+  doc["whiteBlueB"] = settings.whiteBlueB;
+  doc["whiteBlueC"] = settings.whiteBlueC;
+  // Grey coefficients
+  doc["greyRedA"] = settings.greyRedA;
+  doc["greyRedB"] = settings.greyRedB;
+  doc["greyRedC"] = settings.greyRedC;
+  doc["greyGreenA"] = settings.greyGreenA;
+  doc["greyGreenB"] = settings.greyGreenB;
+  doc["greyGreenC"] = settings.greyGreenC;
+  doc["greyBlueA"] = settings.greyBlueA;
+  doc["greyBlueB"] = settings.greyBlueB;
+  doc["greyBlueC"] = settings.greyBlueC;
+  // Dynamic settings
+  doc["enableDynamicCalibration"] = settings.enableDynamicCalibration;
+  doc["dynamicThreshold"] = settings.dynamicThreshold;
+  
+  String response;
+  serializeJson(doc, response);
+  
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+  
+  Logger::info("Calibration settings sent to client");
+}
+
+// POST /api/tune-vivid-white - Optimizes calibration for Vivid White (247,248,244)
+void handleTuneVividWhite(AsyncWebServerRequest *request) {
+  Logger::info("Tuning calibration for Vivid White (247,248,244)");
+  
+  // Apply optimized coefficients for Vivid White target
+  // These values are fine-tuned to get closer to RGB(247,248,244)
+  settings.redA = 5.856615248518086e-06f;   // Slightly increased for brighter red
+  settings.redB = -0.10624971353127427f;    // Adjusted for better linearity
+  settings.redC = 668.2283515839658f;       // Increased offset for brighter output
+  
+  settings.greenA = 7.800364703908128e-06f; // Increased for better green response
+  settings.greenB = -0.14773455804115546f;  // Fine-tuned for target
+  settings.greenC = 860.288778468652f;      // Increased for brighter green
+  
+  settings.blueA = -2.6588632792769936e-06f; // Adjusted for better blue balance
+  settings.blueB = 0.05159423885676833f;     // Increased for brighter blue
+  settings.blueC = 38.55576869603341f;       // Increased offset
+  
+  Logger::info("Vivid White calibration applied");
+  Logger::info("New Red: A=" + String(settings.redA, 10) + " B=" + String(settings.redB, 6) + " C=" + String(settings.redC, 2));
+  Logger::info("New Green: A=" + String(settings.greenA, 10) + " B=" + String(settings.greenB, 6) + " C=" + String(settings.greenC, 2));
+  Logger::info("New Blue: A=" + String(settings.blueA, 10) + " B=" + String(settings.blueB, 6) + " C=" + String(settings.blueC, 2));
+  
+  // Return the new calibration values
+  PsramAllocator allocator;
+  JsonDocument doc(&allocator);
+  
+  doc["status"] = "success";
+  doc["message"] = "Tuned for Vivid White (247,248,244)";
+  doc["calibration"]["redA"] = settings.redA;
+  doc["calibration"]["redB"] = settings.redB;
+  doc["calibration"]["redC"] = settings.redC;
+  doc["calibration"]["greenA"] = settings.greenA;
+  doc["calibration"]["greenB"] = settings.greenB;
+  doc["calibration"]["greenC"] = settings.greenC;
+  doc["calibration"]["blueA"] = settings.blueA;
+  doc["calibration"]["blueB"] = settings.blueB;
+  doc["calibration"]["blueC"] = settings.blueC;
+  
+  String response;
+  serializeJson(doc, response);
+  
+  AsyncWebServerResponse *apiResponse = request->beginResponse(200, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+}
+
+// Auto-adjust handler
+void handleSetAutoAdjust(AsyncWebServerRequest *request) {
+  bool updated = false;
+  String response = "{\"status\":\"success\"";
+  if (request->hasParam("enable")) {
+    settings.enableAutoAdjust = request->getParam("enable")->value() == "true";
+    response += ",\"enable\":" + String(settings.enableAutoAdjust ? "true" : "false");
+    updated = true;
+  }
+  if (request->hasParam("satHigh")) {
+    settings.autoSatHigh = request->getParam("satHigh")->value().toFloat();
+    response += ",\"satHigh\":" + String(settings.autoSatHigh);
+    updated = true;
+  }
+  if (request->hasParam("satLow")) {
+    settings.autoSatLow = request->getParam("satLow")->value().toFloat();
+    response += ",\"satLow\":" + String(settings.autoSatLow);
+    updated = true;
+  }
+  if (request->hasParam("minInt")) {
+    settings.minIntegrationTime = (uint8_t)request->getParam("minInt")->value().toInt();
+    response += ",\"minInt\":" + String(settings.minIntegrationTime);
+    updated = true;
+  }
+  if (request->hasParam("maxInt")) {
+    settings.maxIntegrationTime = (uint8_t)request->getParam("maxInt")->value().toInt();
+    response += ",\"maxInt\":" + String(settings.maxIntegrationTime);
+    updated = true;
+  }
+  if (request->hasParam("step")) {
+    settings.integrationStep = (uint8_t)request->getParam("step")->value().toInt();
+    response += ",\"step\":" + String(settings.integrationStep);
+    updated = true;
+  }
+  response += "}";
+  request->send(200, "application/json", response);
+}
+

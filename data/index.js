@@ -15,6 +15,16 @@ let savedColors = [];
 let lastColorName = '';
 let lastR = 0, lastG = 0, lastB = 0;
 
+// Separate tracking for fast data and color names
+let fastColorData = null;
+let colorNameData = { colorName: 'Loading...', timestamp: 0 };
+let lastFastUpdate = 0;
+let lastColorNameUpdate = 0;
+
+// Battery monitoring variables
+let batteryData = { voltage: 0, percentage: 0, status: 'unknown' };
+let lastBatteryUpdate = 0;
+
 // Load saved colors from localStorage
 function loadSavedColors() {
     try {
@@ -38,17 +48,16 @@ function saveSavedColors() {
 }
 
 // Update the live color display
-function updateLiveColorDisplay(colorData) {
-
+function updateLiveColorDisplay(fastData, colorNameInfo) {
     const container = document.getElementById('liveColorDisplay');
     if (!container) {
         console.error('liveColorDisplay container not found!');
         return;
     }
 
-    // Validate color data
-    if (!colorData || typeof colorData.r === 'undefined' || typeof colorData.g === 'undefined' || typeof colorData.b === 'undefined') {
-        console.error('Invalid color data received:', colorData);
+    // Validate fast color data
+    if (!fastData || typeof fastData.r === 'undefined' || typeof fastData.g === 'undefined' || typeof fastData.b === 'undefined') {
+        console.error('Invalid fast color data received:', fastData);
         container.innerHTML = `
             <div class="placeholder-container">
                 <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
@@ -59,38 +68,49 @@ function updateLiveColorDisplay(colorData) {
         return;
     }
 
-    // Color stabilization - only update if color name has changed or significant RGB change
-    const rgbDiff = Math.abs(colorData.r - lastR) + Math.abs(colorData.g - lastG) + Math.abs(colorData.b - lastB);
-    const colorNameChanged = colorData.colorName !== lastColorName;
+    // Color stabilization - only update if color changed significantly
+    const rgbDiff = Math.abs(fastData.r - lastR) + Math.abs(fastData.g - lastG) + Math.abs(fastData.b - lastB);
+    const colorNameChanged = colorNameInfo && colorNameInfo.colorName !== lastColorName;
     
-    // Only update if color name changed or RGB changed significantly (threshold of 10)
-    if (!colorNameChanged && rgbDiff < 10) {
-        return; // Skip silently to avoid console jitter
+    // Only update display if RGB changed significantly (threshold of 3 for faster updates) or color name changed
+    if (!colorNameChanged && rgbDiff < 3) {
+        return; // Skip to avoid excessive DOM updates
     }
 
-    lastColorName = colorData.colorName;
-    lastR = colorData.r;
-    lastG = colorData.g;
-    lastB = colorData.b;
+    lastR = fastData.r;
+    lastG = fastData.g;
+    lastB = fastData.b;
+    
+    if (colorNameInfo && colorNameInfo.colorName) {
+        lastColorName = colorNameInfo.colorName;
+    }
 
-    const hex = rgbToHex(colorData.r, colorData.g, colorData.b);
+    const hex = rgbToHex(fastData.r, fastData.g, fastData.b);
+    const displayName = colorNameInfo ? colorNameInfo.colorName : lastColorName || 'Live Sensor Feed';
+    
+    // Show if color name is updating
+    const colorNameStatus = colorNameInfo && colorNameInfo.lookupInProgress ? ' (updating...)' : '';
 
     container.innerHTML = `
         <div class="color-display">
             <div class="color-swatch live-swatch" style="background-color: ${hex};"></div>
             <div class="color-details">
-                <p class="color-name">${colorData.colorName || 'Live Sensor Feed'}</p>
-                <p class="color-values">RGB: ${colorData.r}, ${colorData.g}, ${colorData.b}</p>
+                <p class="color-name">${displayName}${colorNameStatus}</p>
+                <p class="color-values">RGB: ${fastData.r}, ${fastData.g}, ${fastData.b}</p>
                 <p class="color-values">HEX: ${hex}</p>
-                <p class="color-values" style="font-size: 0.8rem; opacity: 0.7;">Updated: ${new Date().toLocaleTimeString()}</p>
+                <p class="color-values" style="font-size: 0.8rem; opacity: 0.7;">
+                    Sensor: ${new Date(fastData.timestamp).toLocaleTimeString()}
+                    ${colorNameInfo && colorNameInfo.colorNameTimestamp ? 
+                      ` | Color: ${new Date(colorNameInfo.colorNameTimestamp).toLocaleTimeString()}` : ''}
+                </p>
             </div>
         </div>
     `;
 
     liveColor = {
         id: 0,
-        name: colorData.colorName || 'Live Sensor Feed',
-        rgb: { r: colorData.r, g: colorData.g, b: colorData.b },
+        name: displayName,
+        rgb: { r: fastData.r, g: fastData.g, b: fastData.b },
         hex: hex
     };
 
@@ -155,7 +175,125 @@ function updateSavedColorsDisplay() {
     }
 }
 
-// Fetch live color data from ESP32
+async function fetchFastColor() {
+    try {
+        const response = await fetch('/api/color-fast');
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        fastColorData = data;
+        lastFastUpdate = Date.now();
+        
+        // Update battery data if available in fast color response
+        if (data.batteryVoltage !== undefined) {
+            batteryData.voltage = data.batteryVoltage;
+            // Calculate percentage based on voltage (rough estimate)
+            if (data.batteryVoltage > 4.0) {
+                batteryData.percentage = 100;
+                batteryData.status = 'excellent';
+            } else if (data.batteryVoltage > 3.7) {
+                batteryData.percentage = Math.round((data.batteryVoltage - 3.0) / 1.2 * 100);
+                batteryData.status = 'good';
+            } else if (data.batteryVoltage > 3.4) {
+                batteryData.percentage = Math.round((data.batteryVoltage - 3.0) / 1.2 * 100);
+                batteryData.status = 'low';
+            } else {
+                batteryData.percentage = 0;
+                batteryData.status = 'critical';
+            }
+            updateBatteryDisplay();
+        }
+        
+        // Update display with current fast data and last known color name
+        updateLiveColorDisplay(fastColorData, colorNameData);
+
+    } catch (error) {
+        console.error('Fast color API error:', error);
+        showConnectionError('Fast Color', error.message);
+    }
+}
+
+async function fetchColorName() {
+    try {
+        const response = await fetch('/api/color-name');
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        colorNameData = data;
+        lastColorNameUpdate = Date.now();
+        
+        // Update display with current color name and last known fast data
+        if (fastColorData) {
+            updateLiveColorDisplay(fastColorData, colorNameData);
+        }
+
+    } catch (error) {
+        console.error('Color name API error:', error);
+        // Don't show error for color names - just continue with last known name
+    }
+}
+
+// Battery monitoring functions
+async function fetchBatteryStatus() {
+    try {
+        const response = await fetch('/api/battery');
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        batteryData = {
+            voltage: data.batteryVoltage,
+            percentage: data.percentage,
+            status: data.status
+        };
+        lastBatteryUpdate = Date.now();
+        
+        updateBatteryDisplay();
+
+    } catch (error) {
+        console.error('Battery API error:', error);
+        // Continue with last known battery data
+    }
+}
+
+function updateBatteryDisplay() {
+    const voltageElement = document.getElementById('batteryVoltage');
+    const iconElement = document.getElementById('batteryIcon');
+    
+    if (!voltageElement || !iconElement) {
+        console.error('Battery display elements not found');
+        return;
+    }
+
+    // Update voltage display
+    voltageElement.textContent = `${batteryData.voltage.toFixed(2)}V`;
+    
+    // Update icon based on status
+    iconElement.className = `fas fa-battery-full ${batteryData.status}`;
+    
+    // Update icon based on percentage
+    if (batteryData.percentage > 75) {
+        iconElement.className = `fas fa-battery-full ${batteryData.status}`;
+    } else if (batteryData.percentage > 50) {
+        iconElement.className = `fas fa-battery-three-quarters ${batteryData.status}`;
+    } else if (batteryData.percentage > 25) {
+        iconElement.className = `fas fa-battery-half ${batteryData.status}`;
+    } else if (batteryData.percentage > 10) {
+        iconElement.className = `fas fa-battery-quarter ${batteryData.status}`;
+    } else {
+        iconElement.className = `fas fa-battery-empty ${batteryData.status}`;
+    }
+}
+
+// Legacy function for backwards compatibility - combines both fast and color name data
 async function fetchLiveColor() {
     try {
         const response = await fetch('/api/color');
@@ -165,27 +303,42 @@ async function fetchLiveColor() {
         }
 
         const data = await response.json();
-        updateLiveColorDisplay(data);
+        // Convert to new format
+        fastColorData = {
+            r: data.r, g: data.g, b: data.b,
+            x: data.x, y: data.y, z: data.z,
+            ir1: data.ir1, ir2: data.ir2,
+            timestamp: data.timestamp
+        };
+        colorNameData = {
+            colorName: data.colorName,
+            colorNameTimestamp: data.timestamp
+        };
+        
+        updateLiveColorDisplay(fastColorData, colorNameData);
 
     } catch (error) {
         console.error('API error:', error);
-        // Show detailed error in live display
-        const container = document.getElementById('liveColorDisplay');
-        container.innerHTML = `
-            <div class="placeholder-container">
-                <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
-                <p class="placeholder-text">Connection Error</p>
-                <p class="placeholder-text" style="font-size: 0.9rem;">${error.message}</p>
-                <p class="placeholder-text" style="font-size: 0.8rem;">Retrying in 500ms...</p>
-            </div>
-        `;
-
-        // Also show error in page title for debugging
-        document.title = `Color Matcher - Error: ${error.message}`;
-        setTimeout(() => {
-            document.title = 'Color Matcher - Live View';
-        }, 2000);
+        showConnectionError('Connection', error.message);
     }
+}
+
+function showConnectionError(type, message) {
+    const container = document.getElementById('liveColorDisplay');
+    container.innerHTML = `
+        <div class="placeholder-container">
+            <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
+            <p class="placeholder-text">${type} Error</p>
+            <p class="placeholder-text" style="font-size: 0.9rem;">${message}</p>
+            <p class="placeholder-text" style="font-size: 0.8rem;">Retrying...</p>
+        </div>
+    `;
+
+    // Also show error in page title for debugging
+    document.title = `Color Matcher - ${type} Error: ${message}`;
+    setTimeout(() => {
+        document.title = 'Color Matcher - Live View';
+    }, 2000);
 }
 
 // Capture current live color
@@ -287,6 +440,30 @@ function updateSettingsUI() {
     // Debug Settings
     document.getElementById('debugSensor').checked = currentSettings.debugSensorReadings || false;
     document.getElementById('debugColors').checked = currentSettings.debugColorMatching || false;
+    
+    // Calibration Mode
+    const calibrationMode = currentSettings.calibrationMode || 'custom';
+    document.getElementById('calibrationMode').value = calibrationMode;
+    
+    // Show/hide quadratic calibration controls based on mode
+    const quadraticSections = document.querySelectorAll('.setting-group h3');
+    let quadraticSection = null;
+    for (let section of quadraticSections) {
+        if (section.textContent.includes('Quadratic Calibration')) {
+            quadraticSection = section.parentElement;
+            break;
+        }
+    }
+    
+    if (quadraticSection) {
+        if (calibrationMode === 'dfrobot') {
+            quadraticSection.style.opacity = '0.5';
+            quadraticSection.style.pointerEvents = 'none';
+        } else {
+            quadraticSection.style.opacity = '1';
+            quadraticSection.style.pointerEvents = 'auto';
+        }
+    }
 }
 
 // Send settings update to ESP32
@@ -394,22 +571,51 @@ async function applyAllSettings() {
 
 // Reset settings to defaults
 function resetToDefaults() {
-    if (confirm('Reset all settings to defaults? This will reload the page.')) {
-        // Reset to compile-time defaults
-        currentSettings = {
-            ledBrightness: 85,
-            sensorIntegrationTime: 35, // 0x23
-            colorReadingSamples: 5,
-            sensorSampleDelay: 2,
-            irCompensationFactor1: 0.35,
-            irCompensationFactor2: 0.34,
-            debugSensorReadings: true,
-            debugColorMatching: true
-        };
-        updateSettingsUI();
-        applyAllSettings().then(() => {
-            setTimeout(() => location.reload(), 1000);
-        });
+    // This function is replaced by resetToDFRobot and resetToCustom
+    console.warn('resetToDefaults called - this should use specific reset functions');
+}
+
+// Reset to DFRobot library defaults
+async function resetToDFRobot() {
+    if (confirm('Reset to DFRobot library defaults? This uses the standard sensor matrix conversion.')) {
+        try {
+            const response = await fetch('/api/reset-to-dfrobot', { method: 'POST' });
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                console.log('Reset to DFRobot defaults successful');
+                await loadCurrentSettings();
+                await loadCalibrationSettings();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Failed to reset: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Reset to DFRobot failed:', error);
+            alert('Failed to reset to DFRobot defaults');
+        }
+    }
+}
+
+// Reset to custom quadratic calibration defaults
+async function resetToCustom() {
+    if (confirm('Reset to custom quadratic calibration defaults? This uses advanced tunable equations.')) {
+        try {
+            const response = await fetch('/api/reset-to-custom', { method: 'POST' });
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                console.log('Reset to custom defaults successful');
+                await loadCurrentSettings();
+                await loadCalibrationSettings();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Failed to reset: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Reset to custom failed:', error);
+            alert('Failed to reset to custom defaults');
+        }
     }
 }
 
@@ -491,10 +697,205 @@ function initializeSettingsListeners() {
         updateDebugSettings(sensorChecked, e.target.checked);
     });
     
+    // Calibration control event listeners
+    document.getElementById('applyCalibration').addEventListener('click', updateCalibrationCoefficients);
+    document.getElementById('resetCalibration').addEventListener('click', resetCalibrationToDefaults);
+    document.getElementById('tuneVividWhite').addEventListener('click', tuneForVividWhite);
+    
     // Action buttons
     document.getElementById('loadSettings').addEventListener('click', loadCurrentSettings);
     document.getElementById('saveSettings').addEventListener('click', applyAllSettings);
-    document.getElementById('resetSettings').addEventListener('click', resetToDefaults);
+    document.getElementById('resetToDFRobot').addEventListener('click', resetToDFRobot);
+    document.getElementById('resetToCustom').addEventListener('click', resetToCustom);
+    
+    // Calibration mode selector
+    document.getElementById('calibrationMode').addEventListener('change', async function() {
+        const mode = this.value;
+        try {
+            const response = await fetch(`/api/set-calibration-mode?mode=${mode}`);
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                console.log(`Calibration mode set to: ${mode}`);
+                // Update UI to show/hide calibration controls based on mode
+                const quadraticSections = document.querySelectorAll('.setting-group h3');
+                let quadraticSection = null;
+                for (let section of quadraticSections) {
+                    if (section.textContent.includes('Quadratic Calibration')) {
+                        quadraticSection = section.parentElement;
+                        break;
+                    }
+                }
+                if (quadraticSection) {
+                    if (mode === 'dfrobot') {
+                        // Hide quadratic calibration controls when using DFRobot mode
+                        quadraticSection.style.opacity = '0.5';
+                        quadraticSection.style.pointerEvents = 'none';
+                    } else {
+                        // Show quadratic calibration controls for custom mode
+                        quadraticSection.style.opacity = '1';
+                        quadraticSection.style.pointerEvents = 'auto';
+                    }
+                }
+            } else {
+                alert('Failed to set calibration mode: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Failed to set calibration mode:', error);
+            alert('Failed to set calibration mode');
+        }
+    });
+}
+
+// Calibration Settings Management
+let calibrationSettings = {
+    redA: 5.756615248518086e-06,
+    redB: -0.10824971353127427,
+    redC: 663.2283515839658,
+    greenA: 7.700364703908128e-06,
+    greenB: -0.14873455804115546,
+    greenC: 855.288778468652,
+    blueA: -2.7588632792769936e-06,
+    blueB: 0.04959423885676833,
+    blueC: 35.55576869603341
+};
+
+// Load current calibration settings from ESP32
+async function loadCalibrationSettings() {
+    try {
+        const response = await fetch('/api/calibration');
+        if (response.ok) {
+            calibrationSettings = await response.json();
+            updateCalibrationUI();
+            console.log('Calibration settings loaded:', calibrationSettings);
+        } else {
+            console.error('Failed to load calibration settings:', response.status);
+        }
+    } catch (error) {
+        console.error('Error loading calibration settings:', error);
+    }
+}
+
+// Update the calibration UI with current values
+function updateCalibrationUI() {
+    // Update calibration mode if available
+    if (calibrationSettings.calibrationMode) {
+        document.getElementById('calibrationMode').value = calibrationSettings.calibrationMode;
+        
+        // Show/hide quadratic calibration controls
+        const quadraticSections = document.querySelectorAll('.setting-group h3');
+        let quadraticSection = null;
+        for (let section of quadraticSections) {
+            if (section.textContent.includes('Quadratic Calibration')) {
+                quadraticSection = section.parentElement;
+                break;
+            }
+        }
+        
+        if (quadraticSection) {
+            if (calibrationSettings.calibrationMode === 'dfrobot') {
+                quadraticSection.style.opacity = '0.5';
+                quadraticSection.style.pointerEvents = 'none';
+            } else {
+                quadraticSection.style.opacity = '1';
+                quadraticSection.style.pointerEvents = 'auto';
+            }
+        }
+    }
+    
+    // Red channel
+    document.getElementById('redA').value = (calibrationSettings.redA * 1e6).toFixed(2);
+    document.getElementById('redB').value = calibrationSettings.redB.toFixed(6);
+    document.getElementById('redC').value = calibrationSettings.redC.toFixed(1);
+    
+    // Green channel
+    document.getElementById('greenA').value = (calibrationSettings.greenA * 1e6).toFixed(2);
+    document.getElementById('greenB').value = calibrationSettings.greenB.toFixed(6);
+    document.getElementById('greenC').value = calibrationSettings.greenC.toFixed(1);
+    
+    // Blue channel
+    document.getElementById('blueA').value = (calibrationSettings.blueA * 1e6).toFixed(2);
+    document.getElementById('blueB').value = calibrationSettings.blueB.toFixed(6);
+    document.getElementById('blueC').value = calibrationSettings.blueC.toFixed(1);
+}
+
+// Send calibration update to ESP32
+async function updateCalibrationCoefficients() {
+    try {
+        const coefficients = {
+            redA: parseFloat(document.getElementById('redA').value) * 1e-6,
+            redB: parseFloat(document.getElementById('redB').value),
+            redC: parseFloat(document.getElementById('redC').value),
+            greenA: parseFloat(document.getElementById('greenA').value) * 1e-6,
+            greenB: parseFloat(document.getElementById('greenB').value),
+            greenC: parseFloat(document.getElementById('greenC').value),
+            blueA: parseFloat(document.getElementById('blueA').value) * 1e-6,
+            blueB: parseFloat(document.getElementById('blueB').value),
+            blueC: parseFloat(document.getElementById('blueC').value)
+        };
+
+        // Use query parameters for ESP32 compatibility
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(coefficients)) {
+            params.append(key, value);
+        }
+
+        const response = await fetch(`/api/calibration?${params.toString()}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log('Calibration updated:', result);
+            calibrationSettings = coefficients;
+            showNotification('Calibration coefficients updated successfully!');
+        } else {
+            console.error('Failed to update calibration:', response.status);
+            showNotification('Failed to update calibration coefficients');
+        }
+    } catch (error) {
+        console.error('Error updating calibration:', error);
+        showNotification('Error updating calibration coefficients');
+    }
+}
+
+// Quick tuning for specific target colors
+async function tuneForVividWhite() {
+    try {
+        const response = await fetch('/api/tune-vivid-white', { method: 'POST' });
+        if (response.ok) {
+            const result = await response.json();
+            console.log('Tuned for Vivid White:', result);
+            calibrationSettings = result.calibration;
+            updateCalibrationUI();
+            showNotification('Tuned for Vivid White (247,248,244)');
+        } else {
+            console.error('Failed to tune for Vivid White:', response.status);
+            showNotification('Failed to tune for Vivid White');
+        }
+    } catch (error) {
+        console.error('Error tuning for Vivid White:', error);
+        showNotification('Error tuning for Vivid White');
+    }
+}
+
+// Reset calibration to defaults
+function resetCalibrationToDefaults() {
+    if (confirm('Reset calibration coefficients to factory defaults?')) {
+        calibrationSettings = {
+            redA: 5.756615248518086e-06,
+            redB: -0.10824971353127427,
+            redC: 663.2283515839658,
+            greenA: 7.700364703908128e-06,
+            greenB: -0.14873455804115546,
+            greenC: 855.288778468652,
+            blueA: -2.7588632792769936e-06,
+            blueB: 0.04959423885676833,
+            blueC: 35.55576869603341
+        };
+        updateCalibrationUI();
+        updateCalibrationCoefficients();
+    }
 }
 
 // Initialize application
@@ -507,14 +908,25 @@ function init() {
     captureBtn.addEventListener('click', captureColor);
     captureBtn.disabled = true; // Initially disabled until first color is fetched
     
-    // Start fetching live color data
-    fetchLiveColor();
+    // Start fetching data immediately
+    fetchFastColor();
+    fetchColorName();
+    fetchBatteryStatus();
     
-    // Set up interval to fetch live color every 250ms for smoother experience
-    setInterval(fetchLiveColor, 150); // Maximum responsiveness for real-time color detection
+    // Set up fast polling for sensor data (75ms for very smooth real-time updates)
+    setInterval(fetchFastColor, 75);
+    
+    // Set up slower polling for color names (2 seconds - matches ESP32 internal lookup interval)
+    setInterval(fetchColorName, 2000);
+    
+    // Set up battery monitoring (update every 10 seconds)
+    setInterval(fetchBatteryStatus, 10000);
 
     // Load current settings
     loadCurrentSettings();
+
+    // Load calibration settings
+    loadCalibrationSettings();
 
     // Initialize settings listeners
     initializeSettingsListeners();

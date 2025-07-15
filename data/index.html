@@ -9,7 +9,13 @@
 </head>
 <body>
     <main>
-        <h1><i class="fas fa-palette"></i> Color Matcher</h1>
+        <div class="header-container">
+            <h1><i class="fas fa-palette"></i> Color Matcher</h1>
+            <div class="battery-status-small">
+                <i class="fas fa-battery-full" id="batteryIcon"></i>
+                <span id="batteryVoltage">--.-V</span>
+            </div>
+        </div>
 
         <div class="card scanner-control">
             <button class="scan-button" id="captureBtn">
@@ -49,6 +55,7 @@
                         <label for="ledBrightness">LED Brightness (0-255):</label>
                         <input type="range" id="ledBrightness" min="0" max="255" value="85">
                         <span id="ledBrightnessValue">85</span>
+                        <span class="setting-help">Higher = brighter illumination, may cause saturation</span>
                     </div>
                     <div class="setting-item">
                         <label for="integrationTime">Integration Time (hex):</label>
@@ -63,6 +70,7 @@
                             <option value="192">0xC0 - Maximum (537ms)</option>
                             <option value="255">0xFF - Ultra Precise (712ms)</option>
                         </select>
+                        <span class="setting-help">Longer time = more accurate but slower readings</span>
                     </div>
                 </div>
 
@@ -72,11 +80,13 @@
                         <label for="colorSamples">Color Samples (1-10):</label>
                         <input type="range" id="colorSamples" min="1" max="10" value="5">
                         <span id="colorSamplesValue">5</span>
+                        <span class="setting-help">More samples = smoother readings but slower response</span>
                     </div>
                     <div class="setting-item">
                         <label for="sampleDelay">Sample Delay (ms):</label>
                         <input type="range" id="sampleDelay" min="1" max="20" value="2">
                         <span id="sampleDelayValue">2</span>
+                        <span class="setting-help">Delay between readings - reduce for faster scanning</span>
                     </div>
                 </div>
 
@@ -86,11 +96,103 @@
                         <label for="irFactor1">IR1 Factor (0-1):</label>
                         <input type="range" id="irFactor1" min="0" max="100" value="35" step="1">
                         <span id="irFactor1Value">0.35</span>
+                        <span class="setting-help">Remove infrared interference - adjust if colors drift</span>
                     </div>
                     <div class="setting-item">
                         <label for="irFactor2">IR2 Factor (0-1):</label>
                         <input type="range" id="irFactor2" min="0" max="100" value="34" step="1">
                         <span id="irFactor2Value">0.34</span>
+                        <span class="setting-help">Secondary IR compensation - fine-tune color accuracy</span>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h3>🎯 Calibration Mode</h3>
+                    <div class="setting-item">
+                        <label>Calibration Engine:</label>
+                        <select id="calibrationMode">
+                            <option value="custom">Custom Quadratic (Advanced)</option>
+                            <option value="dfrobot">DFRobot Library (Default)</option>
+                        </select>
+                        <span class="setting-help">DFRobot = standard library matrix, Custom = tunable quadratic equations</span>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h3>🎯 Quadratic Calibration</h3>
+                    <p class="setting-description">Formula: RGB = A×XYZ² + B×XYZ + C</p>
+                    
+                    <h4>🔴 Red Channel (R = A*X² + B*X + C)</h4>
+                    <div class="setting-item">
+                        <label for="redA">Red A (×10⁻⁶):</label>
+                        <input type="number" id="redA" step="0.1" value="5.76">
+                        <span class="setting-unit">×10⁻⁶</span>
+                        <span class="setting-help">Curve shape - controls brightness at high sensor values</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="redB">Red B:</label>
+                        <input type="number" id="redB" step="0.001" value="-0.108">
+                        <span class="setting-help">Linear slope - consistent brightness adjustment</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="redC">Red C:</label>
+                        <input type="number" id="redC" step="1" value="663">
+                        <span class="setting-help">Baseline offset - overall brightness level</span>
+                    </div>
+                    
+                    <h4>🟢 Green Channel (G = A*Y² + B*Y + C)</h4>
+                    <div class="setting-item">
+                        <label for="greenA">Green A (×10⁻⁶):</label>
+                        <input type="number" id="greenA" step="0.1" value="7.70">
+                        <span class="setting-unit">×10⁻⁶</span>
+                        <span class="setting-help">Curve shape - controls brightness at high sensor values</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="greenB">Green B:</label>
+                        <input type="number" id="greenB" step="0.001" value="-0.149">
+                        <span class="setting-help">Linear slope - consistent brightness adjustment</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="greenC">Green C:</label>
+                        <input type="number" id="greenC" step="1" value="855">
+                        <span class="setting-help">Baseline offset - overall brightness level</span>
+                    </div>
+                    
+                    <h4>🔵 Blue Channel (B = A*Z² + B*Z + C)</h4>
+                    <div class="setting-item">
+                        <label for="blueA">Blue A (×10⁻⁶):</label>
+                        <input type="number" id="blueA" step="0.1" value="-2.76">
+                        <span class="setting-unit">×10⁻⁶</span>
+                        <span class="setting-help">Curve shape - controls brightness at high sensor values</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="blueB">Blue B:</label>
+                        <input type="number" id="blueB" step="0.001" value="0.050">
+                        <span class="setting-help">Linear slope - consistent brightness adjustment</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="blueC">Blue C:</label>
+                        <input type="number" id="blueC" step="1" value="36">
+                        <span class="setting-help">Baseline offset - overall brightness level</span>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <button id="applyCalibration" class="btn-primary">
+                            <i class="fas fa-magic"></i> Apply Calibration
+                        </button>
+                        <button id="resetCalibration" class="btn-warning">
+                            <i class="fas fa-undo"></i> Reset to Defaults
+                        </button>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h3>🎯 Quick Target Tuning</h3>
+                    <div class="setting-item">
+                        <label>Target Colors:</label>
+                        <button id="tuneVividWhite" class="btn-target">
+                            <i class="fas fa-bullseye"></i> Tune for Vivid White (247,248,244)
+                        </button>
                     </div>
                 </div>
 
@@ -116,8 +218,11 @@
                 <button id="saveSettings" class="btn-primary">
                     <i class="fas fa-save"></i> Apply Settings
                 </button>
-                <button id="resetSettings" class="btn-warning">
-                    <i class="fas fa-undo"></i> Reset to Defaults
+                <button id="resetToDFRobot" class="btn-warning">
+                    <i class="fas fa-factory-default"></i> Reset to DFRobot Defaults
+                </button>
+                <button id="resetToCustom" class="btn-secondary">
+                    <i class="fas fa-tools"></i> Reset to Custom Defaults
                 </button>
             </div>
         </div>
@@ -127,6 +232,15 @@
             <div class="saved-colors-grid" id="savedColorsGrid">
             </div>
         </div>
+        <h2>Automated Features</h2>
+        <p>The firmware includes advanced automated calibration and adjustment features that work in real-time:</p>
+        <ul>
+          <li><strong>Dynamic Coefficient Switching</strong>: Automatically switches calibration coefficients based on brightness (Y value) for optimal accuracy across light and dark colors.</li>
+          <li><strong>Auto-Adjust Integration Time and Gain</strong>: Dynamically adjusts sensor integration time and gain based on saturation levels to prevent over/under-exposure.</li>
+          <li><strong>Dynamic IR Compensation</strong>: Adjusts infrared compensation automatically based on detected IR levels for better color fidelity.</li>
+          <li><strong>Post-Processing Corrections</strong>: Applies automatic corrections after reading to enhance accuracy.</li>
+          <li><strong>Real-Time Settings Adjustment</strong>: Use the sliders below to fine-tune parameters live via this web interface – changes apply immediately!</li>
+        </ul>
     </main>
 
     <script src="/index.js"></script>

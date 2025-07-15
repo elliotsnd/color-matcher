@@ -52,9 +52,9 @@
 
 // Distance and Measurement Settings
 #define OPTIMAL_SENSOR_DISTANCE_MM 15         // 📏 Optimal distance from color target in mm (default: 15)
-#define COLOR_READING_SAMPLES 5               // 🔄 Number of readings to average (default: 3)
-#define COLOR_STABILITY_THRESHOLD 10          // 📊 RGB change threshold for stable reading (default: 10)
-#define SENSOR_SAMPLE_DELAY 2                 // ⏲️ Delay between samples in ms (default: 2)
+#define COLOR_READING_SAMPLES 7               // 🔄 Number of readings to average - increased for stability
+#define COLOR_STABILITY_THRESHOLD 5           // 📊 RGB change threshold for stable reading - tighter tolerance
+#define SENSOR_SAMPLE_DELAY 3                 // ⏲️ Delay between samples in ms - slightly increased for stability
 
 // Sensor Hardware Settings
 /*
@@ -77,14 +77,14 @@
  * 🏃 For faster sampling, try 0x11 (50ms) 
  * 🎯 For maximum precision, try 0x80 (359ms)
  */
-#define SENSOR_INTEGRATION_TIME 0x23          // ⚙️ TCS3430 integration time - see chart above
+#define SENSOR_INTEGRATION_TIME 0x40          // ⚙️ TCS3430 integration time - 181ms for higher precision
 #define SENSOR_SATURATION_THRESHOLD 65000     // 🚨 Saturation detection limit (default: 65000)
 #define LED_PIN 5                             // 💡 LED pin number (default: 5)
-#define LED_BRIGHTNESS 85                     // 🔆 LED brightness 0-255 (default: 80)
+#define LED_BRIGHTNESS 75                     // 🔆 LED brightness 0-255 - reduced to prevent saturation artifacts
 
 // Color Calibration Fine-Tuning
-#define IR_COMPENSATION_FACTOR_1 0.35         // 🔧 IR1 compensation multiplier - subtracts (IR1 * factor) from XYZ (default: 0.32)
-#define IR_COMPENSATION_FACTOR_2 0.34         // 🔧 IR2 compensation multiplier - subtracts (IR2 * factor) from XYZ (default: 0.32)
+#define IR_COMPENSATION_FACTOR_1 0.30         // 🔧 IR1 compensation multiplier - fine-tuned for accuracy
+#define IR_COMPENSATION_FACTOR_2 0.30         // 🔧 IR2 compensation multiplier - balanced for both channels
 #define RGB_SATURATION_LIMIT 255              // 🌈 Maximum RGB value after calibration - prevents overflow (default: 255)
 
 // Calibration Parameters (from main.cpp defaults)
