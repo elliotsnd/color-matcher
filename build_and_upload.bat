@@ -31,8 +31,8 @@ echo ✅ Build successful!
 REM Ask user if they want to upload
 set /p upload=📤 Upload to device? (y/N): 
 if /i "%upload%"=="y" (
-    echo 📤 Uploading to ESP32...
-    pio run --target upload
+    echo 📤 Uploading to ESP32 with auto-retry...
+    call upload_with_retry.bat
     if %ERRORLEVEL% EQU 0 (
         echo ✅ Upload successful!
         echo.
@@ -48,7 +48,7 @@ if /i "%upload%"=="y" (
         echo    • Debug toggles
         echo    • Settings persistence
     ) else (
-        echo ❌ Upload failed.
+        echo ❌ Upload failed after all retry attempts.
         pause
         exit /b 1
     )

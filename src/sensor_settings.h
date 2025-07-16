@@ -83,9 +83,9 @@
 #define LED_BRIGHTNESS 75                     // 🔆 LED brightness 0-255 - reduced to prevent saturation artifacts
 
 // Color Calibration Fine-Tuning
-#define IR_COMPENSATION_FACTOR_1 0.30         // 🔧 IR1 compensation multiplier - fine-tuned for accuracy
-#define IR_COMPENSATION_FACTOR_2 0.30         // 🔧 IR2 compensation multiplier - balanced for both channels
-#define RGB_SATURATION_LIMIT 255              // 🌈 Maximum RGB value after calibration - prevents overflow (default: 255)
+#define IR_COMPENSATION_FACTOR_1 0.20         // 🔧 IR1 compensation multiplier - reduced for better grey accuracy
+#define IR_COMPENSATION_FACTOR_2 0.20         // 🔧 IR2 compensation multiplier - reduced for better grey accuracy
+#define RGB_SATURATION_LIMIT 255              // 🌈 Restored for higher RGB values - prevents overflow (default: 255)
 
 // Calibration Parameters (from main.cpp defaults)
 #define CALIBRATION_IR_COMPENSATION 0.32f     // 🔬 IR compensation factor (default: 0.32)

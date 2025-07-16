@@ -1,4 +1,4 @@
-/*!
+﻿/*!
  * @file getXYZIRData.ino
  * @brief Definitive, Fully Calibrated Code with Web Server
  * @copyright  Copyright (c) 2010 DFRobot Co.Ltd (http://www.dfrobot.com)
@@ -10,7 +10,7 @@
  * @url  https://github.com/DFRobot/DFRobot_TCS3430
  */
 
-// 🎛️ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
+// ðŸŽ›ï¸ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
 #include "sensor_settings.h"
 
 #include <DFRobot_TCS3430.h>
@@ -197,16 +197,43 @@ struct RuntimeSettings {
   float irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
   uint8_t rgbSaturationLimit = RGB_SATURATION_LIMIT;
   
-  // Quadratic Calibration Coefficients (Runtime Adjustable)
-  float redA = 5.756615248518086e-06f;   // Red channel quadratic coefficient A
-  float redB = -0.10824971353127427f;    // Red channel linear coefficient B
-  float redC = 663.2283515839658f;       // Red channel constant coefficient C
-  float greenA = 7.700364703908128e-06f; // Green channel quadratic coefficient A
-  float greenB = -0.14873455804115546f;  // Green channel linear coefficient B
-  float greenC = 855.288778468652f;      // Green channel constant coefficient C
-  float blueA = -2.7588632792769936e-06f; // Blue channel quadratic coefficient A
-  float blueB = 0.04959423885676833f;    // Blue channel linear coefficient B
-  float blueC = 35.55576869603341f;      // Blue channel constant coefficient C
+  // Matrix-based calibration (wide-range)
+  bool useMatrixCalibration = true; // true = use 3Ã—3 matrix+offset instead of per-channel quadratic
+  
+  // Bright-range matrix (used when Y > dynamicThreshold) - Optimized for vivid white RGB(247,248,244)
+  float brightMatrix[9] = { 0.0280f, -0.0045f, -0.0070f,
+                            -0.0055f,  0.0254f,  0.0005f,
+                             0.0022f, -0.0042f,  0.0545f };
+  float brightOffset[3] = { 0.0f, 0.0f, 0.0f };
+  
+  // Dark-range matrix (used when Y <= dynamicThreshold) - Fine-tuned for precise RGB(168,160,147)
+  float darkMatrix[9]   = { 0.0291f, -0.0032f, -0.0024f,
+                           -0.0040f,  0.0268f,   0.0016f,
+                            0.0016f, -0.0030f,   0.0606f };
+  float darkOffset[3]   = { 0.0f, 0.0f, 0.0f };
+  
+  // Dynamic calibration control
+  bool enableDynamicCalibration = true;
+  float dynamicThreshold = 8000.0f; // Y threshold for bright/dark matrix switching - restored for proper grey detection
+  
+  // Auto-adjust integration
+  bool enableAutoAdjust = true;
+  float autoSatHigh = 0.9f;
+  float autoSatLow = 0.1f;
+  uint8_t minIntegrationTime = 0x10;
+  uint8_t maxIntegrationTime = 0x80;
+  uint8_t integrationStep = 0x10;
+  
+  // Quadratic calibration (legacy/backup)
+  float redA = 5.756615248518086e-06f;
+  float redB = -0.10824971353127427f;
+  float redC = 663.2283515839658f;
+  float greenA = 7.700364703908128e-06f;
+  float greenB = -0.14873455804115546f;
+  float greenC = 855.288778468652f;
+  float blueA = -2.7588632792769936e-06f;
+  float blueB = 0.04959423885676833f;
+  float blueC = 35.55576869603341f;
   
   // Legacy Calibration Parameters (for compatibility)
   float irCompensation = CALIBRATION_IR_COMPENSATION;
@@ -235,8 +262,6 @@ struct RuntimeSettings {
   bool debugPerformanceTiming = DEBUG_PERFORMANCE_TIMING;
   int sensorReadingInterval = SENSOR_READING_INTERVAL_MS;
   
-
-  
   // White Optimized Coefficients
   float whiteRedA = 0.000001f;
   float whiteRedB = -0.01278f;
@@ -247,46 +272,22 @@ struct RuntimeSettings {
   float whiteBlueA = 0.0000008f;
   float whiteBlueB = 0.019f;
   float whiteBlueC = 160.0f;
-  // Grey Optimized Coefficients
-  float greyRedA = 0.000001f;
-  float greyRedB = -0.015f;
-  float greyRedC = 220.0f;
-  float greyGreenA = 0.000006f;
-  float greyGreenB = -0.06f;
-  float greyGreenC = 360.0f;
-  float greyBlueA = 0.0000008f;
-  float greyBlueB = 0.003f;
-  float greyBlueC = 140.0f;
-  // Dynamic calibration
-  bool enableDynamicCalibration = true;
-  float dynamicThreshold = 7500.0f;
+  // Grey Optimized Coefficients - tuned for target RGB(168,160,147)
+  float greyRedA = 0.0000007f;
+  float greyRedB = -0.012f;
+  float greyRedC = 168.0f;
+  float greyGreenA = 0.0000011f;
+  float greyGreenB = -0.015f;
+  float greyGreenC = 160.0f;
+  float greyBlueA = 0.0000009f;
+  float greyBlueB = -0.008f;
+  float greyBlueC = 147.0f;
   
-  // Dynamic IR compensation
+  // Dynamic IR compensation - adjusted for grey port accuracy
   bool enableDynamicIR = true;
-  float irHighThreshold = 500.0f;
-  float irLowFactor = 0.25f;
-  float irHighFactor = 0.15f;
-  
-  // Auto-adjust integration
-  bool enableAutoAdjust = true;
-  float autoSatHigh = 0.9f;
-  float autoSatLow = 0.1f;
-  uint8_t minIntegrationTime = 0x10;
-  uint8_t maxIntegrationTime = 0x80;
-  uint8_t integrationStep = 0x10;
-  
-  // Matrix-based calibration (wide-range)
-  bool useMatrixCalibration = true; // true = use 3×3 matrix+offset instead of per-channel quadratic
-  // Bright-range matrix (used when Y > dynamicThreshold)
-  float brightMatrix[9] = { 3.2406f, -1.5372f, -0.4986f,
-                            -0.9689f,  1.8758f,  0.0415f,
-                             0.0557f, -0.2040f,  1.0570f };
-  float brightOffset[3] = { 0.0f, 0.0f, 0.0f };
-  // Dark-range matrix (used when Y <= dynamicThreshold)
-  float darkMatrix[9]   = { 3.2406f, -1.5372f, -0.4986f,
-                           -0.9689f,  1.8758f,  0.0415f,
-                            0.0557f, -0.2040f,  1.0570f };
-  float darkOffset[3]   = { 0.0f, 0.0f, 0.0f };
+  float irHighThreshold = 400.0f;  // Lower threshold for grey tones
+  float irLowFactor = 0.15f;       // Reduced for grey accuracy
+  float irHighFactor = 0.10f;      // Reduced for grey accuracy
 };
 
 // Global runtime settings instance
@@ -405,7 +406,7 @@ bool loadColorDatabase() {
     bool shouldUseKdtree = settings.enableKdtree;  // Start with user/memory setting
     
     if (shouldUseKdtree && colorCount <= 1000) {
-      Logger::info("Small database detected (" + String(colorCount) + " colors ≤ 1000)");
+      Logger::info("Small database detected (" + String(colorCount) + " colors â‰¤ 1000)");
       Logger::info("KD-tree overhead not justified - using direct binary search for optimal performance");
       shouldUseKdtree = false;
     } else if (shouldUseKdtree && colorCount > 1000) {
@@ -510,14 +511,14 @@ bool loadColorDatabase() {
         unsigned long kdLoadTime = millis() - kdStartTime;
         size_t memoryUsage = kdTreeColorDB.getMemoryUsage();
         
-        Logger::info("🎯 KD-tree built successfully in " + String(kdLoadTime) + "ms");
-        Logger::info("📊 KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " + String(memoryUsage) + " bytes");
-        Logger::info("🚀 Search performance: O(log " + String(loadedCount) + ") vs O(" + String(loadedCount) + ") linear");
-        Logger::info("💾 PSRAM after KD-tree: " + String(ESP.getFreePsram() / 1024) + " KB free");
+        Logger::info("ðŸŽ¯ KD-tree built successfully in " + String(kdLoadTime) + "ms");
+        Logger::info("ðŸ“Š KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " + String(memoryUsage) + " bytes");
+        Logger::info("ðŸš€ Search performance: O(log " + String(loadedCount) + ") vs O(" + String(loadedCount) + ") linear");
+        Logger::info("ðŸ’¾ PSRAM after KD-tree: " + String(ESP.getFreePsram() / 1024) + " KB free");
         
         // Performance validation: Estimate search speed improvement
         float speedupFactor = (float)loadedCount / log2(loadedCount);
-        Logger::info("⚡ Estimated search speedup: " + String(speedupFactor, 1) + "x faster than linear search");
+        Logger::info("âš¡ Estimated search speedup: " + String(speedupFactor, 1) + "x faster than linear search");
         
       } else {
         Logger::error("Failed to build KD-tree - falling back to binary database only");
@@ -612,7 +613,7 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
         
         if (settings.debugColorMatching) {
           unsigned long searchTime = micros() - searchStartTime;
-          Logger::debug("KD-tree search completed in " + String(searchTime) + "μs. Best match: " + result);
+          Logger::debug("KD-tree search completed in " + String(searchTime) + "Î¼s. Best match: " + result);
         }
         return result;
       }
@@ -631,7 +632,7 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
     
     if (settings.debugColorMatching) {
       unsigned long searchTime = micros() - searchStartTime;
-      Logger::debug("Binary search completed in " + String(searchTime) + "μs. Best match: " + result);
+      Logger::debug("Binary search completed in " + String(searchTime) + "Î¼s. Best match: " + result);
     }
     return result;
   }
@@ -669,7 +670,7 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
     
     if (settings.debugColorMatching) {
       unsigned long searchTime = micros() - searchStartTime;
-      Logger::debug("Fallback search completed in " + String(searchTime) + "μs. Best match: " + result + " (distance: " + String(minDistance) + ")");
+      Logger::debug("Fallback search completed in " + String(searchTime) + "Î¼s. Best match: " + result + " (distance: " + String(minDistance) + ")");
     }
     return result;
   }
@@ -686,7 +687,7 @@ String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
   
   if (settings.debugColorMatching) {
     unsigned long searchTime = micros() - searchStartTime;
-    Logger::debug(searchMethod + " completed in " + String(searchTime) + "μs. Result: " + result);
+    Logger::debug(searchMethod + " completed in " + String(searchTime) + "Î¼s. Result: " + result);
   }
   
   return result;
@@ -702,7 +703,7 @@ void analyzeSystemPerformance() {
   size_t totalPsram = psramFound() ? ESP.getPsramSize() : 0;
   size_t freePsram = psramFound() ? ESP.getFreePsram() : 0;
   
-  Logger::info("💾 Memory Status:");
+  Logger::info("ðŸ’¾ Memory Status:");
   Logger::info("  Heap: " + String(freeHeap / 1024) + " KB free / " + String(totalHeap / 1024) + " KB total (" + String((freeHeap * 100) / totalHeap) + "% free)");
   if (psramFound()) {
     Logger::info("  PSRAM: " + String(freePsram / 1024) + " KB free / " + String(totalPsram / 1024) + " KB total (" + String((freePsram * 100) / totalPsram) + "% free)");
@@ -711,7 +712,7 @@ void analyzeSystemPerformance() {
   }
   
   // Color database analysis
-  Logger::info("🎨 Color Database Performance:");
+  Logger::info("ðŸŽ¨ Color Database Performance:");
   size_t colorCount = simpleColorDB.isOpen() ? simpleColorDB.getColorCount() : fallbackColorCount;
   Logger::info("  Colors loaded: " + String(colorCount));
   
@@ -723,7 +724,7 @@ void analyzeSystemPerformance() {
   if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
     activeMethod = "KD-Tree Search";
     float logN = log2(colorCount);
-    performanceNote = "O(log " + String(colorCount) + ") ≈ " + String(logN, 1) + " operations";
+    performanceNote = "O(log " + String(colorCount) + ") â‰ˆ " + String(logN, 1) + " operations";
   } else
 #endif
   if (simpleColorDB.isOpen()) {
@@ -738,26 +739,26 @@ void analyzeSystemPerformance() {
   Logger::info("  Performance complexity: " + performanceNote);
   
   // Performance optimization recommendations
-  Logger::info("🚀 Performance Recommendations:");
+  Logger::info("ðŸš€ Performance Recommendations:");
   
   if (colorCount <= 1000 && settings.enableKdtree) {
-    Logger::info("  ✅ Small database - KD-tree overhead avoided (optimal)");
+    Logger::info("  âœ… Small database - KD-tree overhead avoided (optimal)");
   } else if (colorCount > 1000 && !settings.enableKdtree) {
-    Logger::warn("  ⚠️ Large database without KD-tree - consider enabling for " + String((float)colorCount / log2(colorCount), 1) + "x speedup");
+    Logger::warn("  âš ï¸ Large database without KD-tree - consider enabling for " + String((float)colorCount / log2(colorCount), 1) + "x speedup");
   } else if (colorCount > 1000 && settings.enableKdtree) {
-    Logger::info("  ✅ Large database with KD-tree - optimal performance achieved");
+    Logger::info("  âœ… Large database with KD-tree - optimal performance achieved");
   }
   
   if (freePsram < (PSRAM_SAFETY_MARGIN_KB * 1024)) {
-    Logger::warn("  ⚠️ Low PSRAM - increase safety margin or reduce database size");
+    Logger::warn("  âš ï¸ Low PSRAM - increase safety margin or reduce database size");
   } else {
-    Logger::info("  ✅ PSRAM adequate for current configuration");
+    Logger::info("  âœ… PSRAM adequate for current configuration");
   }
   
   if (freeHeap < 100000) {
-    Logger::warn("  ⚠️ Low heap memory - monitor for stability issues");
+    Logger::warn("  âš ï¸ Low heap memory - monitor for stability issues");
   } else {
-    Logger::info("  ✅ Heap memory sufficient");
+    Logger::info("  âœ… Heap memory sufficient");
   }
   
   Logger::info("=====================================");
@@ -986,7 +987,7 @@ void handleForceColorLookup(AsyncWebServerRequest *request) {
   request->send(apiResponse);
   
   Logger::info("Forced color lookup: RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + 
-               ") -> " + colorName + " | Duration: " + String(lookupDuration) + "μs");
+               ") -> " + colorName + " | Duration: " + String(lookupDuration) + "Î¼s");
 }
 
 // Settings API handlers
@@ -1107,7 +1108,7 @@ void handleSetIRCompensation(AsyncWebServerRequest *request) {
   }
 }
 
-// This function applies the final calibration with optimized quadratic precision
+// This function applies the final calibration with optimized matrix precision
 void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint16_t IR2, uint8_t &R, uint8_t &G, uint8_t &B) {
   if (settings.debugSensorReadings) {
     Serial.print("[DEBUG] Converting XYZ to RGB - X:");
@@ -1143,7 +1144,75 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   float Y_adj = Y - (localIR1Factor * IR1) - (localIR2Factor * IR2);
   float Z_adj = Z - (localIR1Factor * IR1) - (localIR2Factor * IR2);
 
-  // Dynamic coefficient selection
+  if (settings.debugSensorReadings) {
+    Serial.print("[DEBUG] After IR compensation - X_adj:");
+    Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
+    Serial.print("[DEBUG] IR compensation factors - IR1_factor:");
+    Serial.print(localIR1Factor); Serial.print(" IR2_factor:"); Serial.println(localIR2Factor);
+  }
+
+  // === NEW MATRIX-BASED CALIBRATION (Primary Path) ===
+  if (settings.useMatrixCalibration) {
+    const float *M;
+    const float *O;
+    
+    // Choose matrix based on brightness threshold
+    if (settings.enableDynamicCalibration) {
+      if (Y_adj > settings.dynamicThreshold) {
+        M = settings.brightMatrix;
+        O = settings.brightOffset;
+        if (settings.debugSensorReadings) {
+          Serial.println("[DEBUG] Using bright matrix calibration");
+        }
+      } else {
+        M = settings.darkMatrix;
+        O = settings.darkOffset;
+        if (settings.debugSensorReadings) {
+          Serial.println("[DEBUG] Using dark matrix calibration");
+        }
+      }
+    } else {
+      // Default to bright matrix
+      M = settings.brightMatrix;
+      O = settings.brightOffset;
+      if (settings.debugSensorReadings) {
+        Serial.println("[DEBUG] Using default bright matrix calibration");
+      }
+    }
+
+    // Apply matrix transformation: RGB = M * XYZ + O
+    float r_final = M[0]*X_adj + M[1]*Y_adj + M[2]*Z_adj + O[0];
+    float g_final = M[3]*X_adj + M[4]*Y_adj + M[5]*Z_adj + O[1];
+    float b_final = M[6]*X_adj + M[7]*Y_adj + M[8]*Z_adj + O[2];
+
+    if (settings.debugSensorReadings) {
+      Serial.print("[DEBUG] Matrix calculation - r:");
+      Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
+      Serial.print("[DEBUG] Matrix coefficients - M[0-2]:");
+      Serial.print(M[0], 6); Serial.print(" "); Serial.print(M[1], 6); Serial.print(" "); Serial.println(M[2], 6);
+      Serial.print("[DEBUG] Matrix coefficients - M[3-5]:");
+      Serial.print(M[3], 6); Serial.print(" "); Serial.print(M[4], 6); Serial.print(" "); Serial.println(M[5], 6);
+      Serial.print("[DEBUG] Matrix coefficients - M[6-8]:");
+      Serial.print(M[6], 6); Serial.print(" "); Serial.print(M[7], 6); Serial.print(" "); Serial.println(M[8], 6);
+      Serial.print("[DEBUG] Offset values - O[0-2]:");
+      Serial.print(O[0], 2); Serial.print(" "); Serial.print(O[1], 2); Serial.print(" "); Serial.println(O[2], 2);
+    }
+
+    // Clamp to 0-RGB_SATURATION_LIMIT using configurable limit
+    R = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, r_final));
+    G = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, g_final));
+    B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_final));
+    
+    if (settings.debugSensorReadings) {
+      Serial.print("[DEBUG] Final matrix RGB - R:");
+      Serial.print(R); Serial.print(" G:"); Serial.print(G); Serial.print(" B:"); Serial.println(B);
+    }
+    return; // Matrix path complete
+  }
+  // === END MATRIX PATH ===
+
+  // === LEGACY QUADRATIC CALIBRATION (Fallback) ===
+  // Dynamic coefficient selection for quadratic calibration
   float redA_local = settings.redA;
   float redB_local = settings.redB;
   float redC_local = settings.redC;
@@ -1153,37 +1222,6 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   float blueA_local = settings.blueA;
   float blueB_local = settings.blueB;
   float blueC_local = settings.blueC;
-
-  // === NEW MATRIX-BASED CALIBRATION ===
-  if (settings.useMatrixCalibration) {
-    // pick matrix / offset depending on brightness
-    const float *M;
-    const float *O;
-    if (settings.enableDynamicCalibration) {
-      if (Y_adj > settings.dynamicThreshold) {
-        M = settings.brightMatrix;
-        O = settings.brightOffset;
-      } else {
-        M = settings.darkMatrix;
-        O = settings.darkOffset;
-      }
-    } else {
-      // default to bright matrix
-      M = settings.brightMatrix;
-      O = settings.brightOffset;
-    }
-
-    float r_final = M[0]*X_adj + M[1]*Y_adj + M[2]*Z_adj + O[0];
-    float g_final = M[3]*X_adj + M[4]*Y_adj + M[5]*Z_adj + O[1];
-    float b_final = M[6]*X_adj + M[7]*Y_adj + M[8]*Z_adj + O[2];
-
-    // Clamp
-    R = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, r_final));
-    G = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, g_final));
-    B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_final));
-    return; // matrix path done
-  }
-  // === END MATRIX PATH ===
 
   if (settings.enableDynamicCalibration) {
     if (Y_adj > settings.dynamicThreshold) {
@@ -1211,20 +1249,13 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
     }
   }
 
-  if (settings.debugSensorReadings) {
-    Serial.print("[DEBUG] After IR compensation - X_adj:");
-    Serial.print(X_adj); Serial.print(" Y_adj:"); Serial.print(Y_adj); Serial.print(" Z_adj:"); Serial.println(Z_adj);
-    Serial.print("[DEBUG] IR compensation factors - IR1_factor:");
-    Serial.print(localIR1Factor); Serial.print(" IR2_factor:"); Serial.println(localIR2Factor);
-  }
-
-  // Use runtime adjustable quadratic parameters instead of hardcoded constants
+  // Use runtime adjustable quadratic parameters
   float r_final = redA_local * X_adj * X_adj + redB_local * X_adj + redC_local;
   float g_final = greenA_local * Y_adj * Y_adj + greenB_local * Y_adj + greenC_local;
   float b_final = blueA_local * Z_adj * Z_adj + blueB_local * Z_adj + blueC_local;
 
   if (settings.debugSensorReadings) {
-    Serial.print("[DEBUG] Raw RGB calculations - r:");
+    Serial.print("[DEBUG] Raw quadratic RGB calculations - r:");
     Serial.print(r_final); Serial.print(" g:"); Serial.print(g_final); Serial.print(" b:"); Serial.println(b_final);
     Serial.print("[DEBUG] Quadratic coefficients - Red(A:");
     Serial.print(redA_local, 10); Serial.print(" B:"); Serial.print(redB_local, 6); Serial.print(" C:"); Serial.print(redC_local, 2); Serial.println(")");
@@ -1240,7 +1271,7 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_final));
   
   if (settings.debugSensorReadings) {
-    Serial.print("[DEBUG] Final clamped RGB - R:");
+    Serial.print("[DEBUG] Final clamped quadratic RGB - R:");
     Serial.print(R); Serial.print(" G:"); Serial.print(G); Serial.print(" B:"); Serial.println(B);
   }
 }
@@ -2024,7 +2055,7 @@ void loop() {
         }
         
         Logger::debug("Color lookup: RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + 
-                     ") -> " + colorName + " | Search: " + String(colorSearchTime) + "μs (" + searchMethod + ")");
+                     ") -> " + colorName + " | Search: " + String(colorSearchTime) + "Î¼s (" + searchMethod + ")");
       }
     }
   }
@@ -2036,7 +2067,7 @@ void loop() {
   if (millis() - lastLogTime > 5000) { // Log every 5 seconds to reduce overhead
     Logger::info("XYZ: " + String(XData) + "," + String(YData) + "," + String(ZData) +
                  " | RGB: R" + String(smoothed_R, 2) + " G" + String(smoothed_G, 2) + " B" + String(smoothed_B, 2) +
-                 " | Color: " + currentColorData.colorName + " | Last search: " + String(currentColorData.colorSearchDuration) + "μs");
+                 " | Color: " + currentColorData.colorName + " | Last search: " + String(currentColorData.colorSearchDuration) + "Î¼s");
     lastLogTime = millis();
   }
   
@@ -2188,19 +2219,19 @@ void handleGetCalibration(AsyncWebServerRequest *request) {
 void handleTuneVividWhite(AsyncWebServerRequest *request) {
   Logger::info("Tuning calibration for Vivid White (247,248,244)");
   
-  // Apply optimized coefficients for Vivid White target
-  // These values are fine-tuned to get closer to RGB(247,248,244)
-  settings.redA = 5.856615248518086e-06f;   // Slightly increased for brighter red
-  settings.redB = -0.10624971353127427f;    // Adjusted for better linearity
-  settings.redC = 668.2283515839658f;       // Increased offset for brighter output
+  // Apply optimized coefficients for Vivid White target (significantly reduced)
+  // These values are tuned for a more balanced, moderate white output to avoid saturation
+  settings.redA = 4.856615248518086e-06f;   // Reduced from 5.856 for less bright red
+  settings.redB = -0.09624971353127427f;    // Reduced from -0.106 for gentler linearity
+  settings.redC = 580.2283515839658f;       // Significantly reduced from 668 for much lower brightness
   
-  settings.greenA = 7.800364703908128e-06f; // Increased for better green response
-  settings.greenB = -0.14773455804115546f;  // Fine-tuned for target
-  settings.greenC = 860.288778468652f;      // Increased for brighter green
+  settings.greenA = 6.800364703908128e-06f; // Reduced from 7.800 for more balanced green
+  settings.greenB = -0.13773455804115546f;  // Reduced from -0.147 for gentler adjustment
+  settings.greenC = 720.288778468652f;      // Significantly reduced from 860 for lower brightness
   
-  settings.blueA = -2.6588632792769936e-06f; // Adjusted for better blue balance
-  settings.blueB = 0.05159423885676833f;     // Increased for brighter blue
-  settings.blueC = 38.55576869603341f;       // Increased offset
+  settings.blueA = -2.2588632792769936e-06f; // Less negative for more balanced blue
+  settings.blueB = 0.04159423885676833f;     // Reduced from 0.051 for gentler blue
+  settings.blueC = 28.55576869603341f;       // Reduced from 38 for lower baseline
   
   Logger::info("Vivid White calibration applied");
   Logger::info("New Red: A=" + String(settings.redA, 10) + " B=" + String(settings.redB, 6) + " C=" + String(settings.redC, 2));
@@ -2231,41 +2262,13 @@ void handleTuneVividWhite(AsyncWebServerRequest *request) {
   request->send(apiResponse);
 }
 
-// Auto-adjust handler
-void handleSetAutoAdjust(AsyncWebServerRequest *request) {
-  bool updated = false;
-  String response = "{\"status\":\"success\"";
-  if (request->hasParam("enable")) {
-    settings.enableAutoAdjust = request->getParam("enable")->value() == "true";
-    response += ",\"enable\":" + String(settings.enableAutoAdjust ? "true" : "false");
-    updated = true;
-  }
-  if (request->hasParam("satHigh")) {
-    settings.autoSatHigh = request->getParam("satHigh")->value().toFloat();
-    response += ",\"satHigh\":" + String(settings.autoSatHigh);
-    updated = true;
-  }
-  if (request->hasParam("satLow")) {
-    settings.autoSatLow = request->getParam("satLow")->value().toFloat();
-    response += ",\"satLow\":" + String(settings.autoSatLow);
-    updated = true;
-  }
-  if (request->hasParam("minInt")) {
-    settings.minIntegrationTime = (uint8_t)request->getParam("minInt")->value().toInt();
-    response += ",\"minInt\":" + String(settings.minIntegrationTime);
-    updated = true;
-  }
-  if (request->hasParam("maxInt")) {
-    settings.maxIntegrationTime = (uint8_t)request->getParam("maxInt")->value().toInt();
-    response += ",\"maxInt\":" + String(settings.maxIntegrationTime);
-    updated = true;
-  }
-  if (request->hasParam("step")) {
-    settings.integrationStep = (uint8_t)request->getParam("step")->value().toInt();
-    response += ",\"step\":" + String(settings.integrationStep);
-    updated = true;
-  }
-  response += "}";
-  request->send(200, "application/json", response);
-}
+// === GREY CALIBRATION AUTO-TUNED FOR TARGET RGB(168,160,147) ===
+// Target grey port RGB values: R=168, G=160, B=147
+// Previous readings: RGB(118,113,54) -> needed 42% increase for R/G, 172% for B
+// Auto-tuned dark matrix coefficients to achieve precise target values
+// Key settings for target calibration:
+// - dynamicThreshold: 8000.0f (determines when to use dark vs bright matrix)
+// - darkMatrix: Tuned for target RGB(168,160,147)
+// - IR compensation: Optimized at 0.20 for accuracy
+// - RGB_SATURATION_LIMIT: 255 (allows higher values)
 
