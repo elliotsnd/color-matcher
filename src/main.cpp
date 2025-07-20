@@ -1069,7 +1069,7 @@ static void analyzeSystemPerformance() {
   String performanceNote = "Minimal functionality";
 
 #if ENABLE_KDTREE
-  if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
+  if (settings.performance.enableKdtree && kdTreeColorDB.isBuilt()) {
     activeMethod = "KD-Tree Search";
     float logN = (float)log2(colorCount);
     performanceNote = "O(log " + String(colorCount) + ") â‰ˆ " + String(logN, 1) + " operations";
@@ -1089,12 +1089,12 @@ static void analyzeSystemPerformance() {
   // Performance optimization recommendations
   Logger::info("ðŸš€ Performance Recommendations:");
 
-  if (colorCount <= LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
+  if (colorCount <= LARGE_COLOR_DB_THRESHOLD && settings.performance.enableKdtree) {
     Logger::info("  âœ… Small database - KD-tree overhead avoided (optimal)");
-  } else if (colorCount > LARGE_COLOR_DB_THRESHOLD && !settings.enableKdtree) {
+  } else if (colorCount > LARGE_COLOR_DB_THRESHOLD && !settings.performance.enableKdtree) {
     Logger::warn("  âš ï¸ Large database without KD-tree - consider enabling for " +
                  String((float)colorCount / log2(colorCount), 1) + "x speedup");
-  } else if (colorCount > LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
+  } else if (colorCount > LARGE_COLOR_DB_THRESHOLD && settings.performance.enableKdtree) {
     Logger::info("  âœ… Large database with KD-tree - optimal performance achieved");
   }
 
@@ -1930,48 +1930,48 @@ void setup() {
 
     // Handle individual coefficient updates via query parameters
     if (request->hasParam("redA")) {
-      settings.redA = request->getParam("redA")->value().toFloat();
-      response += ",\"redA\":" + String(settings.redA, DECIMAL_PRECISION_10);
+      settings.quadratic.redA = request->getParam("redA")->value().toFloat();
+      response += ",\"redA\":" + String(settings.quadratic.redA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("redB")) {
-      settings.redB = request->getParam("redB")->value().toFloat();
-      response += ",\"redB\":" + String(settings.redB, DECIMAL_PRECISION_6);
+      settings.quadratic.redB = request->getParam("redB")->value().toFloat();
+      response += ",\"redB\":" + String(settings.quadratic.redB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("redC")) {
-      settings.redC = request->getParam("redC")->value().toFloat();
-      response += ",\"redC\":" + String(settings.redC, 2);
+      settings.quadratic.redC = request->getParam("redC")->value().toFloat();
+      response += ",\"redC\":" + String(settings.quadratic.redC, 2);
       updated = true;
     }
     if (request->hasParam("greenA")) {
-      settings.greenA = request->getParam("greenA")->value().toFloat();
-      response += ",\"greenA\":" + String(settings.greenA, DECIMAL_PRECISION_10);
+      settings.quadratic.greenA = request->getParam("greenA")->value().toFloat();
+      response += ",\"greenA\":" + String(settings.quadratic.greenA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("greenB")) {
-      settings.greenB = request->getParam("greenB")->value().toFloat();
-      response += ",\"greenB\":" + String(settings.greenB, DECIMAL_PRECISION_6);
+      settings.quadratic.greenB = request->getParam("greenB")->value().toFloat();
+      response += ",\"greenB\":" + String(settings.quadratic.greenB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("greenC")) {
-      settings.greenC = request->getParam("greenC")->value().toFloat();
-      response += ",\"greenC\":" + String(settings.greenC, 2);
+      settings.quadratic.greenC = request->getParam("greenC")->value().toFloat();
+      response += ",\"greenC\":" + String(settings.quadratic.greenC, 2);
       updated = true;
     }
     if (request->hasParam("blueA")) {
-      settings.blueA = request->getParam("blueA")->value().toFloat();
-      response += ",\"blueA\":" + String(settings.blueA, DECIMAL_PRECISION_10);
+      settings.quadratic.blueA = request->getParam("blueA")->value().toFloat();
+      response += ",\"blueA\":" + String(settings.quadratic.blueA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("blueB")) {
-      settings.blueB = request->getParam("blueB")->value().toFloat();
-      response += ",\"blueB\":" + String(settings.blueB, DECIMAL_PRECISION_6);
+      settings.quadratic.blueB = request->getParam("blueB")->value().toFloat();
+      response += ",\"blueB\":" + String(settings.quadratic.blueB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("blueC")) {
-      settings.blueC = request->getParam("blueC")->value().toFloat();
-      response += ",\"blueC\":" + String(settings.blueC, 2);
+      settings.quadratic.blueC = request->getParam("blueC")->value().toFloat();
+      response += ",\"blueC\":" + String(settings.quadratic.blueC, 2);
       updated = true;
     }
     // White coefficients
@@ -2131,13 +2131,13 @@ void setup() {
   // Reset and calibration mode endpoints
   server.on("/api/reset-to-dfrobot", HTTP_POST, [](AsyncWebServerRequest *request) {
     // Reset to DFRobot library defaults
-    settings.useDFRobotLibraryCalibration = true;
-    settings.ledBrightness = LED_BRIGHTNESS;
-    settings.sensorIntegrationTime = SENSOR_INTEGRATION_TIME;
-    settings.colorReadingSamples = COLOR_READING_SAMPLES;
-    settings.sensorSampleDelay = SENSOR_SAMPLE_DELAY;
-    settings.irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
-    settings.irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
+    settings.color.useDFRobotLibraryCalibration = true;
+    settings.sensor.ledBrightness = LED_BRIGHTNESS;
+    settings.sensor.sensorIntegrationTime = SENSOR_INTEGRATION_TIME;
+    settings.sensor.colorReadingSamples = COLOR_READING_SAMPLES;
+    settings.sensor.sensorSampleDelay = SENSOR_SAMPLE_DELAY;
+    settings.ir.irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
+    settings.ir.irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
 
     Logger::info("Settings reset to DFRobot library defaults");
     request->send(HTTP_OK, "application/json",
@@ -2148,16 +2148,16 @@ void setup() {
 
   server.on("/api/reset-to-custom", HTTP_POST, [](AsyncWebServerRequest *request) {
     // Reset to custom quadratic calibration defaults
-    settings.useDFRobotLibraryCalibration = false;
-    settings.redA = 5.756615248518086e-06f;
-    settings.redB = -0.10824971353127427f;
-    settings.redC = 663.2283515839658f;
-    settings.greenA = 7.700364703908128e-06f;
-    settings.greenB = -0.14873455804115546f;
-    settings.greenC = 855.288778468652f;
-    settings.blueA = -2.7588632792769936e-06f;
-    settings.blueB = 0.04959423885676833f;
-    settings.blueC = 35.55576869603341f;
+    settings.color.useDFRobotLibraryCalibration = false;
+    settings.quadratic.redA = 5.756615248518086e-06f;
+    settings.quadratic.redB = -0.10824971353127427f;
+    settings.quadratic.redC = 663.2283515839658f;
+    settings.quadratic.greenA = 7.700364703908128e-06f;
+    settings.quadratic.greenB = -0.14873455804115546f;
+    settings.quadratic.greenC = 855.288778468652f;
+    settings.quadratic.blueA = -2.7588632792769936e-06f;
+    settings.quadratic.blueB = 0.04959423885676833f;
+    settings.quadratic.blueC = 35.55576869603341f;
 
     Logger::info("Settings reset to custom quadratic calibration defaults");
     request->send(HTTP_OK, "application/json",
