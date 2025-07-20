@@ -1,0 +1,48 @@
+# .clang-tidy - Comprehensive C++ Analysis Configuration
+# Optimized for embedded C++/Arduino/ESP32 development
+
+Checks: '
+  *,
+  -abseil-*,
+  -android-*,
+  -fuchsia-*,
+  -google-*,
+  -llvm-*,
+  -zircon-*,
+  -altera-*,
+  -modernize-use-trailing-return-type,
+  -readability-named-parameter,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -cert-env33-c,
+  -hicpp-signed-bitwise,
+  -readability-uppercase-literal-suffix,
+  -hicpp-uppercase-literal-suffix,
+  -cppcoreguidelines-macro-usage,
+  -modernize-use-nodiscard,
+  -bugprone-easily-swappable-parameters
+'
+
+WarningsAsErrors: ''
+
+CheckOptions:
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroCase
+    value: UPPER_CASE
+  - key: performance-for-range-copy.WarnOnAllAutoCopies
+    value: true
+  - key: performance-inefficient-string-concatenation.StrictMode
+    value: true
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 25
+  - key: bugprone-argument-comment.StrictMode
+    value: true
+
+HeaderFilterRegex: '(src|lib|include)/.*\.(h|hpp)$'

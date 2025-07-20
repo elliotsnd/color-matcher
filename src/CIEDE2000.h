@@ -7,30 +7,28 @@
 #ifndef GPF_CIEDE2000_H_
 #define GPF_CIEDE2000_H_
 
-#include <iostream>
 #include <cmath>
+#include <iostream>
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846264338327950288 /* pi */
+  #define M_PI 3.14159265358979323846264338327950288 /* pi */
 #endif
 
 /** Namespace containing all necessary objects and methods for CIEDE2000 */
-namespace CIEDE2000
-{
+namespace CIEDE2000 {
 
 /*****************************************************************************
  * Types.
  *****************************************************************************/
 
 /** A color in CIELAB colorspace */
-struct LAB
-{
-	/** Lightness */
-	double l;
-	/** Color-opponent a dimension */
-	double a;
-	/** Color-opponent b dimension */
-	double b;
+struct LAB {
+  /** Lightness */
+  double l;
+  /** Color-opponent a dimension */
+  double a;
+  /** Color-opponent b dimension */
+  double b;
 };
 
 /** Convenience definition for struct LAB */
@@ -57,9 +55,7 @@ using LAB = struct LAB;
  * @return
  * Delta-E difference between lab1 and lab2.
  */
-double CIEDE2000(
-	const LAB &lab1,
-	const LAB &lab2);
+double CIEDE2000(const LAB &lab1, const LAB &lab2);
 
 /*****************************************************************************
  * Conversions.
@@ -75,8 +71,7 @@ double CIEDE2000(
  * @return
  * deg in radians.
  */
-constexpr double deg2Rad(
-	const double deg);
+constexpr double deg2Rad(const double deg);
 
 /**
  * @brief
@@ -88,10 +83,9 @@ constexpr double deg2Rad(
  * @return
  * rad in degrees.
  */
-constexpr double rad2Deg(
-	const double rad);
+constexpr double rad2Deg(const double rad);
 
-}
+}  // namespace CIEDE2000
 
 /*****************************************************************************
  * RGB to LAB conversion functions for ESP32 color matching
@@ -100,9 +94,9 @@ constexpr double rad2Deg(
 /**
  * @brief
  * Convert RGB to XYZ colorspace (D65 illuminant)
- * 
+ *
  * @param r Red component (0-255)
- * @param g Green component (0-255) 
+ * @param g Green component (0-255)
  * @param b Blue component (0-255)
  * @param x Output X component
  * @param y Output Y component
@@ -113,7 +107,7 @@ void rgbToXYZ(uint8_t r, uint8_t g, uint8_t b, double &x, double &y, double &z);
 /**
  * @brief
  * Convert XYZ to LAB colorspace (D65 illuminant)
- * 
+ *
  * @param x X component
  * @param y Y component
  * @param z Z component
@@ -124,7 +118,7 @@ void xyzToLAB(double x, double y, double z, CIEDE2000::LAB &lab);
 /**
  * @brief
  * Convert RGB directly to LAB colorspace
- * 
+ *
  * @param r Red component (0-255)
  * @param g Green component (0-255)
  * @param b Blue component (0-255)
@@ -148,8 +142,6 @@ void rgbToLAB(uint8_t r, uint8_t g, uint8_t b, CIEDE2000::LAB &lab);
  * @return
  * s with labColor appended.
  */
-std::ostream& operator<<(
-	std::ostream &s,
-	const CIEDE2000::LAB &labColor);
+std::ostream &operator<<(std::ostream &s, const CIEDE2000::LAB &labColor);
 
 #endif /* GPF_CIEDE2000_H_ */

@@ -1,0 +1,29 @@
+{
+    "name": "Color Sensor Project",
+    "description": "Hardware/Software color sensor system with TCS3430",
+    "version": "1.0.0",
+    "language": "C++",
+    "platform": "ESP32",
+    "compiler": "GCC",
+    "standard": "c++17",
+    "sourceFiles": [
+        "src/main.cpp",
+        "src/**/*.cpp",
+        "src/**/*.c"
+    ],
+    "includePaths": [
+        "src/",
+        "lib/",
+        "include/",
+        "~/.platformio/packages/framework-arduinoespressif32/cores/esp32",
+        "~/.platformio/packages/framework-arduinoespressif32/libraries"
+    ],
+    "defines": [
+        "ARDUINO=10819",
+        "ARDUINO_ESP32_DEV",
+        "ESP32",
+        "ESP_PLATFORM",
+        "F_CPU=240000000L"
+    ],
+    "compileCommandsPath": "./compile_commands.json"
+}
