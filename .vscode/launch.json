@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PlatformIO Debug",
+            "type": "platformio-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "PLATFORMIO_DEBUG_TOOL",
+                    "value": "esp-prog"
+                }
+            ]
+        },
+        {
+            "name": "PlatformIO Debug (without uploading)",
+            "type": "platformio-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "internalConsoleOptions": "openOnSessionStart",
+            "preLaunchTask": "PlatformIO: Pre-Debug"
+        }
+    ]
+}
