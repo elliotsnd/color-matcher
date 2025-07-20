@@ -1976,115 +1976,115 @@ void setup() {
     }
     // White coefficients
     if (request->hasParam("whiteRedA")) {
-      settings.whiteRedA = request->getParam("whiteRedA")->value().toFloat();
-      response += ",\"whiteRedA\":" + String(settings.whiteRedA, DECIMAL_PRECISION_10);
+      settings.coefficients.whiteRedA = request->getParam("whiteRedA")->value().toFloat();
+      response += ",\"whiteRedA\":" + String(settings.coefficients.whiteRedA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("whiteRedB")) {
-      settings.whiteRedB = request->getParam("whiteRedB")->value().toFloat();
-      response += ",\"whiteRedB\":" + String(settings.whiteRedB, DECIMAL_PRECISION_6);
+      settings.coefficients.whiteRedB = request->getParam("whiteRedB")->value().toFloat();
+      response += ",\"whiteRedB\":" + String(settings.coefficients.whiteRedB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("whiteRedC")) {
-      settings.whiteRedC = request->getParam("whiteRedC")->value().toFloat();
-      response += ",\"whiteRedC\":" + String(settings.whiteRedC, 2);
+      settings.coefficients.whiteRedC = request->getParam("whiteRedC")->value().toFloat();
+      response += ",\"whiteRedC\":" + String(settings.coefficients.whiteRedC, 2);
       updated = true;
     }
     if (request->hasParam("whiteGreenA")) {
-      settings.whiteGreenA = request->getParam("whiteGreenA")->value().toFloat();
-      response += ",\"whiteGreenA\":" + String(settings.whiteGreenA, DECIMAL_PRECISION_10);
+      settings.coefficients.whiteGreenA = request->getParam("whiteGreenA")->value().toFloat();
+      response += ",\"whiteGreenA\":" + String(settings.coefficients.whiteGreenA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("whiteGreenB")) {
-      settings.whiteGreenB = request->getParam("whiteGreenB")->value().toFloat();
-      response += ",\"whiteGreenB\":" + String(settings.whiteGreenB, DECIMAL_PRECISION_6);
+      settings.coefficients.whiteGreenB = request->getParam("whiteGreenB")->value().toFloat();
+      response += ",\"whiteGreenB\":" + String(settings.coefficients.whiteGreenB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("whiteGreenC")) {
-      settings.whiteGreenC = request->getParam("whiteGreenC")->value().toFloat();
-      response += ",\"whiteGreenC\":" + String(settings.whiteGreenC, 2);
+      settings.coefficients.whiteGreenC = request->getParam("whiteGreenC")->value().toFloat();
+      response += ",\"whiteGreenC\":" + String(settings.coefficients.whiteGreenC, 2);
       updated = true;
     }
     if (request->hasParam("whiteBlueA")) {
-      settings.whiteBlueA = request->getParam("whiteBlueA")->value().toFloat();
-      response += ",\"whiteBlueA\":" + String(settings.whiteBlueA, DECIMAL_PRECISION_10);
+      settings.coefficients.whiteBlueA = request->getParam("whiteBlueA")->value().toFloat();
+      response += ",\"whiteBlueA\":" + String(settings.coefficients.whiteBlueA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("whiteBlueB")) {
-      settings.whiteBlueB = request->getParam("whiteBlueB")->value().toFloat();
-      response += ",\"whiteBlueB\":" + String(settings.whiteBlueB, DECIMAL_PRECISION_6);
+      settings.coefficients.whiteBlueB = request->getParam("whiteBlueB")->value().toFloat();
+      response += ",\"whiteBlueB\":" + String(settings.coefficients.whiteBlueB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("whiteBlueC")) {
-      settings.whiteBlueC = request->getParam("whiteBlueC")->value().toFloat();
-      response += ",\"whiteBlueC\":" + String(settings.whiteBlueC, 2);
+      settings.coefficients.whiteBlueC = request->getParam("whiteBlueC")->value().toFloat();
+      response += ",\"whiteBlueC\":" + String(settings.coefficients.whiteBlueC, 2);
       updated = true;
     }
     // Grey coefficients
     if (request->hasParam("greyRedA")) {
-      settings.greyRedA = request->getParam("greyRedA")->value().toFloat();
-      response += ",\"greyRedA\":" + String(settings.greyRedA, DECIMAL_PRECISION_10);
+      settings.coefficients.greyRedA = request->getParam("greyRedA")->value().toFloat();
+      response += ",\"greyRedA\":" + String(settings.coefficients.greyRedA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("greyRedB")) {
-      settings.greyRedB = request->getParam("greyRedB")->value().toFloat();
-      response += ",\"greyRedB\":" + String(settings.greyRedB, DECIMAL_PRECISION_6);
+      settings.coefficients.greyRedB = request->getParam("greyRedB")->value().toFloat();
+      response += ",\"greyRedB\":" + String(settings.coefficients.greyRedB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("greyRedC")) {
-      settings.greyRedC = request->getParam("greyRedC")->value().toFloat();
-      response += ",\"greyRedC\":" + String(settings.greyRedC, 2);
+      settings.coefficients.greyRedC = request->getParam("greyRedC")->value().toFloat();
+      response += ",\"greyRedC\":" + String(settings.coefficients.greyRedC, 2);
       updated = true;
     }
     if (request->hasParam("greyGreenA")) {
-      settings.greyGreenA = request->getParam("greyGreenA")->value().toFloat();
-      response += ",\"greyGreenA\":" + String(settings.greyGreenA, DECIMAL_PRECISION_10);
+      settings.coefficients.greyGreenA = request->getParam("greyGreenA")->value().toFloat();
+      response += ",\"greyGreenA\":" + String(settings.coefficients.greyGreenA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("greyGreenB")) {
-      settings.greyGreenB = request->getParam("greyGreenB")->value().toFloat();
-      response += ",\"greyGreenB\":" + String(settings.greyGreenB, DECIMAL_PRECISION_6);
+      settings.coefficients.greyGreenB = request->getParam("greyGreenB")->value().toFloat();
+      response += ",\"greyGreenB\":" + String(settings.coefficients.greyGreenB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("greyGreenC")) {
-      settings.greyGreenC = request->getParam("greyGreenC")->value().toFloat();
-      response += ",\"greyGreenC\":" + String(settings.greyGreenC, 2);
+      settings.coefficients.greyGreenC = request->getParam("greyGreenC")->value().toFloat();
+      response += ",\"greyGreenC\":" + String(settings.coefficients.greyGreenC, 2);
       updated = true;
     }
     if (request->hasParam("greyBlueA")) {
-      settings.greyBlueA = request->getParam("greyBlueA")->value().toFloat();
-      response += ",\"greyBlueA\":" + String(settings.greyBlueA, DECIMAL_PRECISION_10);
+      settings.coefficients.greyBlueA = request->getParam("greyBlueA")->value().toFloat();
+      response += ",\"greyBlueA\":" + String(settings.coefficients.greyBlueA, DECIMAL_PRECISION_10);
       updated = true;
     }
     if (request->hasParam("greyBlueB")) {
-      settings.greyBlueB = request->getParam("greyBlueB")->value().toFloat();
-      response += ",\"greyBlueB\":" + String(settings.greyBlueB, DECIMAL_PRECISION_6);
+      settings.coefficients.greyBlueB = request->getParam("greyBlueB")->value().toFloat();
+      response += ",\"greyBlueB\":" + String(settings.coefficients.greyBlueB, DECIMAL_PRECISION_6);
       updated = true;
     }
     if (request->hasParam("greyBlueC")) {
-      settings.greyBlueC = request->getParam("greyBlueC")->value().toFloat();
-      response += ",\"greyBlueC\":" + String(settings.greyBlueC, 2);
+      settings.coefficients.greyBlueC = request->getParam("greyBlueC")->value().toFloat();
+      response += ",\"greyBlueC\":" + String(settings.coefficients.greyBlueC, 2);
       updated = true;
     }
     // Dynamic settings
     if (request->hasParam("enableDynamicCalibration")) {
-      settings.enableDynamicCalibration =
+      settings.matrix.enableDynamicCalibration =
           request->getParam("enableDynamicCalibration")->value() == "true";
       response += ",\"enableDynamicCalibration\":" +
-                  String(settings.enableDynamicCalibration ? "true" : "false");
+                  String(settings.matrix.enableDynamicCalibration ? "true" : "false");
       updated = true;
     }
     if (request->hasParam("dynamicThreshold")) {
-      settings.dynamicThreshold = request->getParam("dynamicThreshold")->value().toFloat();
-      response += ",\"dynamicThreshold\":" + String(settings.dynamicThreshold, 2);
+      settings.matrix.dynamicThreshold = request->getParam("dynamicThreshold")->value().toFloat();
+      response += ",\"dynamicThreshold\":" + String(settings.matrix.dynamicThreshold, 2);
       updated = true;
     }
 
     // Matrix calibration parameters
     if (request->hasParam("useMatrixCalibration")) {
-      settings.useMatrixCalibration = request->getParam("useMatrixCalibration")->value() == "true";
+      settings.matrix.useMatrixCalibration = request->getParam("useMatrixCalibration")->value() == "true";
       response +=
-          ",\"useMatrixCalibration\":" + String(settings.useMatrixCalibration ? "true" : "false");
+          ",\"useMatrixCalibration\":" + String(settings.matrix.useMatrixCalibration ? "true" : "false");
       updated = true;
     }
     // Helper lambda to update array elements
@@ -2214,17 +2214,17 @@ void displayCurrentSettings() {
   Serial.println("=== COLOR SENSOR SETTINGS ===");
   Serial.printf("WiFi: %s | Port: %d\n", WIFI_SSID, WEB_SERVER_PORT);
   Serial.printf("Static IP: %s | Gateway: %s\n", STATIC_IP, GATEWAY_IP);
-  Serial.printf("KD-Tree: %s | Max Colors: %d\n", settings.enableKdtree ? "ENABLED" : "DISABLED",
-                settings.kdtreeMaxColors);
-  Serial.printf("Color Samples: %d | Stability: %d\n", settings.colorReadingSamples,
-                settings.colorStabilityThreshold);
-  Serial.printf("Sensor Distance: %dmm | LED Brightness: %d\n", settings.optimalSensorDistance,
-                settings.ledBrightness);
+  Serial.printf("KD-Tree: %s | Max Colors: %d\n", settings.performance.enableKdtree ? "ENABLED" : "DISABLED",
+                settings.performance.kdtreeMaxColors);
+  Serial.printf("Color Samples: %d | Stability: %d\n", settings.sensor.colorReadingSamples,
+                settings.sensor.colorStabilityThreshold);
+  Serial.printf("Sensor Distance: %dmm | LED Brightness: %d\n", settings.sensor.optimalSensorDistance,
+                settings.sensor.ledBrightness);
   Serial.printf("IR Compensation: IR1=%.3f | IR2=%.3f | RGB Limit=%d\n",
-                settings.irCompensationFactor1, settings.irCompensationFactor2,
-                settings.rgbSaturationLimit);
-  Serial.printf("Integration Time: 0x%02X | Debug Level: %s\n", settings.sensorIntegrationTime,
-                settings.debugSensorReadings ? "DETAILED" : "BASIC");
+                settings.ir.irCompensationFactor1, settings.ir.irCompensationFactor2,
+                settings.color.rgbSaturationLimit);
+  Serial.printf("Integration Time: 0x%02X | Debug Level: %s\n", settings.sensor.sensorIntegrationTime,
+                settings.debug.debugSensorReadings ? "DETAILED" : "BASIC");
   Serial.println("=============================");
 }
 
