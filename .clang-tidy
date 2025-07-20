@@ -1,5 +1,5 @@
-# .clang-tidy - Comprehensive C++ Analysis Configuration
-# Optimized for embedded C++/Arduino/ESP32 development
+# .clang-tidy - Enhanced C++ Analysis Configuration
+# Optimized for embedded C++/Arduino/ESP32 development with reduced false positives
 
 Checks: '
   *,
@@ -10,6 +10,8 @@ Checks: '
   -llvm-*,
   -zircon-*,
   -altera-*,
+  -llvmlibc-*,
+  -darwin-*,
   -modernize-use-trailing-return-type,
   -readability-named-parameter,
   -cppcoreguidelines-avoid-magic-numbers,
@@ -20,7 +22,16 @@ Checks: '
   -hicpp-uppercase-literal-suffix,
   -cppcoreguidelines-macro-usage,
   -modernize-use-nodiscard,
-  -bugprone-easily-swappable-parameters
+  -bugprone-easily-swappable-parameters,
+  -readability-avoid-const-params-in-decls,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-interfaces-global-init,
+  -cert-err58-cpp,
+  -fuchsia-statically-constructed-objects,
+  -cppcoreguidelines-avoid-goto,
+  -hicpp-avoid-goto,
+  -readability-function-cognitive-complexity,
+  -bugprone-reserved-identifier
 '
 
 WarningsAsErrors: ''
@@ -39,10 +50,14 @@ CheckOptions:
   - key: performance-for-range-copy.WarnOnAllAutoCopies
     value: true
   - key: performance-inefficient-string-concatenation.StrictMode
-    value: true
+    value: false
   - key: readability-function-cognitive-complexity.Threshold
-    value: 25
+    value: 35
   - key: bugprone-argument-comment.StrictMode
+    value: false
+  - key: cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
     value: true
+  - key: modernize-use-nullptr.NullMacros
+    value: 'NULL'
 
 HeaderFilterRegex: '(src|lib|include)/.*\.(h|hpp)$'

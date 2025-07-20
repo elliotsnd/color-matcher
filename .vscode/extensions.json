@@ -2,7 +2,13 @@
     // See http://go.microsoft.com/fwlink/?LinkId=827846
     // for the documentation about the extensions.json format
     "recommendations": [
-        "platformio.platformio-ide"
+        "platformio.platformio-ide",
+        "pvs-studio.pvs-studio",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cpptools",
+        "notskm.clang-tidy",
+        "xaver.clang-format",
+        "ms-vscode.vscode-json"
     ],
     "unwantedRecommendations": [
         "ms-vscode.cpptools-extension-pack"

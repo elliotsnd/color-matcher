@@ -1,29 +1,41 @@
 {
-    "name": "Color Sensor Project",
-    "description": "Hardware/Software color sensor system with TCS3430",
-    "version": "1.0.0",
+    "name": "Color Sensor Project - Cross Platform",
+    "description": "Hardware/Software color sensor system with TCS3430 - Enhanced for static analysis",
+    "version": "1.0.1",
     "language": "C++",
     "platform": "ESP32",
-    "compiler": "GCC",
+    "compiler": "GCC/Clang",
     "standard": "c++17",
     "sourceFiles": [
         "src/main.cpp",
         "src/**/*.cpp",
-        "src/**/*.c"
+        "src/**/*.c",
+        "src/**/*.h",
+        "src/**/*.hpp"
     ],
     "includePaths": [
         "src/",
         "lib/",
-        "include/",
-        "~/.platformio/packages/framework-arduinoespressif32/cores/esp32",
-        "~/.platformio/packages/framework-arduinoespressif32/libraries"
+        "include/"
     ],
     "defines": [
         "ARDUINO=10819",
-        "ARDUINO_ESP32_DEV",
-        "ESP32",
-        "ESP_PLATFORM",
-        "F_CPU=240000000L"
+        "ARDUINO_ESP32_DEV=1",
+        "ESP32=1",
+        "ESP_PLATFORM=1",
+        "F_CPU=240000000L",
+        "BOARD_HAS_PSRAM=1",
+        "CONFIG_LITTLEFS_ENABLE=1",
+        "CONFIG_FATFS_ENABLE=0",
+        "CONFIG_SPIFFS_ENABLE=0",
+        "PROGMEM=",
+        "__cplusplus=201703L"
     ],
-    "compileCommandsPath": "./compile_commands.json"
+    "compileCommandsPath": "./compile_commands.json",
+    "analysisSettings": {
+        "enableFreeMode": true,
+        "licenseType": "free",
+        "outputFormat": "xml",
+        "reportFile": "pvs-studio-report.xml"
+    }
 }

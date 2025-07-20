@@ -1,0 +1,185 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Static Analysis: All Tools",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Generate Compile Commands",
+                "Static Analysis: Cppcheck",
+                "Static Analysis: Clang-Tidy",
+                "Static Analysis: PVS-Studio Info"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Generate Compile Commands",
+            "type": "shell",
+            "command": "python3",
+            "args": ["generate_compile_commands.py"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Static Analysis: Cppcheck",
+            "type": "shell",
+            "command": "cppcheck",
+            "args": [
+                "--enable=all",
+                "--std=c++17",
+                "--platform=unix32",
+                "--suppress=missingIncludeSystem",
+                "--suppress=unmatchedSuppression",
+                "--force",
+                "--inline-suppr",
+                "--template=gcc",
+                "-DARDUINO=10819",
+                "-DARDUINO_ESP32_DEV=1",
+                "-DESP32=1",
+                "-DESP_PLATFORM=1",
+                "-DF_CPU=240000000L",
+                "-DPROGMEM=",
+                "-I", "src",
+                "-I", "lib", 
+                "-I", "include",
+                "src/"
+            ],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": {
+                "owner": "cppcheck",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(\\w+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "Static Analysis: Clang-Tidy",
+            "type": "shell",
+            "command": "clang-tidy",
+            "args": [
+                "--format-style=file",
+                "--header-filter=.*",
+                "src/main.cpp",
+                "--",
+                "-std=c++17",
+                "-DARDUINO=10819",
+                "-DARDUINO_ESP32_DEV=1",
+                "-DESP32=1",
+                "-DESP_PLATFORM=1",
+                "-DF_CPU=240000000L",
+                "-DPROGMEM=",
+                "-Isrc",
+                "-Ilib",
+                "-Iinclude"
+            ],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": {
+                "owner": "clang-tidy",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(\\w+):\\s+(.*)\\s+\\[(.*)\\]$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5,
+                    "code": 6
+                }
+            }
+        },
+        {
+            "label": "Static Analysis: PVS-Studio Info",
+            "type": "shell",
+            "command": "echo",
+            "args": [
+                "✨ PVS-Studio Analysis: Use Command Palette (Ctrl+Shift+P) → 'PVS-Studio: Analyze' for manual analysis."
+            ],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build: PlatformIO",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Upload: PlatformIO",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run", "--target", "upload"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Clean: All Analysis Reports",
+            "type": "shell",
+            "command": "rm",
+            "args": ["-rf", "analysis-reports", "pvs-studio-report.xml", "cppcheck-reports"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
