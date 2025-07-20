@@ -131,7 +131,7 @@
 // =============================================================================
 
 // Default Log Level
-#define DEFAULT_LOG_LEVEL LOG_INFO  // 📝 Default logging level (default: LOG_INFO)
+#define DEFAULT_LOG_LEVEL LogLevel::LOG_INFO  // 📝 Default logging level (default: LOG_INFO)
 
 // Log Levels (set to false to disable specific logging)
 #define DEBUG_SENSOR_READINGS true     // 🔬 Show detailed XYZ→RGB conversion (default: true)

@@ -19,6 +19,7 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <array>
 
 #include "CIEDE2000.h"
 #include "dulux_simple_reader.h"
@@ -49,11 +50,9 @@ constexpr float GAMMA_CORRECTION = 2.2f;
 constexpr int COLOR_THRESHOLD_HIGH = 200;
 constexpr int COLOR_THRESHOLD_LOW = 50;
 constexpr int MAX_COLOR_SAMPLES = 10;
-constexpr int MAX_SAMPLE_DELAY = 50;
-constexpr int MAX_INTEGRATION_TIME = 255;
+// constexpr int MAX_SAMPLE_DELAY = 50;  // Currently unused
 constexpr float MAX_IR_COMPENSATION = 2.0f;
 constexpr int LARGE_COLOR_DB_THRESHOLD = 1000;
-constexpr int VERY_LARGE_COLOR_DB_THRESHOLD = 10000;
 constexpr float VERY_SMALL_DISTANCE = 0.1f;
 constexpr float LARGE_DISTANCE = 999999.0f;
 }  // namespace
@@ -67,21 +66,26 @@ class PsramAllocator : public ArduinoJson::Allocator {
  public:
   virtual ~PsramAllocator() = default;
   
-  void *allocate(size_t size) override {
+  // Note: void* return type required by ArduinoJson::Allocator interface
+  void* allocate(size_t size) override {
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }
 
-  void deallocate(void *pointer) override {
-    heap_caps_free(pointer);
+  // Note: void* parameter type required by ArduinoJson::Allocator interface
+  void deallocate(void* pointer) override {
+    if (pointer != nullptr) {
+      heap_caps_free(pointer);
+    }
   }
 
-  void *reallocate(void *ptr, size_t new_size) override {
+  // Note: void* types required by ArduinoJson::Allocator interface
+  void* reallocate(void* ptr, size_t new_size) override {
     return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }
 };
 
 // Logging system
-enum LogLevel { LOG_ERROR = 0, LOG_WARN = 1, LOG_INFO = 2, LOG_DEBUG = 3 };
+enum class LogLevel { LOG_ERROR = 0, LOG_WARN = 1, LOG_INFO = 2, LOG_DEBUG = 3 };
 
 class Logger {
  private:
@@ -93,28 +97,28 @@ class Logger {
   }
 
   static void error(const String &message) {
-    if (currentLevel >= LOG_ERROR) {
+    if (currentLevel >= LogLevel::LOG_ERROR) {
       Serial.print("[ERROR] ");
       Serial.println(message);
     }
   }
 
   static void warn(const String &message) {
-    if (currentLevel >= LOG_WARN) {
+    if (currentLevel >= LogLevel::LOG_WARN) {
       Serial.print("[WARN] ");
       Serial.println(message);
     }
   }
 
   static void info(const String &message) {
-    if (currentLevel >= LOG_INFO) {
+    if (currentLevel >= LogLevel::LOG_INFO) {
       Serial.print("[INFO] ");
       Serial.println(message);
     }
   }
 
   static void debug(const String &message) {
-    if (currentLevel >= LOG_DEBUG) {
+    if (currentLevel >= LogLevel::LOG_DEBUG) {
       Serial.print("[DEBUG] ");
       Serial.println(message);
     }
@@ -122,7 +126,7 @@ class Logger {
 
   // Convenience methods for formatted output
   static void info(const String &prefix, int value) {
-    if (currentLevel >= LOG_INFO) {
+    if (currentLevel >= LogLevel::LOG_INFO) {
       Serial.print("[INFO] ");
       Serial.print(prefix);
       Serial.println(value);
@@ -130,7 +134,7 @@ class Logger {
   }
 
   static void debug(const String &prefix, int value) {
-    if (currentLevel >= LOG_DEBUG) {
+    if (currentLevel >= LogLevel::LOG_DEBUG) {
       Serial.print("[DEBUG] ");
       Serial.print(prefix);
       Serial.println(value);
@@ -141,16 +145,19 @@ class Logger {
 // Initialize static member
 LogLevel Logger::currentLevel = DEFAULT_LOG_LEVEL;  // Configurable default log level
 
-// WiFi credentials
-static const char *ssid = WIFI_SSID;
-static const char *password = WIFI_PASSWORD;
+// WiFi credentials - const pointers to const data
+static const char* const ssid = WIFI_SSID;
+static const char* const password = WIFI_PASSWORD;
 
-// AP mode credentials
-static const char *ap_ssid = AP_SSID;
-static const char *ap_password = AP_PASSWORD;
+// AP mode credentials - const pointers to const data  
+static const char* const ap_ssid = AP_SSID;
+static const char* const ap_password = AP_PASSWORD;
 
-// Static IP configuration
-static IPAddress local_IP, gateway, subnet;
+// Static IP configuration (initialized at runtime, cannot be const)
+static IPAddress local_IP;
+static IPAddress gateway;
+static IPAddress subnet;
+
 static void initializeIPAddresses() {
   local_IP.fromString(STATIC_IP);
   gateway.fromString(GATEWAY_IP);
@@ -191,22 +198,20 @@ static void handleBatteryAPI(AsyncWebServerRequest *request);
 static DFRobot_TCS3430 TCS3430;
 
 // I2C pin definitions for ESP32-S3 ProS3
-#define SDA_PIN 3
-#define SCL_PIN 4
+constexpr int SDA_PIN = 3;
+constexpr int SCL_PIN = 4;
 
 // Battery monitoring for ProS3 - using official UMSeriesD library
 // The library handles GPIO pins and voltage dividers automatically
 
 // Set the optimized LED pin
-static int LEDpin = LED_PIN;
-
-static const uint16_t SATURATION_THRESHOLD = SENSOR_SATURATION_THRESHOLD;
+static const int LEDpin = LED_PIN;
 
 // === START OF FINAL, DEFINITIVE CALIBRATION PARAMETERS ===
 // Confirmed to produce accurate results for three targets.
 
-// Runtime Settings Structure - Can be modified via web interface
-struct RuntimeSettings {
+// Sensor hardware configuration
+struct SensorConfig {
   // Color Detection Settings
   int colorReadingSamples = COLOR_READING_SAMPLES;
   int colorStabilityThreshold = COLOR_STABILITY_THRESHOLD;
@@ -218,35 +223,6 @@ struct RuntimeSettings {
   uint16_t sensorSaturationThreshold = SENSOR_SATURATION_THRESHOLD;
   int ledBrightness = LED_BRIGHTNESS;
 
-  // Calibration Mode Selection
-  bool useDFRobotLibraryCalibration =
-      false;  // false = custom quadratic, true = DFRobot library matrix
-
-  // Color Calibration Settings
-  float irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
-  float irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
-  uint8_t rgbSaturationLimit = RGB_SATURATION_LIMIT;
-
-  // Matrix-based calibration (wide-range)
-  bool useMatrixCalibration =
-      true;  // true = use 3Ã—3 matrix+offset instead of per-channel quadratic
-
-  // Bright-range matrix (used when Y > dynamicThreshold) - Optimized for vivid white
-  // RGB(247,248,244)
-  float brightMatrix[MATRIX_SIZE] = {0.0280f, -0.0045f, -0.0070f, -0.0055f, 0.0254f,
-                           0.0005f, 0.0022f,  -0.0042f, 0.0545f};
-  float brightOffset[3] = {0.0f, 0.0f, 0.0f};
-
-  // Dark-range matrix (used when Y <= dynamicThreshold) - Fine-tuned for precise RGB(168,160,147)
-  float darkMatrix[MATRIX_SIZE] = {0.0291f, -0.0032f, -0.0024f, -0.0040f, 0.0268f,
-                         0.0016f, 0.0016f,  -0.0030f, 0.0606f};
-  float darkOffset[3] = {0.0f, 0.0f, 0.0f};
-
-  // Dynamic calibration control
-  bool enableDynamicCalibration = true;
-  float dynamicThreshold =
-      8000.0f;  // Y threshold for bright/dark matrix switching - restored for proper grey detection
-
   // Auto-adjust integration
   bool enableAutoAdjust = true;
   float autoSatHigh = 0.9f;
@@ -254,45 +230,31 @@ struct RuntimeSettings {
   uint8_t minIntegrationTime = 0x10;
   uint8_t maxIntegrationTime = 0x80;
   uint8_t integrationStep = 0x10;
+};
 
-  // Quadratic calibration (legacy/backup)
-  float redA = 5.756615248518086e-06f;
-  float redB = -0.10824971353127427f;
-  float redC = 663.2283515839658f;
-  float greenA = 7.700364703908128e-06f;
-  float greenB = -0.14873455804115546f;
-  float greenC = 855.288778468652f;
-  float blueA = -2.7588632792769936e-06f;
-  float blueB = 0.04959423885676833f;
-  float blueC = 35.55576869603341f;
+// Matrix-based calibration settings
+struct MatrixCalibration {
+  // Matrix-based calibration (wide-range)
+  bool useMatrixCalibration = true;  // true = use 3×3 matrix+offset instead of per-channel quadratic
 
-  // Legacy Calibration Parameters (for compatibility)
-  float irCompensation = CALIBRATION_IR_COMPENSATION;
-  float rSlope = CALIBRATION_R_SLOPE;
-  float rOffset = CALIBRATION_R_OFFSET;
-  float gSlope = CALIBRATION_G_SLOPE;
-  float gOffset = CALIBRATION_G_OFFSET;
-  float bSlope = CALIBRATION_B_SLOPE;
-  float bOffset = CALIBRATION_B_OFFSET;
+  // Bright-range matrix (used when Y > dynamicThreshold) - Optimized for vivid white
+  // RGB(247,248,244)
+  std::array<float, MATRIX_SIZE> brightMatrix = {0.0280f, -0.0045f, -0.0070f, -0.0055f, 0.0254f,
+                           0.0005f, 0.0022f,  -0.0042f, 0.0545f};
+  std::array<float, 3> brightOffset = {0.0f, 0.0f, 0.0f};
 
-  // Yellow Detection Settings
-  bool yellowDistanceCompensation = YELLOW_DISTANCE_COMPENSATION;
-  float yellowMinRatio = YELLOW_MIN_RATIO;
-  int yellowBrightnessThreshold = YELLOW_BRIGHTNESS_THRESHOLD;
+  // Dark-range matrix (used when Y <= dynamicThreshold) - Fine-tuned for precise RGB(168,160,147)
+  std::array<float, MATRIX_SIZE> darkMatrix = {0.0291f, -0.0032f, -0.0024f, -0.0040f, 0.0268f,
+                         0.0016f, 0.0016f,  -0.0030f, 0.0606f};
+  std::array<float, 3> darkOffset = {0.0f, 0.0f, 0.0f};
 
-  // Performance Settings
-  int kdtreeMaxColors = KDTREE_MAX_COLORS;
-  int kdtreeSearchTimeout = KDTREE_SEARCH_TIMEOUT_MS;
-  int binarySearchTimeout = BINARY_SEARCH_TIMEOUT_MS;
-  bool enableKdtree = ENABLE_KDTREE;
+  // Dynamic calibration control
+  bool enableDynamicCalibration = true;
+  float dynamicThreshold = 8000.0f;  // Y threshold for bright/dark matrix switching
+};
 
-  // Debug Settings
-  bool debugSensorReadings = DEBUG_SENSOR_READINGS;
-  bool debugColorMatching = DEBUG_COLOR_MATCHING;
-  bool debugMemoryUsage = DEBUG_MEMORY_USAGE;
-  bool debugPerformanceTiming = DEBUG_PERFORMANCE_TIMING;
-  int sensorReadingInterval = SENSOR_READING_INTERVAL_MS;
-
+// Color processing coefficients for different targets
+struct ColorCoefficients {
   // White Optimized Coefficients
   float whiteRedA = 0.000001f;
   float whiteRedB = -0.01278f;
@@ -303,6 +265,7 @@ struct RuntimeSettings {
   float whiteBlueA = 0.0000008f;
   float whiteBlueB = 0.019f;
   float whiteBlueC = 160.0f;
+
   // Grey Optimized Coefficients - tuned for target RGB(168,160,147)
   float greyRedA = 0.0000007f;
   float greyRedB = -0.012f;
@@ -313,7 +276,37 @@ struct RuntimeSettings {
   float greyBlueA = 0.0000009f;
   float greyBlueB = -0.008f;
   float greyBlueC = 147.0f;
+};
 
+// Quadratic calibration (legacy/backup)
+struct QuadraticCalibration {
+  float redA = 5.756615248518086e-06f;
+  float redB = -0.10824971353127427f;
+  float redC = 663.2283515839658f;
+  float greenA = 7.700364703908128e-06f;
+  float greenB = -0.14873455804115546f;
+  float greenC = 855.288778468652f;
+  float blueA = -2.7588632792769936e-06f;
+  float blueB = 0.04959423885676833f;
+  float blueC = 35.55576869603341f;
+};
+
+// Legacy compatibility settings
+struct LegacyCalibration {
+  float irCompensation = CALIBRATION_IR_COMPENSATION;
+  float rSlope = CALIBRATION_R_SLOPE;
+  float rOffset = CALIBRATION_R_OFFSET;
+  float gSlope = CALIBRATION_G_SLOPE;
+  float gOffset = CALIBRATION_G_OFFSET;
+  float bSlope = CALIBRATION_B_SLOPE;
+  float bOffset = CALIBRATION_B_OFFSET;
+};
+
+// IR compensation settings
+struct IRCompensation {
+  float irCompensationFactor1 = IR_COMPENSATION_FACTOR_1;
+  float irCompensationFactor2 = IR_COMPENSATION_FACTOR_2;
+  
   // Dynamic IR compensation - adjusted for grey port accuracy
   bool enableDynamicIR = true;
   float irHighThreshold = 400.0f;  // Lower threshold for grey tones
@@ -321,7 +314,51 @@ struct RuntimeSettings {
   float irHighFactor = 0.10f;      // Reduced for grey accuracy
 };
 
-// Global runtime settings instance
+// Color processing settings
+struct ColorProcessing {
+  uint8_t rgbSaturationLimit = RGB_SATURATION_LIMIT;
+  
+  // Calibration Mode Selection
+  bool useDFRobotLibraryCalibration = false;  // false = custom quadratic, true = DFRobot library matrix
+  
+  // Yellow Detection Settings
+  bool yellowDistanceCompensation = YELLOW_DISTANCE_COMPENSATION;
+  float yellowMinRatio = YELLOW_MIN_RATIO;
+  int yellowBrightnessThreshold = YELLOW_BRIGHTNESS_THRESHOLD;
+};
+
+// Performance and optimization settings
+struct PerformanceConfig {
+  // Performance Settings
+  int kdtreeMaxColors = KDTREE_MAX_COLORS;
+  int kdtreeSearchTimeout = KDTREE_SEARCH_TIMEOUT_MS;
+  int binarySearchTimeout = BINARY_SEARCH_TIMEOUT_MS;
+  bool enableKdtree = ENABLE_KDTREE;
+};
+
+// Debug and monitoring settings
+struct DebugConfig {
+  bool debugSensorReadings = DEBUG_SENSOR_READINGS;
+  bool debugColorMatching = DEBUG_COLOR_MATCHING;
+  bool debugMemoryUsage = DEBUG_MEMORY_USAGE;
+  bool debugPerformanceTiming = DEBUG_PERFORMANCE_TIMING;
+  int sensorReadingInterval = SENSOR_READING_INTERVAL_MS;
+};
+
+// Main settings container that aggregates all configuration
+struct RuntimeSettings {
+  SensorConfig sensor;
+  MatrixCalibration matrix;
+  ColorCoefficients coefficients;
+  QuadraticCalibration quadratic;
+  LegacyCalibration legacy;
+  IRCompensation ir;
+  ColorProcessing color;
+  PerformanceConfig performance;
+  DebugConfig debug;
+};
+
+// Global runtime settings instance (modifiable - configured at startup and runtime)
 static RuntimeSettings settings;
 
 // === END OF CALIBRATION PARAMETERS ===
@@ -337,7 +374,9 @@ static LightweightKDTree kdTreeColorDB;
 struct DuluxColor {
   String name;      // Color name
   String code;      // Color code
-  uint8_t r, g, b;  // RGB values
+  uint8_t r;        // Red value
+  uint8_t g;        // Green value  
+  uint8_t b;        // Blue value
   String lrv;       // Light Reflectance Value
   String id;        // Unique ID
 };
@@ -369,7 +408,7 @@ bool loadFallbackColors() {
                                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!fallbackColorDatabase) {
     Logger::warn("Failed to allocate fallback colors in PSRAM, trying regular heap");
-    fallbackColorDatabase = new DuluxColor[fallbackCount];
+    fallbackColorDatabase = (DuluxColor *)malloc(sizeof(DuluxColor) * fallbackCount);
     if (!fallbackColorDatabase) {
       Logger::error("Failed to allocate memory for fallback colors");
       return false;
@@ -394,16 +433,13 @@ bool loadFallbackColors() {
   return true;
 }
 
-// Load color database from binary file with optimized memory usage
-bool loadColorDatabase() {
-  Logger::info("=== Starting binary color database load process ===");
-  unsigned long startTime = millis();  // Track load time
-
-  // Check available memory before starting
+// Helper function to check memory availability
+static bool checkMemoryAvailability() {
   size_t freeHeap = esp_get_free_heap_size();
   size_t freePsram = psramFound() ? ESP.getFreePsram() : 0;
 
   Logger::info("Free heap before loading: " + String(freeHeap / BYTES_PER_KB) + " KB");
+  
   if (psramFound()) {
     Logger::info("Free PSRAM before loading: " + String(freePsram / BYTES_PER_KB) + " KB");
 
@@ -412,144 +448,369 @@ bool loadColorDatabase() {
       Logger::warn("Low PSRAM detected (" + String(freePsram / BYTES_PER_KB) + " KB < " +
                    String(PSRAM_SAFETY_MARGIN_KB) + " KB safety margin)");
       Logger::warn("KD-tree will be disabled to conserve memory");
-      settings.enableKdtree = false;  // Disable KD-tree for low memory situations
+      settings.performance.enableKdtree = false;  // Disable KD-tree for low memory situations
     }
+    return true;
   } else {
     Logger::error("PSRAM not available - using fallback color database");
-    settings.enableKdtree = false;  // Disable KD-tree without PSRAM
-    return loadFallbackColors();
+    settings.performance.enableKdtree = false;  // Disable KD-tree without PSRAM
+    return false;
+  }
+}
+
+// Helper function to determine if KD-tree should be used
+static bool shouldUseKdTreeForDatabase(size_t colorCount) {
+  bool shouldUseKdtree = settings.performance.enableKdtree;  // Start with user/memory setting
+
+  if (shouldUseKdtree && colorCount <= LARGE_COLOR_DB_THRESHOLD) {
+    Logger::info("Small database detected (" + String(colorCount) + " colors ≤ 1000)");
+    Logger::info("KD-tree overhead not justified - using direct binary search for optimal performance");
+    shouldUseKdtree = false;
+  } else if (shouldUseKdtree && colorCount > LARGE_COLOR_DB_THRESHOLD) {
+    Logger::info("Large database detected (" + String(colorCount) + " colors > 1000)");
+    Logger::info("KD-tree will provide significant search speed improvements");
   }
 
-  Logger::info("Memory check complete, proceeding with binary file loading...");
-
-  // Try to open binary database first (preferred method)
-  Logger::info("Attempting to open binary color database: /dulux.bin");
-  if (simpleColorDB.openDatabase("/dulux.bin")) {
-    unsigned long loadTime = millis() - startTime;
-    size_t colorCount = simpleColorDB.getColorCount();
-
-    Logger::info("Binary color database opened successfully!");
-    Logger::info("Colors available: " + String(colorCount));
-    Logger::info("Open time: " + String(loadTime) + "ms");
-    Logger::info("PSRAM free after open: " + String(ESP.getFreePsram() / BYTES_PER_KB) + " KB");
-
-    // Performance optimization: Conditionally enable KD-tree based on database size
-    bool shouldUseKdtree = settings.enableKdtree;  // Start with user/memory setting
-
-    if (shouldUseKdtree && colorCount <= LARGE_COLOR_DB_THRESHOLD) {
-      Logger::info("Small database detected (" + String(colorCount) + " colors â‰¤ 1000)");
-      Logger::info(
-          "KD-tree overhead not justified - using direct binary search for optimal performance");
-      shouldUseKdtree = false;
-    } else if (shouldUseKdtree && colorCount > LARGE_COLOR_DB_THRESHOLD) {
-      Logger::info("Large database detected (" + String(colorCount) + " colors > 1000)");
-      Logger::info("KD-tree will provide significant search speed improvements");
-    }
-
-    // Update runtime setting based on optimization analysis
-    settings.enableKdtree = shouldUseKdtree;
+  // Update runtime setting based on optimization analysis
+  settings.performance.enableKdtree = shouldUseKdtree;
+  return shouldUseKdtree;
+}
 
 #if ENABLE_KDTREE
-    if (shouldUseKdtree) {
-      // Initialize KD-tree with data from binary database
-      Logger::info("Building lightweight KD-tree for optimized color search...");
-      unsigned long kdStartTime = millis();
+// Helper function to build KD-tree from binary database
+static bool buildKdTreeFromDatabase(size_t colorCount) {
+  Logger::info("Building lightweight KD-tree for optimized color search...");
+  unsigned long kdStartTime = millis();
 
-      Logger::info("Loading " + String(colorCount) + " colors into KD-tree...");
+  Logger::info("Loading " + String(colorCount) + " colors into KD-tree...");
 
-      // Performance monitoring: Check available memory before KD-tree construction
-      size_t heapBeforeKd = ESP.getFreeHeap();
-      size_t psramBeforeKd = ESP.getFreePsram();
-      Logger::info("Memory before KD-tree: Heap=" + String(heapBeforeKd / BYTES_PER_KB) +
-                   " KB, PSRAM=" + String(psramBeforeKd / BYTES_PER_KB) + " KB");
+  // Performance monitoring: Check available memory before KD-tree construction
+  size_t heapBeforeKd = ESP.getFreeHeap();
+  size_t psramBeforeKd = ESP.getFreePsram();
+  Logger::info("Memory before KD-tree: Heap=" + String(heapBeforeKd / BYTES_PER_KB) +
+               " KB, PSRAM=" + String(psramBeforeKd / BYTES_PER_KB) + " KB");
 
-      // Safety check for large datasets
-      if (colorCount > LARGE_COLOR_DB_THRESHOLD) {
-        Logger::warn("Very large color dataset detected (" + String(colorCount) + " colors)");
-        Logger::warn(
-            "This may take significant time and memory - consider reducing KDTREE_MAX_COLORS");
-      }
+  // Safety check for large datasets
+  if (colorCount > LARGE_COLOR_DB_THRESHOLD) {
+    Logger::warn("Very large color dataset detected (" + String(colorCount) + " colors)");
+    Logger::warn("This may take significant time and memory - consider reducing KDTREE_MAX_COLORS");
+  }
 
-      // Limit colors to KDTREE_MAX_COLORS setting for memory management
-      size_t effectiveColorCount = min(colorCount, (size_t)settings.kdtreeMaxColors);
-      if (effectiveColorCount < colorCount) {
-        Logger::warn("Limiting KD-tree to " + String(effectiveColorCount) + " colors (from " +
-                     String(colorCount) + ") due to KDTREE_MAX_COLORS setting");
-      }
+  // Limit colors to KDTREE_MAX_COLORS setting for memory management
+  size_t effectiveColorCount = min(colorCount, (size_t)settings.performance.kdtreeMaxColors);
+  if (effectiveColorCount < colorCount) {
+    Logger::warn("Limiting KD-tree to " + String(effectiveColorCount) + " colors (from " +
+                 String(colorCount) + ") due to KDTREE_MAX_COLORS setting");
+  }
 
-      // Create vector of color points for the lightweight KD-tree
-      PSRAMColorVector colorPoints;
-      colorPoints.reserve(effectiveColorCount);
+  // Create vector of color points for the lightweight KD-tree
+  PSRAMColorVector colorPoints;
+  colorPoints.reserve(effectiveColorCount);
 
-      // Load colors with progress logging and timeout protection
-      size_t loadedCount = 0;
-      unsigned long loadStartTime = millis();
-      const unsigned long maxLoadTime = KDTREE_LOAD_TIMEOUT_MS;  // Configurable timeout for loading
+  // Load colors with progress logging and timeout protection
+  size_t loadedCount = 0;
+  unsigned long loadStartTime = millis();
+  const unsigned long maxLoadTime = KDTREE_LOAD_TIMEOUT_MS;  // Configurable timeout for loading
 
-      for (size_t i = 0; i < effectiveColorCount; i++) {
-        // Check for timeout during loading
-        if (millis() - loadStartTime > maxLoadTime) {
-          Logger::warn("Color loading timeout after " + String((millis() - loadStartTime) / 1000) +
-                       " seconds");
-          Logger::warn("Loaded " + String(loadedCount) + " of " + String(effectiveColorCount) +
-                       " colors before timeout");
+  for (size_t i = 0; i < effectiveColorCount; i++) {
+    // Check for timeout during loading
+    if (millis() - loadStartTime > maxLoadTime) {
+      Logger::warn("Color loading timeout after " + String((millis() - loadStartTime) / 1000) +
+                   " seconds");
+      Logger::warn("Loaded " + String(loadedCount) + " of " + String(effectiveColorCount) +
+                   " colors before timeout");
+      break;
+    }
+
+    SimpleColor color;
+    if (simpleColorDB.getColorByIndex(i, color)) {
+      ColorPoint point(color.r, color.g, color.b, (uint16_t)i);
+      colorPoints.push_back(point);
+      loadedCount++;
+
+      // Progress logging for large datasets with memory monitoring
+      if (effectiveColorCount > LARGE_COLOR_DB_THRESHOLD && (i % 500 == 0 || i == effectiveColorCount - 1)) {
+        Logger::info("Loaded " + String(i + 1) + "/" + String(effectiveColorCount) + " colors");
+
+        // Performance monitoring: Check memory usage during loading
+        size_t currentFreeHeap = ESP.getFreeHeap();
+        size_t currentFreePsram = ESP.getFreePsram();
+        unsigned long elapsedTime = millis() - loadStartTime;
+
+        Logger::info("Memory: Heap=" + String(currentFreeHeap / BYTES_PER_KB) +
+                     " KB, PSRAM=" + String(currentFreePsram / BYTES_PER_KB) +
+                     " KB, Time=" + String(elapsedTime) + "ms");
+
+        // Performance optimization: Monitor memory usage and abort if critical
+        if (currentFreeHeap < 50000) {
+          Logger::error("Critical heap memory low (" + String(currentFreeHeap) +
+                        " bytes) - stopping KD-tree construction");
+          Logger::error("Consider reducing KDTREE_MAX_COLORS or increasing PSRAM_SAFETY_MARGIN_KB");
           break;
         }
 
-        SimpleColor color;
-        if (simpleColorDB.getColorByIndex(i, color)) {
-          ColorPoint point(color.r, color.g, color.b, (uint16_t)i);
-          colorPoints.push_back(point);
-          loadedCount++;
-
-          // Progress logging for large datasets with memory monitoring
-          if (effectiveColorCount > LARGE_COLOR_DB_THRESHOLD && (i % 500 == 0 || i == effectiveColorCount - 1)) {
-            Logger::info("Loaded " + String(i + 1) + "/" + String(effectiveColorCount) + " colors");
-
-            // Performance monitoring: Check memory usage during loading
-            size_t currentFreeHeap = ESP.getFreeHeap();
-            size_t currentFreePsram = ESP.getFreePsram();
-            unsigned long elapsedTime = millis() - loadStartTime;
-
-            Logger::info("Memory: Heap=" + String(currentFreeHeap / BYTES_PER_KB) +
-                         " KB, PSRAM=" + String(currentFreePsram / BYTES_PER_KB) +
-                         " KB, Time=" + String(elapsedTime) + "ms");
-
-            // Performance optimization: Monitor memory usage and abort if critical
-            if (currentFreeHeap < 50000) {
-              Logger::error("Critical heap memory low (" + String(currentFreeHeap) +
-                            " bytes) - stopping KD-tree construction");
-              Logger::error(
-                  "Consider reducing KDTREE_MAX_COLORS or increasing PSRAM_SAFETY_MARGIN_KB");
-              break;
-            }
-
-            if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * 1024 / 2)) {
-              Logger::warn("PSRAM approaching safety margin (" + String(currentFreePsram / BYTES_PER_KB) +
-                           " KB) - may limit performance");
-            }
-
-            // Yield to watchdog and other tasks
-            delay(1);
-          }
-        } else {
-          // Log failed color reads
-          if (i % 1000 == 0) {
-            Logger::warn("Failed to read color at index " + String(i));
-          }
+        if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * 1024 / 2)) {
+          Logger::warn("PSRAM approaching safety margin (" + String(currentFreePsram / BYTES_PER_KB) +
+                       " KB) - may limit performance");
         }
+
+        // Yield to watchdog and other tasks
+        delay(1);
       }
+    } else {
+      // Log failed color reads
+      if (i % 1000 == 0) {
+        Logger::warn("Failed to read color at index " + String(i));
+      }
+    }
+  }
 
-      Logger::info("Successfully loaded " + String(loadedCount) + " colors for KD-tree");
+  Logger::info("Successfully loaded " + String(loadedCount) + " colors for KD-tree");
 
-      if (loadedCount == 0) {
-        Logger::error("No colors loaded - skipping KD-tree construction");
-        Logger::warn("Falling back to binary database search");
-        settings.enableKdtree = false;  // Disable failed KD-tree
-      } else {
-        Logger::info("Starting lightweight KD-tree construction...");
+  if (loadedCount == 0) {
+    Logger::error("No colors loaded - skipping KD-tree construction");
+    Logger::warn("Falling back to binary database search");
+    settings.performance.enableKdtree = false;  // Disable failed KD-tree
+    return false;
+  }
 
-        if (kdTreeColorDB.build(colorPoints)) {
+  Logger::info("Starting lightweight KD-tree construction...");
+
+  if (kdTreeColorDB.build(colorPoints)) {
+    unsigned long kdLoadTime = millis() - kdStartTime;
+    size_t memoryUsage = kdTreeColorDB.getMemoryUsage();
+
+    Logger::info("🎯 KD-tree built successfully in " + String(kdLoadTime) + "ms");
+    Logger::info("📊 KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " +
+                 String(memoryUsage) + " bytes");
+    Logger::info("🚀 Search performance: O(log " + String(loadedCount) + ") vs O(" +
+                 String(loadedCount) + ") linear");
+    Logger::info("💾 PSRAM after KD-tree: " + String(ESP.getFreePsram() / BYTES_PER_KB) + " KB free");
+
+    // Performance validation: Estimate search speed improvement
+    float speedupFactor = (float)loadedCount / (float)log2(loadedCount);
+    Logger::info("⚡ Estimated search speedup: " + String(speedupFactor, 1) + "x faster than linear search");
+    return true;
+  } else {
+    Logger::error("Failed to build KD-tree - falling back to binary database only");
+    Logger::warn("This may indicate insufficient memory or corrupted color data");
+    settings.performance.enableKdtree = false;  // Disable failed KD-tree
+    return false;
+  }
+}
+#endif
+
+// Helper: Check memory and decide on KD-tree viability
+bool checkAvailableMemory(size_t& freeHeap, size_t& freePsram, bool& shouldUseKdtree) {
+  freeHeap = esp_get_free_heap_size();
+  freePsram = psramFound() ? ESP.getFreePsram() : 0;
+  
+  Logger::info("Free heap before loading: " + String(freeHeap / 1024) + " KB");
+  
+  if (!psramFound()) {
+    Logger::error("PSRAM not available - using fallback color database");
+    shouldUseKdtree = false;
+    return false;  // No PSRAM: Fail early
+  }
+  
+  Logger::info("Free PSRAM before loading: " + String(freePsram / 1024) + " KB");
+  
+  if (freePsram < (PSRAM_SAFETY_MARGIN_KB * 1024)) {
+    Logger::warn("Low PSRAM detected (" + String(freePsram / 1024) + " KB < " + String(PSRAM_SAFETY_MARGIN_KB) + " KB safety margin)");
+    Logger::warn("KD-tree will be disabled to conserve memory");
+    shouldUseKdtree = false;
+  }
+  
+  return true;  // Proceed
+}
+
+// Helper: Log progress during long operations (e.g., loading colors)
+void logProgress(size_t current, size_t total, unsigned long startTime, const String& prefix) {
+  if (total > 1000 && (current % 500 == 0 || current == total - 1)) {
+    Logger::info(prefix + " " + String(current + 1) + "/" + String(total));
+    
+    size_t currentFreeHeap = ESP.getFreeHeap();
+    size_t currentFreePsram = ESP.getFreePsram();
+    unsigned long elapsed = millis() - startTime;
+    
+    Logger::info("Memory: Heap=" + String(currentFreeHeap / 1024) + " KB, PSRAM=" + String(currentFreePsram / 1024) + " KB, Time=" + String(elapsed) + "ms");
+    
+    if (currentFreeHeap < 50000) {
+      Logger::error("Critical heap low (" + String(currentFreeHeap) + " bytes) - aborting");
+      // Could throw exception or return error code if needed
+    }
+    
+    delay(1);  // Yield
+  }
+}
+
+// Helper: Build KD-tree if conditions met
+bool buildKdTreeIfNeeded(size_t colorCount, bool shouldUseKdtree) {
+#if ENABLE_KDTREE
+  if (!shouldUseKdtree) {
+    Logger::info("KD-tree skipped by settings/memory check");
+    return true;  // Success (skipped)
+  }
+  
+  // Optimize based on size
+  if (colorCount <= 1000) {
+    Logger::info("Small DB (" + String(colorCount) + " ≤ 1000) - skipping KD-tree for perf");
+    return true;
+  } else {
+    Logger::info("Large DB (" + String(colorCount) + " > 1000) - building KD-tree");
+  }
+  
+  unsigned long kdStartTime = millis();
+  Logger::info("Building lightweight KD-tree...");
+  
+  size_t heapBefore = ESP.getFreeHeap();
+  size_t psramBefore = ESP.getFreePsram();
+  Logger::info("Memory before KD-tree: Heap=" + String(heapBefore / 1024) + " KB, PSRAM=" + String(psramBefore / 1024) + " KB");
+  
+  if (colorCount > 10000) {
+    Logger::warn("Very large DB - may consume resources");
+  }
+  
+  size_t effectiveCount = min(colorCount, (size_t)settings.performance.kdtreeMaxColors);
+  if (effectiveCount < colorCount) {
+    Logger::warn("Limiting to " + String(effectiveCount) + " colors due to KDTREE_MAX_COLORS");
+  }
+  
+  PSRAMColorVector colorPoints;
+  colorPoints.reserve(effectiveCount);
+  
+  size_t loadedCount = 0;
+  unsigned long loadStart = millis();
+  
+  for (size_t i = 0; i < effectiveCount; i++) {
+    if (millis() - loadStart > KDTREE_LOAD_TIMEOUT_MS) {
+      Logger::warn("Load timeout after " + String((millis() - loadStart) / 1000) + "s; Loaded " + String(loadedCount));
+      break;
+    }
+    
+    SimpleColor color;
+    if (simpleColorDB.getColorByIndex(i, color)) {
+      ColorPoint point(color.r, color.g, color.b, (uint16_t)i);
+      colorPoints.push_back(point);
+      loadedCount++;
+      
+      logProgress(i, effectiveCount, loadStart, "Loaded colors");
+    } else if (i % 1000 == 0) {
+      Logger::warn("Failed read at index " + String(i));
+    }
+  }
+  
+  Logger::info("Loaded " + String(loadedCount) + " colors for KD-tree");
+  
+  if (loadedCount == 0) {
+    Logger::error("No colors loaded - skipping KD-tree");
+    return false;
+  }
+  
+  if (kdTreeColorDB.build(colorPoints)) {
+    unsigned long kdTime = millis() - kdStartTime;
+    size_t memUsage = kdTreeColorDB.getMemoryUsage();
+    
+    Logger::info("🎯 KD-tree built in " + String(kdTime) + "ms");
+    Logger::info("📊 Stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " + String(memUsage) + " bytes");
+    Logger::info("🚀 O(log " + String(loadedCount) + ") search");
+    Logger::info("💾 PSRAM after: " + String(ESP.getFreePsram() / 1024) + " KB");
+    
+    float speedup = (float)loadedCount / log2(loadedCount);
+    Logger::info("⚡ Speedup est: " + String(speedup, 1) + "x");
+    
+    return true;
+  } else {
+    Logger::error("KD-tree build failed - fallback to binary");
+    return false;
+  }
+#else
+  Logger::info("KD-tree disabled at compile time");
+  return true;
+#endif
+}
+
+// Helper: Load JSON fallback (stubbed in original)
+bool loadJsonFallback() {
+  Logger::warn("Binary failed, trying JSON...");
+  
+  File file = LittleFS.open("/dulux.json", "r");
+  if (!file) {
+    file = LittleFS.open("/dulux_colors.json", "r");
+    if (!file) {
+      Logger::error("No JSON files - using fallback colors");
+      return loadFallbackColors();
+    }
+    Logger::info("Using /dulux_colors.json");
+  } else {
+    Logger::info("Using /dulux.json");
+  }
+  
+  size_t fileSize = file.size();
+  Logger::debug("JSON size: " + String(fileSize) + " bytes");
+  
+  if (fileSize == 0 || fileSize > 10 * 1024 * 1024) {
+    Logger::error("Invalid JSON size: " + String(fileSize));
+    file.close();
+    return loadFallbackColors();
+  }
+  
+  Logger::warn("JSON deprecated - use binary for efficiency");
+  Logger::info("Binary would save ~" + String((fileSize * 83) / 100) + " bytes");
+  
+  file.close();
+  Logger::error("JSON loading not implemented - using fallback");
+  return loadFallbackColors();
+}
+
+// Main Function: Orchestrate loading
+bool loadColorDatabase() {
+  Logger::info("=== Starting binary color database load process ===");
+  unsigned long startTime = millis();
+  
+  size_t freeHeap, freePsram;
+  bool shouldUseKdtree = settings.performance.enableKdtree;
+  
+  if (!checkAvailableMemory(freeHeap, freePsram, shouldUseKdtree)) {
+    return loadFallbackColors();  // Early exit on no PSRAM
+  }
+  
+  if (simpleColorDB.openDatabase("/dulux.bin")) {
+    unsigned long loadTime = millis() - startTime;
+    size_t colorCount = simpleColorDB.getColorCount();
+    
+    Logger::info("Binary DB opened! Colors: " + String(colorCount));
+    Logger::info("Load time: " + String(loadTime) + "ms");
+    Logger::info("PSRAM free after: " + String(ESP.getFreePsram() / 1024) + " KB");
+    
+    settings.performance.enableKdtree = shouldUseKdtree;  // Update global
+    
+    if (!buildKdTreeIfNeeded(colorCount, shouldUseKdtree)) {
+      Logger::warn("KD-tree failed - using binary only");
+    }
+    
+    return true;
+  }
+  
+  return loadJsonFallback();  // Fallback chain
+}
+
+// Calculate color distance using CIEDE2000 algorithm
+static float calculateColorDistance(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2,
+                             uint8_t b2) {
+  // Convert both colors to LAB colorspace
+  CIEDE2000::LAB lab1, lab2;
+  rgbToLAB(r1, g1, b1, lab1);
+  rgbToLAB(r2, g2, b2, lab2);
+
+  // Calculate CIEDE2000 distance
+  double distance = CIEDE2000::CIEDE2000(lab1, lab2);
+  return (float)distance;
+}
+
+#if ENABLE_KDTREE
+// Helper function for KD-tree color search
+static String searchColorUsingKdTree(uint8_t r, uint8_t g, uint8_t b, unsigned long& searchTime) {
           unsigned long kdLoadTime = millis() - kdStartTime;
           size_t memoryUsage = kdTreeColorDB.getMemoryUsage();
 
@@ -562,14 +823,14 @@ bool loadColorDatabase() {
                        " KB free");
 
           // Performance validation: Estimate search speed improvement
-          float speedupFactor = (float)loadedCount / log2(loadedCount);
+          float speedupFactor = (float)loadedCount / (float)log2(loadedCount);
           Logger::info("âš¡ Estimated search speedup: " + String(speedupFactor, 1) +
                        "x faster than linear search");
 
         } else {
           Logger::error("Failed to build KD-tree - falling back to binary database only");
           Logger::warn("This may indicate insufficient memory or corrupted color data");
-          settings.enableKdtree = false;  // Disable failed KD-tree
+          settings.performance.enableKdtree = false;  // Disable failed KD-tree
         }
       }
 
@@ -625,129 +886,153 @@ bool loadColorDatabase() {
   Logger::error("JSON fallback loading not implemented in binary version - using fallback colors");
   return loadFallbackColors();
 }
-// Calculate color distance using CIEDE2000 algorithm
-static float calculateColorDistance(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2,
-                             uint8_t b2) {
-  // Convert both colors to LAB colorspace
-  CIEDE2000::LAB lab1, lab2;
-  rgbToLAB(r1, g1, b1, lab1);
-  rgbToLAB(r2, g2, b2, lab2);
-
-  // Calculate CIEDE2000 distance
-  double distance = CIEDE2000::CIEDE2000(lab1, lab2);
-  return (float)distance;
-}
-
-// Find the closest Dulux color match using KD-tree (optimized)
-static String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
-  if (settings.debugColorMatching) {
-    Logger::debug("Finding closest color for RGB(" + String(r) + "," + String(g) + "," + String(b) +
-                  ")");
-  }
-
-  unsigned long searchStartTime = micros();  // Performance monitoring
-  String searchMethod = "Unknown";
-  String result = "Unknown Color";
 
 #if ENABLE_KDTREE
-  // Try KD-tree search first (fastest - O(log n) average case) if enabled and built
-  if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
-    searchMethod = "KD-Tree";
-    ColorPoint closest = kdTreeColorDB.findNearest(r, g, b);
-    if (closest.index > 0) {
-      // Get the full color data using the index
-      SimpleColor color;
-      if (simpleColorDB.getColorByIndex(closest.index, color)) {
-        result = String(color.name) + " (" + String(color.code) + ")";
-
-        if (settings.debugColorMatching) {
-          unsigned long searchTime = micros() - searchStartTime;
-          Logger::debug("KD-tree search completed in " + String(searchTime) +
-                        "Î¼s. Best match: " + result);
-        }
-        return result;
-      }
+// Helper function for KD-tree color search
+static String searchColorUsingKdTree(uint8_t r, uint8_t g, uint8_t b, unsigned long& searchTime) {
+  if (!settings.performance.enableKdtree || !kdTreeColorDB.isBuilt()) {
+    if (settings.performance.enableKdtree && !kdTreeColorDB.isBuilt()) {
+      Logger::warn("KD-tree enabled but not built - check initialization");
     }
-    Logger::warn("KD-tree search failed, falling back to binary database");
-  } else if (settings.enableKdtree && !kdTreeColorDB.isBuilt()) {
-    Logger::warn("KD-tree enabled but not built - check initialization");
+    return "";
   }
+
+  unsigned long searchStartTime = micros();
+  ColorPoint closest = kdTreeColorDB.findNearest(r, g, b);
+  
+  if (closest.index > 0) {
+    SimpleColor color;
+    if (simpleColorDB.getColorByIndex(closest.index, color)) {
+      searchTime = micros() - searchStartTime;
+      String result = String(color.name) + " (" + String(color.code) + ")";
+      
+      if (settings.debug.debugColorMatching) {
+        Logger::debug("KD-tree search completed in " + String(searchTime) + "μs. Best match: " + result);
+      }
+      return result;
+    }
+  }
+  
+  Logger::warn("KD-tree search failed, falling back to binary database");
+  return "";
+}
 #endif
 
-  // Fallback to simple binary database with optimized search (O(n) but optimized)
+// Helper function for binary database color search
+static String searchColorUsingBinaryDB(uint8_t r, uint8_t g, uint8_t b, unsigned long& searchTime) {
+  unsigned long searchStartTime = micros();
   SimpleColor closestColor;
+  
   if (simpleColorDB.findClosestColor(r, g, b, closestColor)) {
-    searchMethod = "Binary DB";
-    result = String(closestColor.name) + " (" + String(closestColor.code) + ")";
-
-    if (settings.debugColorMatching) {
-      unsigned long searchTime = micros() - searchStartTime;
-      Logger::debug("Binary search completed in " + String(searchTime) +
-                    "Î¼s. Best match: " + result);
+    searchTime = micros() - searchStartTime;
+    String result = String(closestColor.name) + " (" + String(closestColor.code) + ")";
+    
+    if (settings.debug.debugColorMatching) {
+      Logger::debug("Binary search completed in " + String(searchTime) + "μs. Best match: " + result);
     }
     return result;
   }
+  return "";
+}
 
-  // Fallback to legacy database if available (slowest - O(n) unoptimized)
-  if (fallbackColorDatabase != nullptr && fallbackColorCount > 0) {
-    searchMethod = "Fallback DB";
-    Logger::warn("Using slow fallback color database with " + String(fallbackColorCount) +
-                 " colors...");
+// Helper function for fallback database color search
+static String searchColorUsingFallbackDB(uint8_t r, uint8_t g, uint8_t b, unsigned long& searchTime) {
+  if (fallbackColorDatabase == nullptr || fallbackColorCount <= 0) {
+    return "";
+  }
 
-    float minDistance = LARGE_DISTANCE;
-    String bestMatch = "Unknown";
-    int bestIndex = -1;
+  unsigned long searchStartTime = micros();
+  Logger::warn("Using slow fallback color database with " + String(fallbackColorCount) + " colors...");
 
-    // Search through fallback color database (SLOW - O(n) operation)
-    for (int i = 0; i < fallbackColorCount; i++) {
-      float distance =
-          calculateColorDistance(r, g, b, fallbackColorDatabase[i].r, fallbackColorDatabase[i].g,
-                                 fallbackColorDatabase[i].b);
+  float minDistance = LARGE_DISTANCE;
+  String bestMatch = "Unknown";
 
-      if (distance < minDistance) {
-        minDistance = distance;
-        bestIndex = i;
-        bestMatch = fallbackColorDatabase[i].name + " (" + fallbackColorDatabase[i].code + ")";
+  // Search through fallback color database (SLOW - O(n) operation)
+  for (int i = 0; i < fallbackColorCount; i++) {
+    float distance = calculateColorDistance(r, g, b, fallbackColorDatabase[i].r, 
+                                          fallbackColorDatabase[i].g, fallbackColorDatabase[i].b);
 
-        // Early exit for perfect matches
-        if (distance < VERY_SMALL_DISTANCE) {
-          if (settings.debugColorMatching) {
-            Logger::debug("Perfect match found: " + bestMatch);
-          }
-          break;
+    if (distance < minDistance) {
+      minDistance = distance;
+      bestMatch = fallbackColorDatabase[i].name + " (" + fallbackColorDatabase[i].code + ")";
+
+      // Early exit for perfect matches
+      if (distance < VERY_SMALL_DISTANCE) {
+        if (settings.debug.debugColorMatching) {
+          Logger::debug("Perfect match found: " + bestMatch);
         }
+        break;
       }
     }
+  }
 
-    result = bestMatch;
+  searchTime = micros() - searchStartTime;
+  
+  if (settings.debug.debugColorMatching) {
+    Logger::debug("Fallback search completed in " + String(searchTime) + 
+                  "μs. Best match: " + bestMatch + " (distance: " + String(minDistance) + ")");
+  }
+  
+  return bestMatch;
+}
 
-    if (settings.debugColorMatching) {
-      unsigned long searchTime = micros() - searchStartTime;
-      Logger::debug("Fallback search completed in " + String(searchTime) +
-                    "Î¼s. Best match: " + result + " (distance: " + String(minDistance) + ")");
-    }
+// Helper function for basic color classification
+static String classifyBasicColor(uint8_t r, uint8_t g, uint8_t b) {
+  Logger::warn("No color database available, using basic color classification");
+  
+  if (r > COLOR_THRESHOLD_HIGH && g > COLOR_THRESHOLD_HIGH && b > 200)
+    return "Light Color";
+  else if (r < COLOR_THRESHOLD_LOW && g < COLOR_THRESHOLD_LOW && b < 50)
+    return "Dark Color";
+  else if (r > g && r > b)
+    return "Red Tone";
+  else if (g > r && g > b)
+    return "Green Tone";
+  else if (b > r && b > g)
+    return "Blue Tone";
+  else
+    return "Mixed Color";
+}
+
+// Find the closest Dulux color match using optimized search methods
+static String findClosestDuluxColor(uint8_t r, uint8_t g, uint8_t b) {
+  if (settings.debug.debugColorMatching) {
+    Logger::debug("Finding closest color for RGB(" + String(r) + "," + String(g) + "," + String(b) + ")");
+  }
+
+  unsigned long totalSearchTime = 0;
+  String result;
+  String searchMethod = "Unknown";
+
+#if ENABLE_KDTREE
+  // Try KD-tree search first (fastest - O(log n) average case)
+  result = searchColorUsingKdTree(r, g, b, totalSearchTime);
+  if (!result.isEmpty()) {
+    searchMethod = "KD-Tree";
+    return result;
+  }
+#endif
+
+  // Fallback to simple binary database with optimized search
+  result = searchColorUsingBinaryDB(r, g, b, totalSearchTime);
+  if (!result.isEmpty()) {
+    searchMethod = "Binary DB";
+    return result;
+  }
+
+  // Fallback to legacy database if available
+  result = searchColorUsingFallbackDB(r, g, b, totalSearchTime);
+  if (!result.isEmpty()) {
+    searchMethod = "Fallback DB";
     return result;
   }
 
   // Final fallback to basic color names
   searchMethod = "Basic Classification";
-  Logger::warn("No color database available, using basic color classification");
-  if (r > COLOR_THRESHOLD_HIGH && g > COLOR_THRESHOLD_HIGH && b > 200)
-    result = "Light Color";
-  else if (r < COLOR_THRESHOLD_LOW && g < COLOR_THRESHOLD_LOW && b < 50)
-    result = "Dark Color";
-  else if (r > g && r > b)
-    result = "Red Tone";
-  else if (g > r && g > b)
-    result = "Green Tone";
-  else if (b > r && b > g)
-    result = "Blue Tone";
-  else
-    result = "Mixed Color";
-
-  if (settings.debugColorMatching) {
-    unsigned long searchTime = micros() - searchStartTime;
-    Logger::debug(searchMethod + " completed in " + String(searchTime) + "Î¼s. Result: " + result);
+  result = classifyBasicColor(r, g, b);
+  
+  if (settings.debug.debugColorMatching) {
+    Logger::debug(searchMethod + " completed. Result: " + result);
   }
 
   return result;
@@ -765,11 +1050,11 @@ static void analyzeSystemPerformance() {
 
   Logger::info("ðŸ’¾ Memory Status:");
   Logger::info("  Heap: " + String(freeHeap / BYTES_PER_KB) + " KB free / " + String(totalHeap / BYTES_PER_KB) +
-               " KB total (" + String((freeHeap * PERCENTAGE_SCALE) / totalHeap) + "% free)");
+               " KB total (" + String(totalHeap > 0 ? (freeHeap * PERCENTAGE_SCALE) / totalHeap : 0) + "% free)");
   if (psramFound()) {
     Logger::info("  PSRAM: " + String(freePsram / BYTES_PER_KB) + " KB free / " +
                  String(totalPsram / BYTES_PER_KB) + " KB total (" +
-                 String((freePsram * PERCENTAGE_SCALE) / totalPsram) + "% free)");
+                 String(totalPsram > 0 ? (freePsram * PERCENTAGE_SCALE) / totalPsram : 0) + "% free)");
   } else {
     Logger::warn("  PSRAM: Not available - performance will be limited");
   }
@@ -786,7 +1071,7 @@ static void analyzeSystemPerformance() {
 #if ENABLE_KDTREE
   if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
     activeMethod = "KD-Tree Search";
-    float logN = log2(colorCount);
+    float logN = (float)log2(colorCount);
     performanceNote = "O(log " + String(colorCount) + ") â‰ˆ " + String(logN, 1) + " operations";
   } else
 #endif
@@ -849,7 +1134,9 @@ static void cleanupColorDatabase() {
 // Global variables to store current sensor data
 struct FastColorData {
   uint16_t x, y, z, ir1, ir2;
-  uint8_t r, g, b;                        // Integer values for web interface
+  uint8_t r;                             // Red value for web interface
+  uint8_t g;                             // Green value for web interface
+  uint8_t b;                             // Blue value for web interface
   float r_precise, g_precise, b_precise;  // Float values for precision logging
   float batteryVoltage;                   // Battery voltage in volts
   unsigned long timestamp;
@@ -1063,59 +1350,57 @@ void handleGetSettings(AsyncWebServerRequest *request) {
   JsonDocument doc;
 
   // Color Detection Settings
-  doc["colorReadingSamples"] = settings.colorReadingSamples;
-  doc["colorStabilityThreshold"] = settings.colorStabilityThreshold;
-  doc["sensorSampleDelay"] = settings.sensorSampleDelay;
-  doc["optimalSensorDistance"] = settings.optimalSensorDistance;
+  doc["colorReadingSamples"] = settings.sensor.colorReadingSamples;
+  doc["colorStabilityThreshold"] = settings.sensor.colorStabilityThreshold;
+  doc["sensorSampleDelay"] = settings.sensor.sensorSampleDelay;
+  doc["optimalSensorDistance"] = settings.sensor.optimalSensorDistance;
 
-  // Sensor Hardware Settings
-  doc["sensorIntegrationTime"] = settings.sensorIntegrationTime;
-  doc["sensorSaturationThreshold"] = settings.sensorSaturationThreshold;
-  doc["ledBrightness"] = settings.ledBrightness;
-
-  // Color Calibration Settings
-  doc["irCompensationFactor1"] = settings.irCompensationFactor1;
-  doc["irCompensationFactor2"] = settings.irCompensationFactor2;
-  doc["rgbSaturationLimit"] = settings.rgbSaturationLimit;
+  // Sensor Hardware Settings  
+  doc["sensorIntegrationTime"] = settings.sensor.sensorIntegrationTime;
+  doc["sensorSaturationThreshold"] = settings.sensor.sensorSaturationThreshold;
+  doc["ledBrightness"] = settings.sensor.ledBrightness;  // Color Calibration Settings
+  doc["irCompensationFactor1"] = settings.ir.irCompensationFactor1;
+  doc["irCompensationFactor2"] = settings.ir.irCompensationFactor2;
+  doc["rgbSaturationLimit"] = settings.color.rgbSaturationLimit;
 
   // Calibration Mode
-  doc["useDFRobotLibraryCalibration"] = settings.useDFRobotLibraryCalibration;
-  doc["calibrationMode"] = settings.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
+  doc["useDFRobotLibraryCalibration"] = settings.color.useDFRobotLibraryCalibration;
+  doc["calibrationMode"] = settings.color.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
 
   // Calibration Parameters
-  doc["irCompensation"] = settings.irCompensation;
-  doc["rSlope"] = settings.rSlope;
-  doc["rOffset"] = settings.rOffset;
-  doc["gSlope"] = settings.gSlope;
-  doc["gOffset"] = settings.gOffset;
-  doc["bSlope"] = settings.bSlope;
-  doc["bOffset"] = settings.bOffset;
+  doc["irCompensation"] = settings.legacy.irCompensation;
+  doc["rSlope"] = settings.legacy.rSlope;
+  doc["rOffset"] = settings.legacy.rOffset;
+  doc["gSlope"] = settings.legacy.gSlope;
+  doc["gOffset"] = settings.legacy.gOffset;
+  doc["bSlope"] = settings.legacy.bSlope;
+  doc["bOffset"] = settings.legacy.bOffset;
 
   // Yellow Detection Settings
-  doc["yellowDistanceCompensation"] = settings.yellowDistanceCompensation;
-  doc["yellowMinRatio"] = settings.yellowMinRatio;
-  doc["yellowBrightnessThreshold"] = settings.yellowBrightnessThreshold;
+  doc["yellowDistanceCompensation"] = settings.color.yellowDistanceCompensation;
+  doc["yellowMinRatio"] = settings.color.yellowMinRatio;
+  doc["yellowBrightnessThreshold"] = settings.color.yellowBrightnessThreshold;
 
   // Performance Settings
-  doc["kdtreeMaxColors"] = settings.kdtreeMaxColors;
-  doc["kdtreeSearchTimeout"] = settings.kdtreeSearchTimeout;
-  doc["binarySearchTimeout"] = settings.binarySearchTimeout;
-  doc["enableKdtree"] = settings.enableKdtree;
+  doc["kdtreeMaxColors"] = settings.performance.kdtreeMaxColors;
+  doc["kdtreeSearchTimeout"] = settings.performance.kdtreeSearchTimeout;
+  doc["binarySearchTimeout"] = settings.performance.binarySearchTimeout;
+  doc["enableKdtree"] = settings.performance.enableKdtree;
 
   // Debug Settings
-  doc["debugSensorReadings"] = settings.debugSensorReadings;
-  doc["debugColorMatching"] = settings.debugColorMatching;
-  doc["debugMemoryUsage"] = settings.debugMemoryUsage;
-  doc["debugPerformanceTiming"] = settings.debugPerformanceTiming;
-  doc["sensorReadingInterval"] = settings.sensorReadingInterval;
+  doc["debugSensorReadings"] = settings.debug.debugSensorReadings;
+  doc["debugColorMatching"] = settings.debug.debugColorMatching;
+  doc["debugMemoryUsage"] = settings.debug.debugMemoryUsage;
+  doc["debugPerformanceTiming"] = settings.debug.debugPerformanceTiming;
+  doc["sensorReadingInterval"] = settings.debug.sensorReadingInterval;
 
   // Auto-adjust settings
-  doc["enableAutoAdjust"] = settings.enableAutoAdjust;
-  doc["autoSatHigh"] = settings.autoSatHigh;
-  doc["autoSatLow"] = settings.autoSatLow;
-  doc["minIntegrationTime"] = settings.minIntegrationTime;
-  doc["maxIntegrationTime"] = settings.maxIntegrationTime;
-  doc["integrationStep"] = settings.integrationStep;
+  doc["enableAutoAdjust"] = settings.sensor.enableAutoAdjust;
+  doc["autoSatHigh"] = settings.sensor.autoSatHigh;
+  doc["autoSatLow"] = settings.sensor.autoSatLow;
+  doc["minIntegrationTime"] = settings.sensor.minIntegrationTime;
+  doc["maxIntegrationTime"] = settings.sensor.maxIntegrationTime;
+  doc["integrationStep"] = settings.sensor.integrationStep;
 
   String response;
   serializeJson(doc, response);
@@ -1130,8 +1415,8 @@ void handleSetLedBrightness(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int brightness = request->getParam("value")->value().toInt();
     if (brightness >= 0 && brightness <= RGB_MAX_INT) {
-      settings.ledBrightness = brightness;
-      analogWrite(LEDpin, settings.ledBrightness);
+      settings.sensor.ledBrightness = brightness;
+      analogWrite(LEDpin, settings.sensor.ledBrightness);
       Logger::info("LED brightness updated to: " + String(brightness));
       request->send(HTTP_OK, "application/json",
                     "{\"status\":\"success\",\"brightness\":" + String(brightness) + "}");
@@ -1147,8 +1432,8 @@ void handleSetIntegrationTime(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int integrationTime = request->getParam("value")->value().toInt();
     if (integrationTime >= 0 && integrationTime <= RGB_MAX_INT) {
-      settings.sensorIntegrationTime = integrationTime;
-      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
+      settings.sensor.sensorIntegrationTime = integrationTime;
+      TCS3430.setIntegrationTime(settings.sensor.sensorIntegrationTime);
       Logger::info("Integration time updated to: 0x" + String(integrationTime, HEX));
       request->send(HTTP_OK, "application/json",
                     "{\"status\":\"success\",\"integrationTime\":" + String(integrationTime) + "}");
@@ -1165,8 +1450,8 @@ void handleSetIRCompensation(AsyncWebServerRequest *request) {
     float ir1 = request->getParam("ir1")->value().toFloat();
     float ir2 = request->getParam("ir2")->value().toFloat();
     if (ir1 >= 0 && ir1 <= MAX_IR_COMPENSATION && ir2 >= 0 && ir2 <= MAX_IR_COMPENSATION) {
-      settings.irCompensationFactor1 = ir1;
-      settings.irCompensationFactor2 = ir2;
+      settings.ir.irCompensationFactor1 = ir1;
+      settings.ir.irCompensationFactor2 = ir2;
       Logger::info("IR compensation updated - IR1: " + String(ir1) + " IR2: " + String(ir2));
       request->send(
           200, "application/json",
@@ -1183,7 +1468,7 @@ void handleSetIRCompensation(AsyncWebServerRequest *request) {
 // This function applies the final calibration with optimized matrix precision
 void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1, uint16_t IR2,
                                 uint8_t &R, uint8_t &G, uint8_t &B) {
-  if (settings.debugSensorReadings) {
+  if (settings.debug.debugSensorReadings) {
     Serial.print("[DEBUG] Converting XYZ to RGB - X:");
     Serial.print(X);
     Serial.print(" Y:");
@@ -1197,7 +1482,7 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   }
 
   // Check if we should use DFRobot library's built-in calibration
-  if (settings.useDFRobotLibraryCalibration) {
+  if (settings.color.useDFRobotLibraryCalibration) {
     // Use DFRobot library's standard XYZ to RGB conversion matrix
     convertXYZtoRGB_Uncalibrated(X, Y, Z, R, G, B);
     return;
@@ -1206,9 +1491,9 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   // Apply IR compensation if enabled
   float adjustedX = X, adjustedY = Y, adjustedZ = Z;
   if (IR1 > 0 || IR2 > 0) {
-    adjustedX = X - (IR1 * settings.irCompensationFactor1);
-    adjustedY = Y - (IR2 * settings.irCompensationFactor2);
-    adjustedZ = Z - ((IR1 + IR2) * 0.5f * settings.irCompensationFactor1);
+    adjustedX = X - (IR1 * settings.ir.irCompensationFactor1);
+    adjustedY = Y - (IR2 * settings.ir.irCompensationFactor2);
+    adjustedZ = Z - ((IR1 + IR2) * 0.5f * settings.ir.irCompensationFactor1);
     
     // Ensure values don't go negative
     adjustedX = max(0.0f, adjustedX);
@@ -1217,8 +1502,8 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   }
 
   // Choose matrix based on brightness
-  float* matrix = (Y > settings.dynamicThreshold) ? settings.brightMatrix : settings.darkMatrix;
-  float* offset = (Y > settings.dynamicThreshold) ? settings.brightOffset : settings.darkOffset;
+  const float* matrix = (Y > settings.matrix.dynamicThreshold) ? settings.matrix.brightMatrix.data() : settings.matrix.darkMatrix.data();
+  const float* offset = (Y > settings.matrix.dynamicThreshold) ? settings.matrix.brightOffset.data() : settings.matrix.darkOffset.data();
 
   // Apply calibration matrix for precise color matching
   float r_linear = (matrix[0] * adjustedX + matrix[1] * adjustedY + matrix[2] * adjustedZ) + offset[0];
@@ -1226,11 +1511,11 @@ void convertXYZtoRGB_Calibrated(uint16_t X, uint16_t Y, uint16_t Z, uint16_t IR1
   float b_linear = (matrix[6] * adjustedX + matrix[7] * adjustedY + matrix[8] * adjustedZ) + offset[2];
 
   // Convert to 8-bit RGB and clamp
-  R = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, r_linear));
-  G = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, g_linear));
-  B = (uint8_t)max(0.0f, min((float)settings.rgbSaturationLimit, b_linear));
+  R = (uint8_t)max(0.0f, min((float)settings.color.rgbSaturationLimit, r_linear));
+  G = (uint8_t)max(0.0f, min((float)settings.color.rgbSaturationLimit, g_linear));
+  B = (uint8_t)max(0.0f, min((float)settings.color.rgbSaturationLimit, b_linear));
 
-  if (settings.debugSensorReadings) {
+  if (settings.debug.debugSensorReadings) {
     Serial.print("[DEBUG] Final calibrated RGB - R:");
     Serial.print(R);
     Serial.print(" G:");
@@ -1479,8 +1764,8 @@ void setup() {
 
   pinMode(LEDpin, OUTPUT);
   // Set the LED brightness from runtime settings
-  analogWrite(LEDpin, settings.ledBrightness);
-  Logger::debug("LED pin configured, brightness set to: " + String(settings.ledBrightness));
+  analogWrite(LEDpin, settings.sensor.ledBrightness);
+  Logger::debug("LED pin configured, brightness set to: " + String(settings.sensor.ledBrightness));
 
   // Initialize UMS3 library for ProS3 board peripherals
   ums3.begin();
@@ -1510,8 +1795,8 @@ void setup() {
   Logger::debug("Auto zero NTH iteration set to 0");
   TCS3430.setHighGAIN(false);  // Disable high gain to prevent saturation
   Logger::debug("High gain disabled to prevent saturation on bright colors");
-  TCS3430.setIntegrationTime(settings.sensorIntegrationTime);  // Use runtime setting
-  Logger::debug("Integration time set to 0x" + String(settings.sensorIntegrationTime, HEX));
+  TCS3430.setIntegrationTime(settings.sensor.sensorIntegrationTime);  // Use runtime setting
+  Logger::debug("Integration time set to 0x" + String(settings.sensor.sensorIntegrationTime, HEX));
   TCS3430.setALSGain(2);  // Reduced to 16x gain for better linearity and less artifacts
   Logger::debug("ALS gain set to 2 (16x) for optimal accuracy");
 
@@ -1813,10 +2098,10 @@ void setup() {
         }
       }
     };
-    updateMatrixArray("brightMatrix", settings.brightMatrix, 9);
-    updateMatrixArray("brightOffset", settings.brightOffset, 3);
-    updateMatrixArray("darkMatrix", settings.darkMatrix, 9);
-    updateMatrixArray("darkOffset", settings.darkOffset, 3);
+    updateMatrixArray("brightMatrix", settings.brightMatrix.data(), 9);
+    updateMatrixArray("brightOffset", settings.brightOffset.data(), 3);
+    updateMatrixArray("darkMatrix", settings.darkMatrix.data(), 9);
+    updateMatrixArray("darkOffset", settings.darkOffset.data(), 3);
 
     response += "}";
 

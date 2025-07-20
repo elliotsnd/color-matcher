@@ -14,8 +14,9 @@
     "isLevelFiltersVisible": true,
     "isGroupFiltersVisible": true,
     "type": [
+      "Optimization",
       "General",
-      "Optimization"
+      "64-bit"
     ]
   },
   "loadableProcessIds": []

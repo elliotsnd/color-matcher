@@ -132,5 +132,21 @@
   "pvs-studio.analyzer.additionalArguments": [
     "--target=x86_64",
     "--language=c++"
-  ]
+  ],
+  "sonarlint.pathToCompileCommands": "${workspaceFolder}\\compile_commands.json",
+  "sonarlint.connectedMode.connections.sonarqube": [
+    {
+      "connectionId": "color-matcher-sonarcloud",
+      "serverUrl": "https://sonarcloud.io",
+      "organizationKey": "elliotsnd"
+    }
+  ],
+  "sonarlint.connectedMode.project": {
+    "connectionId": "color-matcher-sonarcloud",
+    "projectKey": "elliotsnd_color-matcher"
+  },
+  "sonarlint.rules": {
+    "cpp:S1135": "info",
+    "cpp:S125": "info"
+  }
 }
