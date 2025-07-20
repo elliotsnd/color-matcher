@@ -50,7 +50,7 @@ constexpr float GAMMA_CORRECTION = 2.2f;
 constexpr int COLOR_THRESHOLD_HIGH = 200;
 constexpr int COLOR_THRESHOLD_LOW = 50;
 constexpr int MAX_COLOR_SAMPLES = 10;
-// constexpr int MAX_SAMPLE_DELAY = 50;  // Currently unused
+constexpr int MAX_SAMPLE_DELAY = 50;
 constexpr float MAX_IR_COMPENSATION = 2.0f;
 constexpr int LARGE_COLOR_DB_THRESHOLD = 1000;
 constexpr float VERY_SMALL_DISTANCE = 0.1f;
@@ -2107,12 +2107,12 @@ void setup() {
 
     if (updated) {
       Logger::info("Calibration coefficients updated");
-      Logger::info("Red: A=" + String(settings.redA, DECIMAL_PRECISION_10) + " B=" + String(settings.redB, DECIMAL_PRECISION_6) +
-                   " C=" + String(settings.redC, 2));
-      Logger::info("Green: A=" + String(settings.greenA, DECIMAL_PRECISION_10) + " B=" + String(settings.greenB, DECIMAL_PRECISION_6) +
-                   " C=" + String(settings.greenC, 2));
-      Logger::info("Blue: A=" + String(settings.blueA, DECIMAL_PRECISION_10) + " B=" + String(settings.blueB, DECIMAL_PRECISION_6) +
-                   " C=" + String(settings.blueC, 2));
+      Logger::info("Red: A=" + String(settings.quadratic.redA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.redB, DECIMAL_PRECISION_6) +
+                   " C=" + String(settings.quadratic.redC, 2));
+      Logger::info("Green: A=" + String(settings.quadratic.greenA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.greenB, DECIMAL_PRECISION_6) +
+                   " C=" + String(settings.quadratic.greenC, 2));
+      Logger::info("Blue: A=" + String(settings.quadratic.blueA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.blueB, DECIMAL_PRECISION_6) +
+                   " C=" + String(settings.quadratic.blueC, 2));
 
       AsyncWebServerResponse *apiResponse =
           request->beginResponse(HTTP_OK, "application/json", response);
@@ -2170,11 +2170,11 @@ void setup() {
     if (request->hasParam("mode")) {
       String mode = request->getParam("mode")->value();
       if (mode == "dfrobot") {
-        settings.useDFRobotLibraryCalibration = true;
+        settings.color.useDFRobotLibraryCalibration = true;
         Logger::info("Calibration mode set to DFRobot library");
         request->send(HTTP_OK, "application/json", "{\"status\":\"success\",\"mode\":\"dfrobot\"}");
       } else if (mode == "custom") {
-        settings.useDFRobotLibraryCalibration = false;
+        settings.color.useDFRobotLibraryCalibration = false;
         Logger::info("Calibration mode set to custom quadratic");
         request->send(HTTP_OK, "application/json", "{\"status\":\"success\",\"mode\":\"custom\"}");
       } else {
@@ -2232,7 +2232,7 @@ void loop() {
   // AsyncWebServer handles requests automatically, no need for handleClient()
 
   // Read and average sensor data using runtime settings
-  const int num_samples = settings.colorReadingSamples;
+  const int num_samples = settings.sensor.colorReadingSamples;
   uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
   for (int i = 0; i < num_samples; i++) {
     sumX += TCS3430.getXData();
@@ -2240,7 +2240,7 @@ void loop() {
     sumZ += TCS3430.getZData();
     sumIR1 += TCS3430.getIR1Data();
     sumIR2 += TCS3430.getIR2Data();
-    delay(settings.sensorSampleDelay);  // Use runtime setting
+    delay(settings.sensor.sensorSampleDelay);  // Use runtime setting
   }
   uint16_t XData = sumX / num_samples;
   uint16_t YData = sumY / num_samples;
@@ -2249,25 +2249,25 @@ void loop() {
   uint16_t IR2Data = sumIR2 / num_samples;
 
   // Auto-adjust integration time if enabled
-  if (settings.enableAutoAdjust) {
+  if (settings.sensor.enableAutoAdjust) {
     uint16_t maxChannel = max(max(XData, YData), ZData);
-    float satLevel = (float)maxChannel / settings.sensorSaturationThreshold;
-    if (satLevel > settings.autoSatHigh &&
-        settings.sensorIntegrationTime > settings.minIntegrationTime) {
-      int newTime = (int)settings.sensorIntegrationTime - (int)settings.integrationStep;
-      settings.sensorIntegrationTime = (uint8_t)max((int)settings.minIntegrationTime, newTime);
-      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
-      if (settings.debugSensorReadings)
+    float satLevel = (float)maxChannel / settings.sensor.sensorSaturationThreshold;
+    if (satLevel > settings.sensor.autoSatHigh &&
+        settings.sensor.sensorIntegrationTime > settings.sensor.minIntegrationTime) {
+      int newTime = (int)settings.sensor.sensorIntegrationTime - (int)settings.sensor.integrationStep;
+      settings.sensor.sensorIntegrationTime = (uint8_t)max((int)settings.sensor.minIntegrationTime, newTime);
+      TCS3430.setIntegrationTime(settings.sensor.sensorIntegrationTime);
+      if (settings.debug.debugSensorReadings)
         Serial.println("[AUTO] Decreased integration to " +
-                       String(settings.sensorIntegrationTime, HEX));
-    } else if (satLevel < settings.autoSatLow &&
-               settings.sensorIntegrationTime < settings.maxIntegrationTime) {
-      int newTime = (int)settings.sensorIntegrationTime + (int)settings.integrationStep;
-      settings.sensorIntegrationTime = (uint8_t)min((int)settings.maxIntegrationTime, newTime);
-      TCS3430.setIntegrationTime(settings.sensorIntegrationTime);
-      if (settings.debugSensorReadings)
+                       String(settings.sensor.sensorIntegrationTime, HEX));
+    } else if (satLevel < settings.sensor.autoSatLow &&
+               settings.sensor.sensorIntegrationTime < settings.sensor.maxIntegrationTime) {
+      int newTime = (int)settings.sensor.sensorIntegrationTime + (int)settings.sensor.integrationStep;
+      settings.sensor.sensorIntegrationTime = (uint8_t)min((int)settings.sensor.maxIntegrationTime, newTime);
+      TCS3430.setIntegrationTime(settings.sensor.sensorIntegrationTime);
+      if (settings.debug.debugSensorReadings)
         Serial.println("[AUTO] Increased integration to " +
-                       String(settings.sensorIntegrationTime, HEX));
+                       String(settings.sensor.sensorIntegrationTime, HEX));
     }
   }
 
@@ -2333,10 +2333,10 @@ void loop() {
       colorLookup.needsUpdate = false;
       colorLookup.inProgress = false;
 
-      if (settings.debugColorMatching) {
+      if (settings.debug.debugColorMatching) {
         String searchMethod = "Fallback";
 #if ENABLE_KDTREE
-        if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
+        if (settings.performance.enableKdtree && kdTreeColorDB.isBuilt()) {
           searchMethod = "KD-Tree";
         } else
 #endif
@@ -2372,7 +2372,7 @@ void loop() {
     static size_t lastFreeHeap = currentFreeHeap;
     static size_t lastFreePsram = currentFreePsram;
 
-    if (settings.debugMemoryUsage) {
+    if (settings.debug.debugMemoryUsage) {
       Logger::debug("Performance Monitor: Heap=" + String(currentFreeHeap / BYTES_PER_KB) +
                     "KB, PSRAM=" + String(currentFreePsram / BYTES_PER_KB) + "KB");
 
@@ -2388,9 +2388,9 @@ void loop() {
     }
 
     // Performance optimization: Check if we need to adjust search method
-    if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * BYTES_PER_KB) && settings.enableKdtree) {
+    if (currentFreePsram < (PSRAM_SAFETY_MARGIN_KB * BYTES_PER_KB) && settings.performance.enableKdtree) {
       Logger::warn("PSRAM low - disabling KD-tree to conserve memory");
-      settings.enableKdtree = false;
+      settings.performance.enableKdtree = false;
     }
 
     lastFreeHeap = currentFreeHeap;
@@ -2404,7 +2404,7 @@ void handleSetColorSamples(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int samples = request->getParam("value")->value().toInt();
     if (samples >= 1 && samples <= MAX_COLOR_SAMPLES) {
-      settings.colorReadingSamples = samples;
+      settings.sensor.colorReadingSamples = samples;
       Logger::info("Color samples updated to: " + String(samples));
       request->send(HTTP_OK, "application/json",
                     "{\"status\":\"success\",\"colorSamples\":" + String(samples) + "}");
@@ -2420,7 +2420,7 @@ void handleSetSampleDelay(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int delay = request->getParam("value")->value().toInt();
     if (delay >= 1 && delay <= MAX_SAMPLE_DELAY) {
-      settings.sensorSampleDelay = delay;
+      settings.sensor.sensorSampleDelay = delay;
       Logger::info("Sample delay updated to: " + String(delay) + "ms");
       request->send(HTTP_OK, "application/json",
                     "{\"status\":\"success\",\"sampleDelay\":" + String(delay) + "}");
@@ -2438,14 +2438,14 @@ void handleSetDebugSettings(AsyncWebServerRequest *request) {
 
   if (request->hasParam("sensor")) {
     bool enable = request->getParam("sensor")->value() == "true";
-    settings.debugSensorReadings = enable;
+    settings.debug.debugSensorReadings = enable;
     response += ",\"debugSensor\":" + String(enable ? "true" : "false");
     updated = true;
   }
 
   if (request->hasParam("colors")) {
     bool enable = request->getParam("colors")->value() == "true";
-    settings.debugColorMatching = enable;
+    settings.debug.debugColorMatching = enable;
     response += ",\"debugColors\":" + String(enable ? "true" : "false");
     updated = true;
   }
@@ -2466,41 +2466,41 @@ void handleGetCalibration(AsyncWebServerRequest *request) {
   PsramAllocator allocator;
   JsonDocument doc(&allocator);
 
-  doc["useDFRobotLibraryCalibration"] = settings.useDFRobotLibraryCalibration;
-  doc["calibrationMode"] = settings.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
+  doc["useDFRobotLibraryCalibration"] = settings.color.useDFRobotLibraryCalibration;
+  doc["calibrationMode"] = settings.color.useDFRobotLibraryCalibration ? "dfrobot" : "custom";
 
-  doc["redA"] = settings.redA;
-  doc["redB"] = settings.redB;
-  doc["redC"] = settings.redC;
-  doc["greenA"] = settings.greenA;
-  doc["greenB"] = settings.greenB;
-  doc["greenC"] = settings.greenC;
-  doc["blueA"] = settings.blueA;
-  doc["blueB"] = settings.blueB;
-  doc["blueC"] = settings.blueC;
+  doc["redA"] = settings.quadratic.redA;
+  doc["redB"] = settings.quadratic.redB;
+  doc["redC"] = settings.quadratic.redC;
+  doc["greenA"] = settings.quadratic.greenA;
+  doc["greenB"] = settings.quadratic.greenB;
+  doc["greenC"] = settings.quadratic.greenC;
+  doc["blueA"] = settings.quadratic.blueA;
+  doc["blueB"] = settings.quadratic.blueB;
+  doc["blueC"] = settings.quadratic.blueC;
   // White coefficients
-  doc["whiteRedA"] = settings.whiteRedA;
-  doc["whiteRedB"] = settings.whiteRedB;
-  doc["whiteRedC"] = settings.whiteRedC;
-  doc["whiteGreenA"] = settings.whiteGreenA;
-  doc["whiteGreenB"] = settings.whiteGreenB;
-  doc["whiteGreenC"] = settings.whiteGreenC;
-  doc["whiteBlueA"] = settings.whiteBlueA;
-  doc["whiteBlueB"] = settings.whiteBlueB;
-  doc["whiteBlueC"] = settings.whiteBlueC;
+  doc["whiteRedA"] = settings.coefficients.whiteRedA;
+  doc["whiteRedB"] = settings.coefficients.whiteRedB;
+  doc["whiteRedC"] = settings.coefficients.whiteRedC;
+  doc["whiteGreenA"] = settings.coefficients.whiteGreenA;
+  doc["whiteGreenB"] = settings.coefficients.whiteGreenB;
+  doc["whiteGreenC"] = settings.coefficients.whiteGreenC;
+  doc["whiteBlueA"] = settings.coefficients.whiteBlueA;
+  doc["whiteBlueB"] = settings.coefficients.whiteBlueB;
+  doc["whiteBlueC"] = settings.coefficients.whiteBlueC;
   // Grey coefficients
-  doc["greyRedA"] = settings.greyRedA;
-  doc["greyRedB"] = settings.greyRedB;
-  doc["greyRedC"] = settings.greyRedC;
-  doc["greyGreenA"] = settings.greyGreenA;
-  doc["greyGreenB"] = settings.greyGreenB;
-  doc["greyGreenC"] = settings.greyGreenC;
-  doc["greyBlueA"] = settings.greyBlueA;
-  doc["greyBlueB"] = settings.greyBlueB;
-  doc["greyBlueC"] = settings.greyBlueC;
+  doc["greyRedA"] = settings.coefficients.greyRedA;
+  doc["greyRedB"] = settings.coefficients.greyRedB;
+  doc["greyRedC"] = settings.coefficients.greyRedC;
+  doc["greyGreenA"] = settings.coefficients.greyGreenA;
+  doc["greyGreenB"] = settings.coefficients.greyGreenB;
+  doc["greyGreenC"] = settings.coefficients.greyGreenC;
+  doc["greyBlueA"] = settings.coefficients.greyBlueA;
+  doc["greyBlueB"] = settings.coefficients.greyBlueB;
+  doc["greyBlueC"] = settings.coefficients.greyBlueC;
   // Dynamic settings
-  doc["enableDynamicCalibration"] = settings.enableDynamicCalibration;
-  doc["dynamicThreshold"] = settings.dynamicThreshold;
+  doc["enableDynamicCalibration"] = settings.matrix.enableDynamicCalibration;
+  doc["dynamicThreshold"] = settings.matrix.dynamicThreshold;
 
   String response;
   serializeJson(doc, response);
@@ -2518,25 +2518,25 @@ void handleTuneVividWhite(AsyncWebServerRequest *request) {
 
   // Apply optimized coefficients for Vivid White target (significantly reduced)
   // These values are tuned for a more balanced, moderate white output to avoid saturation
-  settings.redA = 4.856615248518086e-06f;  // Reduced from 5.856 for less bright red
-  settings.redB = -0.09624971353127427f;   // Reduced from -0.106 for gentler linearity
-  settings.redC = 580.2283515839658f;  // Significantly reduced from 668 for much lower brightness
+  settings.quadratic.redA = 4.856615248518086e-06f;  // Reduced from 5.856 for less bright red
+  settings.quadratic.redB = -0.09624971353127427f;   // Reduced from -0.106 for gentler linearity
+  settings.quadratic.redC = 580.2283515839658f;  // Significantly reduced from 668 for much lower brightness
 
-  settings.greenA = 6.800364703908128e-06f;  // Reduced from 7.800 for more balanced green
-  settings.greenB = -0.13773455804115546f;   // Reduced from -0.147 for gentler adjustment
-  settings.greenC = 720.288778468652f;       // Significantly reduced from 860 for lower brightness
+  settings.quadratic.greenA = 6.800364703908128e-06f;  // Reduced from 7.800 for more balanced green
+  settings.quadratic.greenB = -0.13773455804115546f;   // Reduced from -0.147 for gentler adjustment
+  settings.quadratic.greenC = 720.288778468652f;       // Significantly reduced from 860 for lower brightness
 
-  settings.blueA = -2.2588632792769936e-06f;  // Less negative for more balanced blue
-  settings.blueB = 0.04159423885676833f;      // Reduced from 0.051 for gentler blue
-  settings.blueC = 28.55576869603341f;        // Reduced from 38 for lower baseline
+  settings.quadratic.blueA = -2.2588632792769936e-06f;  // Less negative for more balanced blue
+  settings.quadratic.blueB = 0.04159423885676833f;      // Reduced from 0.051 for gentler blue
+  settings.quadratic.blueC = 28.55576869603341f;        // Reduced from 38 for lower baseline
 
   Logger::info("Vivid White calibration applied");
-  Logger::info("New Red: A=" + String(settings.redA, DECIMAL_PRECISION_10) + " B=" + String(settings.redB, DECIMAL_PRECISION_6) +
-               " C=" + String(settings.redC, 2));
-  Logger::info("New Green: A=" + String(settings.greenA, DECIMAL_PRECISION_10) + " B=" + String(settings.greenB, DECIMAL_PRECISION_6) +
-               " C=" + String(settings.greenC, 2));
-  Logger::info("New Blue: A=" + String(settings.blueA, DECIMAL_PRECISION_10) + " B=" + String(settings.blueB, DECIMAL_PRECISION_6) +
-               " C=" + String(settings.blueC, 2));
+  Logger::info("New Red: A=" + String(settings.quadratic.redA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.redB, DECIMAL_PRECISION_6) +
+               " C=" + String(settings.quadratic.redC, 2));
+  Logger::info("New Green: A=" + String(settings.quadratic.greenA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.greenB, DECIMAL_PRECISION_6) +
+               " C=" + String(settings.quadratic.greenC, 2));
+  Logger::info("New Blue: A=" + String(settings.quadratic.blueA, DECIMAL_PRECISION_10) + " B=" + String(settings.quadratic.blueB, DECIMAL_PRECISION_6) +
+               " C=" + String(settings.quadratic.blueC, 2));
 
   // Return the new calibration values
   PsramAllocator allocator;
@@ -2544,15 +2544,15 @@ void handleTuneVividWhite(AsyncWebServerRequest *request) {
 
   doc["status"] = "success";
   doc["message"] = "Tuned for Vivid White (247,248,244)";
-  doc["calibration"]["redA"] = settings.redA;
-  doc["calibration"]["redB"] = settings.redB;
-  doc["calibration"]["redC"] = settings.redC;
-  doc["calibration"]["greenA"] = settings.greenA;
-  doc["calibration"]["greenB"] = settings.greenB;
-  doc["calibration"]["greenC"] = settings.greenC;
-  doc["calibration"]["blueA"] = settings.blueA;
-  doc["calibration"]["blueB"] = settings.blueB;
-  doc["calibration"]["blueC"] = settings.blueC;
+  doc["calibration"]["redA"] = settings.quadratic.redA;
+  doc["calibration"]["redB"] = settings.quadratic.redB;
+  doc["calibration"]["redC"] = settings.quadratic.redC;
+  doc["calibration"]["greenA"] = settings.quadratic.greenA;
+  doc["calibration"]["greenB"] = settings.quadratic.greenB;
+  doc["calibration"]["greenC"] = settings.quadratic.greenC;
+  doc["calibration"]["blueA"] = settings.quadratic.blueA;
+  doc["calibration"]["blueB"] = settings.quadratic.blueB;
+  doc["calibration"]["blueC"] = settings.quadratic.blueC;
 
   String response;
   serializeJson(doc, response);
