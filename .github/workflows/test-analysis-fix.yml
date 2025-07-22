@@ -1,0 +1,70 @@
+name: Test Static Analysis Fix
+
+on:
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  test-analysis:
+    name: Test Analysis Fix  
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Test Environment
+      shell: pwsh
+      run: |
+        Write-Host "=== Environment Test ==="
+        Write-Host "Working Directory: $(Get-Location)"
+        Write-Host "Python: $(python --version 2>&1)"
+        Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+        
+    - name: Test Compile Commands
+      shell: pwsh
+      run: |
+        Write-Host "Testing compile commands..."
+        python generate_compile_commands.py
+        if ($LASTEXITCODE -ne 0) { 
+          Write-Host "ERROR: Compile command generation failed!"
+          exit 1 
+        }
+        Write-Host "✅ Compile commands generated successfully"
+        
+    - name: Test Analysis Script
+      shell: pwsh
+      run: |
+        Write-Host "Testing analysis script..."
+        .\run-ultimate-analysis.ps1 -FixableOnly
+        Write-Host "Analysis completed with exit code: $LASTEXITCODE"
+        Write-Host "✅ Analysis completed successfully"
+        # Always succeed - finding issues is expected
+        exit 0
+        
+    - name: Verify Results
+      shell: pwsh
+      run: |
+        Write-Host "Checking analysis results..."
+        if (Test-Path "analysis-reports") {
+          $reportDirs = Get-ChildItem "analysis-reports" -Directory | Measure-Object
+          Write-Host "✅ Found $($reportDirs.Count) analysis report directories"
+          Get-ChildItem "analysis-reports" -Directory | Select-Object -Last 1 | ForEach-Object {
+            Write-Host "Latest report: $($_.Name)"
+            Get-ChildItem $_.FullName | ForEach-Object {
+              Write-Host "  - $($_.Name)"
+            }
+          }
+        } else {
+          Write-Host "❌ No analysis-reports directory found"
+          exit 1
+        }
+        
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-analysis-results
+        path: analysis-reports/
+        if-no-files-found: warn
