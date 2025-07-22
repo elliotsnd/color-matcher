@@ -1,0 +1,38 @@
+name: SonarQube Code Analysis
+
+on:
+  push:
+    branches: [ main, copilot/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for better analysis
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Generate compile commands
+      run: |
+        python generate_compile_commands.py
+    
+    - name: Run Ultimate Analysis
+      run: |
+        pwsh -File run-ultimate-analysis.ps1 -FixableOnly
+    
+    - name: Upload analysis results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: static-analysis-results
+        path: analysis-reports/
