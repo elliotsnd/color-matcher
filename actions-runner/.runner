@@ -1,0 +1,11 @@
+﻿{
+  "agentId": 21,
+  "agentName": "MICK",
+  "poolId": 1,
+  "poolName": "Default",
+  "serverUrl": "https://pipelinesghubeus7.actions.githubusercontent.com/4Kx6c92qmIPoSgqSBS0UuaD4ls4gSw6RCGcpMb3EIXd6qs66JV/",
+  "gitHubUrl": "https://github.com/elliotsnd/color-matcher",
+  "workFolder": "_work",
+  "useV2Flow": true,
+  "serverUrlV2": "https://broker.actions.githubusercontent.com/"
+}
