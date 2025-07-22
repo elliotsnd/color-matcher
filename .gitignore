@@ -1,5 +1,11 @@
 # ESP32 Color Matcher Project - Git Ignore File
 
+# GitHub Actions Runner (contains sensitive credentials)
+actions-runner/
+
+# Analysis reports (temporary files)
+analysis-reports/
+
 # PlatformIO build files
 .pio/
 .vscode/.browse.c_cpp.db*
@@ -10,6 +16,9 @@
 .piolibdeps/
 .clang_complete
 .gcc-flags.json
+
+# Compile commands (generated)
+compile_commands.json
 
 # Node.js dependencies
 node_modules/
