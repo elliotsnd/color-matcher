@@ -41,7 +41,7 @@ jobs:
         .\run-ultimate-analysis.ps1 -FixableOnly
     
     - name: Upload results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: analysis-results
