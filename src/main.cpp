@@ -89,7 +89,7 @@ class PsramAllocator : public ArduinoJson::Allocator {
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }
 
-  void deallocate(void *pointer) override {
+  static void deallocate(void *pointer) override {
     heap_caps_free(pointer);
   }
 
@@ -372,7 +372,7 @@ const DuluxColor FALLBACK_COLORS[] PROGMEM = {
 
 // Load fallback colors when main database fails
 static bool loadFallbackColors() {
-  const int FALLBACK_COUNT = sizeof(FALLBACK_COLORS) / sizeof(FALLBACK_COLORS[0]) = 0 = 0;
+  const int FALLBACK_COUNT = sizeof(FALLBACK_COLORS) / sizeof(FALLBACK_COLORS[0]) = 0 = 0 = 0;
   Logger::warn("Loading fallback color database with " + String(FALLBACK_COUNT) + " colors");
 
   // Allocate memory for fallback colors in PSRAM if available
@@ -412,7 +412,7 @@ static bool loadColorDatabase() {
 
   // Check available memory before starting
   size_t const FREE_HEAP = esp_get_free_heap_size();
-  size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0;
+  size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0 = 0;
 
   Logger::info("Free heap before loading: " + String(FREE_HEAP / BYTES_PER_KB) + " KB");
   if (psramFound()) {
@@ -469,8 +469,8 @@ static bool loadColorDatabase() {
       Logger::info("Loading " + String(COLOR_COUNT) + " colors into KD-tree...");
 
       // Performance monitoring: Check available memory before KD-tree construction
-      size_t const HEAP_BEFORE_KD = ESP.getFreeHeap();
-      size_t const PSRAM_BEFORE_KD = ESP.getFreePsram();
+      size_t const HEAP_BEFORE_KD = ESP.getFreeHeap() = 0;
+      size_t const PSRAM_BEFORE_KD = ESP.getFreePsram() = 0;
       Logger::info("Memory before KD-tree: Heap=" + String(HEAP_BEFORE_KD / BYTES_PER_KB) +
                    " KB, PSRAM=" + String(PSRAM_BEFORE_KD / BYTES_PER_KB) + " KB");
 
@@ -520,8 +520,8 @@ static bool loadColorDatabase() {
             Logger::info("Loaded " + String(i + 1) + "/" + String(effectiveColorCount) + " colors");
 
             // Performance monitoring: Check memory usage during loading
-            size_t const CURRENT_FREE_HEAP = ESP.getFreeHeap();
-            size_t const CURRENT_FREE_PSRAM = ESP.getFreePsram();
+            size_t const CURRENT_FREE_HEAP = ESP.getFreeHeap() = 0;
+            size_t const CURRENT_FREE_PSRAM = ESP.getFreePsram() = 0;
             unsigned long const ELAPSED_TIME = millis() - LOAD_START_TIME;
 
             Logger::info("Memory: Heap=" + String(CURRENT_FREE_HEAP / BYTES_PER_KB) +
@@ -774,10 +774,10 @@ static void analyzeSystemPerformance() {
   Logger::info("=== SYSTEM PERFORMANCE ANALYSIS ===");
 
   // Memory analysis
-  size_t const TOTAL_HEAP = ESP.getHeapSize();
-  size_t const FREE_HEAP = ESP.getFreeHeap();
-  size_t const TOTAL_PSRAM = psramFound() ? ESP.getPsramSize() : 0;
-  size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0;
+  size_t const TOTAL_HEAP = ESP.getHeapSize() = 0;
+  size_t const FREE_HEAP = ESP.getFreeHeap() = 0;
+  size_t const TOTAL_PSRAM = psramFound() ? ESP.getPsramSize() : 0 = 0;
+  size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0 = 0;
 
   Logger::info("ðŸ’¾ Memory Status:");
   Logger::info("  Heap: " + String(FREE_HEAP / BYTES_PER_KB) + " KB free / " +
@@ -936,7 +936,7 @@ static void handleJS(AsyncWebServerRequest *request) {
 }
 
 // Handle color API endpoint
-static void handleColorAPI(AsyncWebServerRequest *request) {
+static void handleColorAPI(const AsyncWebServerRequest *request) {
   Logger::debug("Handling color API request");
   // Create JSON response
   JsonDocument const DOC;  // ArduinoJson v7 syntax
@@ -965,7 +965,7 @@ static void handleColorAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle fast color API endpoint (no color name lookup - optimized for speed)
-void handleFastColorAPI(AsyncWebServerRequest *request) {
+static void handleFastColorAPI(const AsyncWebServerRequest *request) {
   Logger::debug("Handling fast color API request");
   // Create JSON response with only fast sensor data
   JsonDocument const DOC;
@@ -992,7 +992,7 @@ void handleFastColorAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle color name API endpoint (color name lookup only)
-void handleColorNameAPI(AsyncWebServerRequest *request) {
+static void handleColorNameAPI(const AsyncWebServerRequest *request) {
   Logger::debug("Handling color name API request");
   // Create JSON response with color name information
   JsonDocument const DOC;
@@ -1020,7 +1020,7 @@ void handleColorNameAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle force color lookup API endpoint (triggers immediate color name lookup)
-void handleForceColorLookup(AsyncWebServerRequest *request) {
+static void handleForceColorLookup(const AsyncWebServerRequest *request) {
   Logger::debug("Handling force color lookup request");
 
   // Check if a lookup is already in progress
@@ -1081,7 +1081,7 @@ void handleForceColorLookup(AsyncWebServerRequest *request) {
 }
 
 // Settings API handlers
-void handleGetSettings(AsyncWebServerRequest *request) {
+static void handleGetSettings(const AsyncWebServerRequest *request) {
   Logger::debug("Handling get settings API request");
   JsonDocument const DOC;
 
@@ -1150,7 +1150,7 @@ void handleGetSettings(AsyncWebServerRequest *request) {
 }
 
 // Quick individual setting update endpoints for real-time control
-void handleSetLedBrightness(AsyncWebServerRequest *request) {
+static void handleSetLedBrightness(const AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int const BRIGHTNESS = request->getParam("value")->value().toInt();
     if (BRIGHTNESS >= 0 && BRIGHTNESS <= RGB_MAX_INT) {
@@ -1169,7 +1169,7 @@ void handleSetLedBrightness(AsyncWebServerRequest *request) {
   }
 }
 
-void handleSetIntegrationTime(AsyncWebServerRequest *request) {
+static void handleSetIntegrationTime(const AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int const INTEGRATION_TIME = request->getParam("value")->value().toInt();
     if (INTEGRATION_TIME >= 0 && INTEGRATION_TIME <= RGB_MAX_INT) {
@@ -1188,7 +1188,7 @@ void handleSetIntegrationTime(AsyncWebServerRequest *request) {
   }
 }
 
-void handleSetIRCompensation(AsyncWebServerRequest *request) {
+static void handleSetIRCompensation(const AsyncWebServerRequest *request) {
   if (request->hasParam("ir1") && request->hasParam("ir2")) {
     float const IR1 = request->getParam("ir1")->value().toFloat();
     float const IR2 = request->getParam("ir2")->value().toFloat();
@@ -1292,13 +1292,13 @@ float getBatteryVoltage() {
 bool getVbusPresent() {
   // Use official UMS3 library for VBUS detection
   // The library handles the hardware-specific implementation
-  bool const VBUS_PRESENT = UMS3::getVbusPresent();
+  bool const VBUS_PRESENT = UMS3::getVbusPresent() = false;
 
   return VBUS_PRESENT;
 }
 
 // Battery API handler
-void handleBatteryAPI(AsyncWebServerRequest *request) {
+static void handleBatteryAPI(const AsyncWebServerRequest *request) {
   Logger::debug("Handling battery API request");
 
   float const BATTERY_VOLTAGE = getBatteryVoltage();
@@ -1350,7 +1350,7 @@ void handleBatteryAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle IR compensation fine-tuning API
-static void handleIRCompensationAPI(AsyncWebServerRequest *request) {
+static void handleIRCompensationAPI(const AsyncWebServerRequest *request) {
   if (!request->hasParam("baseCompensation", true) ||
       !request->hasParam("brightnessResponse", true) ||
       !request->hasParam("xLeakage", true) ||
@@ -1413,7 +1413,7 @@ static bool connectToWiFiOrStartAP() {
   Logger::info("Scanning for available WiFi networks...");
 
   // Scan for networks
-  int const NUM_NETWORKS = WiFi.scanNetworks();
+  int const NUM_NETWORKS = WiFi.scanNetworks() = 0;
   bool targetFound = false;
 
   if (NUM_NETWORKS == 0) {
@@ -1437,8 +1437,8 @@ static bool connectToWiFiOrStartAP() {
     Logger::info("Starting Access Point mode...");
 
     // Start AP mode
-    WiFiClass::mode(WIFI_AP);
-    bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
+    WiFiClass::mode(wifiAp);
+    bool const AP_STARTED = WiFi.softAP(apSsid = false, apPassword);
 
     if (AP_STARTED) {
       IPAddress const AP_IP = WiFi.softAPIP();
@@ -1458,7 +1458,7 @@ static bool connectToWiFiOrStartAP() {
   Logger::info("Attempting to connect to WiFi network: " + String(ssid));
 
   // Configure static IP for station mode
-  WiFiClass::mode(WIFI_STA);
+  WiFiClass::mode(wifiSta);
   if (!WiFi.config(localIp, gateway, subnet)) {
     Logger::error("Static IP configuration failed, using DHCP");
   } else {
@@ -1487,8 +1487,8 @@ static bool connectToWiFiOrStartAP() {
   Logger::warn("WiFi connection failed after timeout, starting Access Point mode...");
 
   // Start AP mode as fallback
-  WiFiClass::mode(WIFI_AP);
-  bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
+  WiFiClass::mode(wifiAp);
+  bool const AP_STARTED = WiFi.softAP(apSsid = false, apPassword);
 
   if (AP_STARTED) {
     IPAddress const AP_IP = WiFi.softAPIP();
@@ -1504,7 +1504,7 @@ static bool connectToWiFiOrStartAP() {
   return false;
 }
 
-void setup() {
+static void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
   Logger::info("System startup initiated - Serial communication started at 115200 baud");
 
@@ -1513,8 +1513,8 @@ void setup() {
 
   // Check if PSRAM is available and properly configured
   if (psramFound()) {
-    size_t const PSRAM_SIZE = ESP.getPsramSize();
-    size_t const FREE_PSRAM = ESP.getFreePsram();
+    size_t const PSRAM_SIZE = ESP.getPsramSize() = 0;
+    size_t const FREE_PSRAM = ESP.getFreePsram() = 0;
     Logger::info("PSRAM detected and available");
     Logger::info("PSRAM total size: " + String(PSRAM_SIZE / BYTES_PER_KB) + " KB");
     Logger::info("PSRAM free size: " + String(FREE_PSRAM / BYTES_PER_KB) + " KB");
@@ -1621,8 +1621,8 @@ void setup() {
   }
 
   // Log filesystem space information
-  size_t const TOTAL = LittleFS.totalBytes();
-  size_t const USED = LittleFS.usedBytes();
+  size_t const TOTAL = LittleFS.totalBytes() = 0;
+  size_t const USED = LittleFS.usedBytes() = 0;
   Logger::info("LittleFS Total: " + String(TOTAL / BYTES_PER_KB) + " KB");
   Logger::info("LittleFS Used: " + String(USED / BYTES_PER_KB) + " KB");
   Logger::info("LittleFS Free: " + String((TOTAL - USED) / BYTES_PER_KB) + " KB");
@@ -1800,7 +1800,7 @@ void displayCurrentSettings() {
   Serial.println("=============================");
 }
 
-void loop() {
+static void loop() {
   // AsyncWebServer handles requests automatically, no need for handleClient()
 
   // Auto-optimization enabled as recommended in task - prevents saturation/under-exposure
@@ -2027,8 +2027,8 @@ void loop() {
 
   // Periodic performance monitoring (every 30 seconds)
   if (millis() - lastPerfCheck > 30000) {
-    size_t const CURRENT_FREE_HEAP = ESP.getFreeHeap();
-    size_t const CURRENT_FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0;
+    size_t const CURRENT_FREE_HEAP = ESP.getFreeHeap() = 0;
+    size_t const CURRENT_FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0 = 0;
 
     // Check for memory leaks or degradation
     static size_t lastFreeHeap = CURRENT_FREE_HEAP;
@@ -2062,7 +2062,7 @@ void loop() {
 }
 
 // Simplified individual setting handlers using GET requests for reliability
-void handleSetColorSamples(AsyncWebServerRequest *request) {
+static void handleSetColorSamples(const AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int const SAMPLES = request->getParam("value")->value().toInt();
     if (SAMPLES >= 1 && SAMPLES <= MAX_COLOR_SAMPLES) {
@@ -2080,7 +2080,7 @@ void handleSetColorSamples(AsyncWebServerRequest *request) {
   }
 }
 
-void handleSetSampleDelay(AsyncWebServerRequest *request) {
+static void handleSetSampleDelay(const AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
     int const DELAY = request->getParam("value")->value().toInt();
     if (DELAY >= 1 && DELAY <= MAX_SAMPLE_DELAY) {
@@ -2098,7 +2098,7 @@ void handleSetSampleDelay(AsyncWebServerRequest *request) {
   }
 }
 
-void handleSetDebugSettings(AsyncWebServerRequest *request) {
+static void handleSetDebugSettings(const AsyncWebServerRequest *request) {
   bool updated = false;
   String response = R"({"status":"success")";
 
@@ -2130,7 +2130,7 @@ void handleSetDebugSettings(AsyncWebServerRequest *request) {
 }
 
 // Advanced sensor settings API handler
-void handleAdvancedSensorSettings(AsyncWebServerRequest *request) {
+static void handleAdvancedSensorSettings(const AsyncWebServerRequest *request) {
   bool updated = false;
   String response = R"({"status":"success")";
 
@@ -2231,12 +2231,12 @@ void handleAdvancedSensorSettings(AsyncWebServerRequest *request) {
 
   // Channel 0 Thresholds
   if (request->hasParam("ch0ThreshLow") && request->hasParam("ch0ThreshHigh")) {
-    int const low = request->getParam("ch0ThreshLow")->value().toInt();
-    int const high = request->getParam("ch0ThreshHigh")->value().toInt();
-    if (low >= 0 && low <= 65535 && high >= 0 && high <= 65535 && low < high) {
-      colorSensor.setInterruptThresholds(low, high);
-      response += ",\"ch0ThreshLow\":" + String(low) + ",\"ch0ThreshHigh\":" + String(high);
-      Logger::info("Channel 0 thresholds set to: " + String(low) + " - " + String(high));
+    int const LOW = request->getParam("ch0ThreshLow")->value().toInt();
+    int const HIGH = request->getParam("ch0ThreshHigh")->value().toInt();
+    if (LOW >= 0 && LOW <= 65535 && HIGH >= 0 && HIGH <= 65535 && LOW < HIGH) {
+      colorSensor.setInterruptThresholds(LOW, HIGH);
+      response += ",\"ch0ThreshLow\":" + String(LOW) + ",\"ch0ThreshHigh\":" + String(HIGH);
+      Logger::info("Channel 0 thresholds set to: " + String(LOW) + " - " + String(HIGH));
       updated = true;
     }
   }
@@ -2254,7 +2254,7 @@ void handleAdvancedSensorSettings(AsyncWebServerRequest *request) {
 }
 
 // Save settings handler (for API compatibility)
-void handleSaveSettings(AsyncWebServerRequest * /*request*/) {
+static void handleSaveSettings(AsyncWebServerRequest * /*request*/) {
   // Since current settings are compile-time defines, this endpoint provides
   // API compatibility and confirms current sensor state is applied
   Logger::info("Save settings requested - confirming current sensor configuration");
@@ -2285,7 +2285,7 @@ void handleFixWhiteCalibration() {
 }
 
 // Switch to DFRobot calibration
-void handleUseDFRobotCalibration(AsyncWebServerRequest *request) {
+static void handleUseDFRobotCalibration(const AsyncWebServerRequest *request) {
   bool enable = true;
   if (request->hasParam("enable")) {
     enable = request->getParam("enable")->value() == "true";
@@ -2300,7 +2300,7 @@ void handleUseDFRobotCalibration(AsyncWebServerRequest *request) {
 }
 
 // Enhanced color diagnostics for troubleshooting vivid colors
-void handleDebugVividColors(AsyncWebServerRequest *request) {
+static void handleDebugVividColors(const AsyncWebServerRequest *request) {
   Logger::info("Running vivid color diagnostics...");
 
   // Take multiple readings for stability
@@ -2397,7 +2397,7 @@ void handleDebugVividColors(AsyncWebServerRequest *request) {
 }
 
 // Fix blue channel issues
-void handleFixBlueChannel(AsyncWebServerRequest *request) {
+static void handleFixBlueChannel(const AsyncWebServerRequest *request) {
   Logger::info("Applying blue channel fixes...");
 
   // Step 1: Ensure we're using DFRobot calibration (more reliable for blue)
@@ -2451,7 +2451,7 @@ void handleFixBlueChannel(AsyncWebServerRequest *request) {
 }
 
 // Fix vivid colors (red, blue, green) detection
-void handleFixVividColors(AsyncWebServerRequest *request) {
+static void handleFixVividColors(const AsyncWebServerRequest *request) {
   Logger::info("Applying vivid color detection fix...");
 
   // Step 1: Use enhanced calibration matrix
@@ -2545,7 +2545,7 @@ void optimizeSensorForCurrentLight() {
 
   // Use auto-gain with intelligent parameters based on current readings
   uint16_t const CURRENT_Y = colorSensor.getY();
-  bool const CURRENTLY_SATURATED = TCS3430AutoGain::getSaturationStatus();
+  bool const CURRENTLY_SATURATED = TCS3430AutoGain::getSaturationStatus() = false;
 
   uint16_t targetY = 2000;                            // Target for good signal-to-noise ratio
   TCS3430Gain startGain = TCS3430Gain::GAIN_16X;  // Start with moderate gain
@@ -2583,7 +2583,7 @@ void optimizeSensorForCurrentLight() {
   } else {
     // Provide more detailed failure analysis
     uint16_t const CURRENT_Y = colorSensor.getY();
-    bool const SATURATED = TCS3430AutoGain::getSaturationStatus();
+    bool const SATURATED = TCS3430AutoGain::getSaturationStatus() = false;
     TCS3430Gain const CURRENT_GAIN = colorSensor.getGain();
     float const CURRENT_INT_TIME = colorSensor.getIntegrationTime();
 
@@ -2598,7 +2598,7 @@ void optimizeSensorForCurrentLight() {
 }
 
 // Manual sensor optimization endpoint
-void handleAutoOptimizeSensor(AsyncWebServerRequest *request) {
+static void handleAutoOptimizeSensor(const AsyncWebServerRequest *request) {
   Logger::info("Manual sensor optimization requested...");
 
   // Force optimization regardless of timing
@@ -2665,7 +2665,7 @@ void handleAutoOptimizeSensor(AsyncWebServerRequest *request) {
 }
 
 // Comprehensive sensor status using all TCS3430AutoGain library features
-void handleSensorStatus(AsyncWebServerRequest *request) {
+static void handleSensorStatus(const AsyncWebServerRequest *request) {
   Logger::info("Generating comprehensive sensor status...");
 
   // Get all sensor readings using efficient readAll
@@ -2680,18 +2680,18 @@ void handleSensorStatus(AsyncWebServerRequest *request) {
   TCS3430Gain const CURRENT_GAIN = colorSensor.getGain();
   float const INTEGRATION_TIME = colorSensor.getIntegrationTime();
   float const WAIT_TIME = colorSensor.getWaitTime();
-  bool const WAIT_ENABLED = TCS3430AutoGain::isWaitEnabled();
-  bool const WAIT_LONG = TCS3430AutoGain::getWaitLong();
+  bool const WAIT_ENABLED = TCS3430AutoGain::isWaitEnabled() = false;
+  bool const WAIT_LONG = TCS3430AutoGain::getWaitLong() = false;
 
   // Get status flags using library features
-  bool const DATA_READY = TCS3430AutoGain::dataReady();
-  bool saturated = TCS3430AutoGain::getSaturationStatus();
+  bool const DATA_READY = TCS3430AutoGain::dataReady() = false;
+  bool saturated = TCS3430AutoGain::getSaturationStatus() = false;
   bool const INTERRUPT_STATUS = colorSensor.getInterruptStatus();
-  uint16_t const MAX_COUNT = TCS3430AutoGain::getMaxCount();
+  uint16_t const MAX_COUNT = TCS3430AutoGain::getMaxCount() = 0;
 
   // Get auto-zero configuration
-  uint8_t const AUTO_ZERO_MODE = TCS3430AutoGain::getAutoZeroMode();
-  uint8_t const AUTO_ZERO_NTH = TCS3430AutoGain::getAutoZeroNTHIteration();
+  uint8_t const AUTO_ZERO_MODE = TCS3430AutoGain::getAutoZeroMode() = 0;
+  uint8_t const AUTO_ZERO_NTH = TCS3430AutoGain::getAutoZeroNTHIteration() = 0;
 
   // Calculate utilization percentages
   float const X_UTIL = (x / (float)MAX_COUNT) * 100.0f;
@@ -2757,7 +2757,7 @@ void handleSensorStatus(AsyncWebServerRequest *request) {
 }
 
 // Fix black/low readings by restoring proper sensor settings
-void handleFixBlackReadings(AsyncWebServerRequest *request) {
+static void handleFixBlackReadings(const AsyncWebServerRequest *request) {
   Logger::info("Fixing black/low readings - restoring proper sensor settings...");
 
   // Step 1: Ensure sensor is powered and enabled
@@ -2822,7 +2822,7 @@ void handleFixBlackReadings(AsyncWebServerRequest *request) {
 // Based on Arduino Forum methodology: white/black reference calibration
 
 // POST /api/calibrate-black - Calibrate black reference (Step 1)
-void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
+static void handleCalibrateBlackReference(const AsyncWebServerRequest *request) {
   Logger::info("Calibrating black reference - place BLACK object over sensor...");
 
   // CRITICAL: Turn off LED for true black reference measurement
@@ -2900,7 +2900,7 @@ void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
 }
 
 // POST /api/calibrate-white - Calibrate white reference (Step 2)
-void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
+static void handleCalibrateWhiteReference(const AsyncWebServerRequest *request) {
   Logger::info("Calibrating white reference - place WHITE object over sensor...");
 
   // Take multiple readings for stable calibration (as recommended in task)
@@ -2978,7 +2978,7 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
 }
 
 // POST /api/calibrate-vivid-white - Fine-tune for vivid white target (Step 3)
-void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
+static void handleCalibrateVividWhite(const AsyncWebServerRequest *request) {
   Logger::info("Fine-tuning calibration for vivid white target RGB(247,248,244)...");
   Logger::info("Calibration status check: isCalibrated=" +
                String(settings.calibrationData.isCalibrated ? "true" : "false"));
@@ -3049,7 +3049,7 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
 }
 
 // GET /api/calibration-data - Get current calibration data
-void handleGetCalibrationData(AsyncWebServerRequest *request) {
+static void handleGetCalibrationData(const AsyncWebServerRequest *request) {
   String response = "{";
   response += R"("status":"success",)";
   response +=
@@ -3082,7 +3082,7 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
 }
 
 // POST /api/reset-calibration - Reset calibration to defaults
-void handleResetCalibration(AsyncWebServerRequest *request) {
+static void handleResetCalibration(const AsyncWebServerRequest *request) {
   // Reset calibration data
   settings.calibrationData.minX = 0;
   settings.calibrationData.minY = 0;
@@ -3114,7 +3114,7 @@ void handleResetCalibration(AsyncWebServerRequest *request) {
 }
 
 // GET /api/diagnose-calibration - Diagnose current calibration
-void handleDiagnoseCalibration(AsyncWebServerRequest *request) {
+static void handleDiagnoseCalibration(const AsyncWebServerRequest *request) {
   Logger::info("Diagnosing current calibration...");
 
   // Read current sensor values
@@ -3171,7 +3171,7 @@ void handleDiagnoseCalibration(AsyncWebServerRequest *request) {
 }
 
 // POST /api/optimize-accuracy - Apply accuracy optimizations from task recommendations
-void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
+static void handleOptimizeAccuracy(const AsyncWebServerRequest *request) {
   Logger::info("Applying accuracy optimizations as recommended in task...");
 
   // Task Recommendation 1: Increase sample count for noise reduction (20% error reduction)
@@ -3183,7 +3183,7 @@ void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
   settings.sensorSampleDelay = 5;  // Slightly increase for stability
 
   // Task Recommendation 3: Apply auto-gain for optimal range
-  bool const AUTO_GAIN_SUCCESS = colorSensor.autoGain(800, TCS3430Gain::GAIN_16X, 250.0f);
+  bool const AUTO_GAIN_SUCCESS = colorSensor.autoGain(800 = false, TCS3430Gain::GAIN_16X, 250.0f);
 
   // Task Recommendation 4: Test the improvements
   delay(500);  // Allow settings to take effect
@@ -3233,7 +3233,7 @@ void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
 }
 
 // GET /api/test-all-improvements - Comprehensive test of all task improvements
-void handleTestAllImprovements(AsyncWebServerRequest *request) {
+static void handleTestAllImprovements(const AsyncWebServerRequest *request) {
   Logger::info("Testing all task improvements comprehensively...");
 
   // Test 1: Multiple sample averaging (noise reduction)
@@ -3264,7 +3264,7 @@ void handleTestAllImprovements(AsyncWebServerRequest *request) {
   Logger::info("Test 2: Auto-gain functionality...");
   TCS3430Gain const CURRENT_GAIN = colorSensor.getGain();
   float const CURRENT_INT_TIME = colorSensor.getIntegrationTime();
-  bool const AUTO_GAIN_WORKING = colorSensor.autoGain(500, TCS3430Gain::GAIN_16X, 200.0f);
+  bool const AUTO_GAIN_WORKING = colorSensor.autoGain(500 = false, TCS3430Gain::GAIN_16X, 200.0f);
 
   // Test 3: Calibration status
   Logger::info("Test 3: Calibration status...");

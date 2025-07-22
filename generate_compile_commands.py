@@ -11,34 +11,36 @@ import sys
 def create_compile_commands():
     """Create a basic compile commands database for the color sensor project"""
     
-    # Project root directory
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    
-    # Basic compile command for the main source file
-    compile_commands = [
-        {
-            "directory": project_root,
-            "command": " ".join([
-                "clang++",
-                "-std=c++17",
-                "-DARDUINO=10819",
-                "-DARDUINO_ESP32_DEV=1",
-                "-DESP32=1",
-                "-DESP_PLATFORM=1",
-                "-DF_CPU=240000000L",
-                "-DBOARD_HAS_PSRAM=1",
-                "-DCONFIG_LITTLEFS_ENABLE=1",
-                "-DCONFIG_FATFS_ENABLE=0",
-                "-DCONFIG_SPIFFS_ENABLE=0",
-                "-DPROGMEM=",
-                "-Isrc",
-                "-Ilib",
-                "-Iinclude",
-                "src/main.cpp"
-            ]),
-            "file": os.path.join(project_root, "src", "main.cpp").replace('\\', '/')
-        }
-    ]
+    try:
+        # Project root directory
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        print(f"🔧 Working directory: {project_root}")
+        
+        # Basic compile command for the main source file
+        compile_commands = [
+            {
+                "directory": project_root,
+                "command": " ".join([
+                    "clang++",
+                    "-std=c++17",
+                    "-DARDUINO=10819",
+                    "-DARDUINO_ESP32_DEV=1",
+                    "-DESP32=1",
+                    "-DESP_PLATFORM=1",
+                    "-DF_CPU=240000000L",
+                    "-DBOARD_HAS_PSRAM=1",
+                    "-DCONFIG_LITTLEFS_ENABLE=1",
+                    "-DCONFIG_FATFS_ENABLE=0",
+                    "-DCONFIG_SPIFFS_ENABLE=0",
+                    "-DPROGMEM=",
+                    "-Isrc",
+                    "-Ilib",
+                    "-Iinclude",
+                    "src/main.cpp"
+                ]),
+                "file": os.path.join(project_root, "src", "main.cpp").replace('\\', '/')
+            }
+        ]
     
     # Add all source files found in src directory
     src_dir = os.path.join(project_root, "src")
@@ -68,6 +70,8 @@ def create_compile_commands():
                     ]),
                     "file": file_path
                 })
+    else:
+        print(f"⚠️  Warning: src directory not found at {src_dir}")
     
     # Write to compile_commands.json
     output_file = os.path.join(project_root, "compile_commands.json")
@@ -78,6 +82,10 @@ def create_compile_commands():
     print(f"📄 Output: {output_file}")
     
     return output_file
+
+    except Exception as e:
+        print(f"❌ Error generating compile_commands.json: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     create_compile_commands()

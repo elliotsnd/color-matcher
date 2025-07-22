@@ -1,0 +1,12 @@
+﻿{
+  "repositoryName": "elliotsnd/color-matcher",
+  "pipelineDirectory": "color-matcher",
+  "workspaceDirectory": "color-matcher\\color-matcher",
+  "repositories": {
+    "elliotsnd/color-matcher": {
+      "repositoryPath": "color-matcher\\color-matcher",
+      "lastRunOn": "07/22/2025 16:27:28 +10:00"
+    }
+  },
+  "lastRunOn": "07/22/2025 16:27:38 +10:00"
+}

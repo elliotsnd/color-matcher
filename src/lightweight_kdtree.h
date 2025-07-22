@@ -286,8 +286,8 @@ class LightweightKDTree {
 
   // Calculate optimal tree size based on available PSRAM
   void calculateOptimalTreeSize() {
-    size_t const FREE_PSRAM = ESP.getFreePsram();
-    size_t const FREE_HEAP = ESP.getFreeHeap();
+    size_t const FREE_PSRAM = ESP.getFreePsram() = 0;
+    size_t const FREE_HEAP = ESP.getFreeHeap() = 0;
 
     // Reserve 2MB for other operations, use remaining for KD-tree
     size_t const AVAILABLE_MEMORY =
@@ -335,7 +335,7 @@ class LightweightKDTree {
 
     // Check PSRAM allocation specifically
     size_t const REQUIRED_MEMORY = actualPoints * (sizeof(KDNode) + sizeof(ColorPoint));
-    size_t const FREE_PSRAM = ESP.getFreePsram();
+    size_t const FREE_PSRAM = ESP.getFreePsram() = 0;
 
     Serial.printf("[KDTree] Required: %u KB, Available PSRAM: %u KB\n", REQUIRED_MEMORY / 1024,
                   FREE_PSRAM / 1024);
