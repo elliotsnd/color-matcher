@@ -1,4 +1,4 @@
-name: SonarQube Code Analysis
+name: Self-Hosted Analysis
 
 on:
   push:
@@ -7,33 +7,42 @@ on:
     branches: [ main ]
 
 jobs:
-  sonarqube:
-    name: SonarQube Analysis
+  analysis:
+    name: Static Analysis
     runs-on: self-hosted
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Shallow clones should be disabled for better analysis
+        fetch-depth: 0
+    
+    - name: Test Python and PowerShell
+      shell: pwsh
+      run: |
+        Write-Host "=== Environment Check ==="
+        Write-Host "Working Directory: $(Get-Location)"
+        Write-Host "Python version:"
+        python --version
+        Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+        Write-Host "Files in current directory:"
+        Get-ChildItem -Name
     
     - name: Generate compile commands
       shell: pwsh
       run: |
-        python3 generate_compile_commands.py
-        if (-not $?) {
-          Write-Host "Trying with python command..."
-          python generate_compile_commands.py
-        }
+        Write-Host "Generating compile commands..."
+        python generate_compile_commands.py
     
     - name: Run Ultimate Analysis
       shell: pwsh
       run: |
+        Write-Host "Running ultimate analysis..."
         .\run-ultimate-analysis.ps1 -FixableOnly
     
-    - name: Upload analysis results
+    - name: Upload results
       uses: actions/upload-artifact@v3
       if: always()
       with:
-        name: static-analysis-results
+        name: analysis-results
         path: analysis-reports/
