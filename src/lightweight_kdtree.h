@@ -21,22 +21,22 @@
 template <typename T>
 class PSRAMAllocator {
  public:
-  typedef T value_type;
-  typedef T* pointer;
-  typedef const T* const_pointer;
-  typedef T& reference;
-  typedef const T& const_reference;
-  typedef size_t size_type;
-  typedef ptrdiff_t difference_type;
+  using value_type = T;
+  using pointer = T*;
+  using const_pointer = T*;
+  using reference = T&;
+  using const_reference = T&;
+  using size_type = size_t;
+  using difference_type = ptrdiff_t;
 
   template <typename U>
-  struct rebind {
-    typedef PSRAMAllocator<U> other;
+  struct Rebind {
+    using other = PSRAMAllocator<U>;
   };
 
   PSRAMAllocator() = default;
   template <typename U>
-  PSRAMAllocator(const PSRAMAllocator<U>&) {
+  explicit PSRAMAllocator(const PSRAMAllocator<U>& /*unused*/) {
   }
 
   pointer allocate(size_type n) {
@@ -51,14 +51,14 @@ class PSRAMAllocator {
     return static_cast<pointer>(ptr);
   }
 
-  void deallocate(pointer p, size_type) {
+  void deallocate(pointer p, size_type /*unused*/) {
     heap_caps_free(p);
   }
 
-  bool operator==(const PSRAMAllocator&) const {
+  bool operator==(const PSRAMAllocator& /*unused*/) const {
     return true;
   }
-  bool operator!=(const PSRAMAllocator&) const {
+  bool operator!=(const PSRAMAllocator& /*unused*/) const {
     return false;
   }
 };
@@ -81,21 +81,20 @@ struct ColorPoint {
 // Compact tree node structure
 struct KDNode {
   ColorPoint point;  // Color data (5 bytes)
-  uint8_t axis;      // Splitting axis 0=R, 1=G, 2=B (1 byte)
-  uint16_t left;     // Index of left child (2 bytes, 0 = no child)
-  uint16_t right;    // Index of right child (2 bytes, 0 = no child)
+  uint8_t axis{0};   // Splitting axis 0=R, 1=G, 2=B (1 byte)
+  uint16_t left{0};  // Index of left child (2 bytes, 0 = no child)
+  uint16_t right{0};  // Index of right child (2 bytes, 0 = no child)
 
-  KDNode() : axis(0), left(0), right(0) {
-  }
+  KDNode() = default;
 };
 
 class LightweightKDTree {
  private:
   PSRAMNodeVector nodes;
   PSRAMColorVector points;
-  size_t node_count;
-  bool built;
-  size_t max_tree_size;  // Adaptive size limit based on available memory
+  size_t node_count{0};
+  bool built{false};
+  size_t max_tree_size{0};  // Adaptive size limit based on available memory
 
   // Build queue item for iterative construction
   struct BuildItem {
@@ -110,7 +109,7 @@ class LightweightKDTree {
   };
 
   // Get coordinate value for given axis
-  uint8_t getCoordinate(const ColorPoint& p, uint8_t axis) {
+  static uint8_t getCoordinate(const ColorPoint& p, uint8_t axis) {
     switch (axis) {
       case 0:
         return p.r;
@@ -124,18 +123,19 @@ class LightweightKDTree {
   }
 
   // Calculate squared Euclidean distance
-  uint32_t distanceSquared(const ColorPoint& a, const ColorPoint& b) {
-    int32_t dr = (int32_t)a.r - (int32_t)b.r;
-    int32_t dg = (int32_t)a.g - (int32_t)b.g;
-    int32_t db = (int32_t)a.b - (int32_t)b.b;
-    return (uint32_t)(dr * dr + dg * dg + db * db);
+  static uint32_t distanceSquared(const ColorPoint& a, const ColorPoint& b) {
+    int32_t const DR = (int32_t)a.r - (int32_t)b.r;
+    int32_t const DG = (int32_t)a.g - (int32_t)b.g;
+    int32_t const DB = (int32_t)a.b - (int32_t)b.b;
+    return (uint32_t)((DR * DR) + (DG * DG) + (DB * DB));
   }
 
   // Iterative nearest neighbor search
-  void searchNearest(uint16_t node_index, const ColorPoint& target, ColorPoint& best,
-                     uint32_t& best_dist) {
-    if (node_index == 0)
+  static void searchNearest(uint16_t node_index, const ColorPoint& target, ColorPoint& best,
+                            uint32_t& best_dist) {
+    if (node_index == 0) {
       return;
+    }
 
     // Use a stack for iterative traversal to avoid recursion
     std::vector<uint16_t> stack;
@@ -149,44 +149,46 @@ class LightweightKDTree {
       const KDNode& node = nodes[current - 1];  // Convert to 0-based index
 
       // Check current node
-      uint32_t dist = distanceSquared(node.point, target);
-      if (dist < best_dist) {
-        best_dist = dist;
+      uint32_t const DIST = distanceSquared(node.point, target);
+      if (DIST < best_dist) {
+        best_dist = DIST;
         best = node.point;
       }
 
       // Determine which side to search first
-      uint8_t target_coord = getCoordinate(target, node.axis);
-      uint8_t node_coord = getCoordinate(node.point, node.axis);
+      uint8_t const TARGET_COORD = getCoordinate(target, node.axis);
+      uint8_t const NODE_COORD = getCoordinate(node.point, node.axis);
 
-      uint16_t first_child, second_child;
-      if (target_coord <= node_coord) {
-        first_child = node.left;
-        second_child = node.right;
+      uint16_t firstChild = 0;
+      uint16_t secondChild = 0;
+      if (TARGET_COORD <= NODE_COORD) {
+        firstChild = node.left;
+        secondChild = node.right;
       } else {
-        first_child = node.right;
-        second_child = node.left;
+        firstChild = node.right;
+        secondChild = node.left;
       }
 
       // Add children to stack (second child first so first child is processed first)
-      if (second_child != 0) {
+      if (secondChild != 0) {
         // Check if we need to search the other side
-        int32_t axis_dist = (int32_t)target_coord - (int32_t)node_coord;
-        if ((uint32_t)(axis_dist * axis_dist) < best_dist) {
-          stack.push_back(second_child);
+        int32_t const AXIS_DIST = (int32_t)TARGET_COORD - (int32_t)NODE_COORD;
+        if ((uint32_t)(AXIS_DIST * AXIS_DIST) < best_dist) {
+          stack.push_back(secondChild);
         }
       }
 
-      if (first_child != 0) {
-        stack.push_back(first_child);
+      if (firstChild != 0) {
+        stack.push_back(firstChild);
       }
     }
   }
 
   // Build a balanced tree using iterative approach
   bool buildBalancedTree() {
-    if (points.empty())
+    if (points.empty()) {
       return false;
+    }
 
     // Use iterative breadth-first construction
     struct BuildTask {
@@ -196,7 +198,7 @@ class LightweightKDTree {
       uint8_t depth;
     };
 
-    std::queue<BuildTask> build_queue;
+    std::queue<BuildTask> buildQueue;
 
     // Start with root
     build_queue.push({0, 0, points.size(), 0});
@@ -204,13 +206,14 @@ class LightweightKDTree {
 
     while (!build_queue.empty() && node_count < points.size()) {
       BuildTask task = build_queue.front();
-      build_queue.pop();
+      buildQueue.pop();
 
-      if (task.start >= task.end)
+      if (task.start >= task.end) {
         continue;
+      }
 
       // Choose splitting axis (cycle through R, G, B)
-      uint8_t axis = task.depth % 3;
+      uint8_t const AXIS = task.depth % 3;
 
       // Sort by current axis
       std::sort(points.begin() + task.start, points.begin() + task.end,
@@ -228,13 +231,13 @@ class LightweightKDTree {
                 });
 
       // Find median
-      size_t median = task.start + (task.end - task.start) / 2;
+      size_t median = task.start + ((task.end - task.start) / 2);
 
       // Create node
       if (task.node_idx < nodes.size()) {
         KDNode& node = nodes[task.node_idx];
         node.point = points[median];
-        node.axis = axis;
+        node.axis = AXIS;
         node.left = 0;
         node.right = 0;
 
@@ -242,15 +245,15 @@ class LightweightKDTree {
 
         // Add children to queue if there's room and points
         if (median > task.start && node_count < nodes.size()) {
-          size_t left_idx = node_count;
-          node.left = left_idx + 1;  // 1-based indexing
-          build_queue.push({left_idx, task.start, median, (uint8_t)(task.depth + 1)});
+          size_t leftIdx = node_count;
+          node.left = leftIdx + 1;  // 1-based indexing
+          buildQueue.push({leftIdx, task.start, median, (uint8_t)(task.depth + 1)});
         }
 
         if (median + 1 < task.end && node_count < nodes.size()) {
-          size_t right_idx = node_count;
-          node.right = right_idx + 1;  // 1-based indexing
-          build_queue.push({right_idx, median + 1, task.end, (uint8_t)(task.depth + 1)});
+          size_t rightIdx = node_count;
+          node.right = rightIdx + 1;  // 1-based indexing
+          buildQueue.push({rightIdx, median + 1, task.end, (uint8_t)(task.depth + 1)});
         }
       }
 
@@ -272,12 +275,7 @@ class LightweightKDTree {
   }
 
  public:
-  LightweightKDTree()
-      : nodes(PSRAMAllocator<KDNode>()),
-        points(PSRAMAllocator<ColorPoint>()),
-        node_count(0),
-        built(false),
-        max_tree_size(0) {
+  LightweightKDTree() : nodes(PSRAMAllocator<KDNode>()), points(PSRAMAllocator<ColorPoint>()) {
     // Calculate adaptive tree size based on available PSRAM
     calculateOptimalTreeSize();
   }
@@ -288,27 +286,25 @@ class LightweightKDTree {
 
   // Calculate optimal tree size based on available PSRAM
   void calculateOptimalTreeSize() {
-    size_t free_psram = ESP.getFreePsram();
-    size_t free_heap = ESP.getFreeHeap();
+    size_t const FREE_PSRAM = ESP.getFreePsram();
+    size_t const FREE_HEAP = ESP.getFreeHeap();
 
     // Reserve 2MB for other operations, use remaining for KD-tree
-    size_t available_memory = free_psram > 2 * 1024 * 1024 ? free_psram - 2 * 1024 * 1024 : 0;
+    size_t const AVAILABLE_MEMORY =
+        FREE_PSRAM > 2 * 1024 * 1024 ? FREE_PSRAM - (2 * 1024 * 1024) : 0;
 
     // Each tree node uses sizeof(KDNode) + sizeof(ColorPoint) bytes
-    size_t bytes_per_point = sizeof(KDNode) + sizeof(ColorPoint);
-    max_tree_size = available_memory / bytes_per_point;
+    size_t const BYTES_PER_POINT = sizeof(KDNode) + sizeof(ColorPoint);
+    max_tree_size = AVAILABLE_MEMORY / BYTES_PER_POINT;
 
     // Cap at reasonable maximum (4500 colors total in database)
-    if (max_tree_size > 4500)
-      max_tree_size = 4500;
+    max_tree_size = std::min<size_t>(max_tree_size, 4500);
 
     // Ensure minimum viable tree size
-    if (max_tree_size < 500) {
-      max_tree_size = 500;  // Use heap if PSRAM is insufficient
-    }
+    max_tree_size = std::max<size_t>(max_tree_size, 500);
 
     Serial.printf("[KDTree] Available PSRAM: %u KB, Optimal tree size: %u colors\n",
-                  free_psram / 1024, max_tree_size);
+                  FREE_PSRAM / 1024, max_tree_size);
   }
 
   void clear() {
@@ -321,7 +317,7 @@ class LightweightKDTree {
   // Build tree from color points using iterative method with adaptive sizing
   bool build(const PSRAMColorVector& input_points) {
     Serial.println("[KDTree] Starting PSRAM-optimized iterative tree construction...");
-    unsigned long start_time = millis();
+    unsigned long const START_TIME = millis();
 
     if (input_points.empty()) {
       Serial.println("[KDTree] Error: No input points provided");
@@ -332,24 +328,24 @@ class LightweightKDTree {
 
     // Use adaptive sizing based on available PSRAM
     calculateOptimalTreeSize();
-    size_t actual_points = std::min(input_points.size(), max_tree_size);
+    size_t actualPoints = std::min(input_points.size(), max_tree_size);
 
-    Serial.printf("[KDTree] Building tree with %u of %u colors (limit: %u)\n", actual_points,
+    Serial.printf("[KDTree] Building tree with %u of %u colors (limit: %u)\n", actualPoints,
                   input_points.size(), max_tree_size);
 
     // Check PSRAM allocation specifically
-    size_t required_memory = actual_points * (sizeof(KDNode) + sizeof(ColorPoint));
-    size_t free_psram = ESP.getFreePsram();
+    size_t const REQUIRED_MEMORY = actualPoints * (sizeof(KDNode) + sizeof(ColorPoint));
+    size_t const FREE_PSRAM = ESP.getFreePsram();
 
-    Serial.printf("[KDTree] Required: %u KB, Available PSRAM: %u KB\n", required_memory / 1024,
-                  free_psram / 1024);
+    Serial.printf("[KDTree] Required: %u KB, Available PSRAM: %u KB\n", REQUIRED_MEMORY / 1024,
+                  FREE_PSRAM / 1024);
 
-    if (required_memory > free_psram * 0.8) {  // Use only 80% of available PSRAM
-      actual_points = (free_psram * 0.8) / (sizeof(KDNode) + sizeof(ColorPoint));
-      Serial.printf("[KDTree] Reducing size to %u colors to fit in PSRAM\n", actual_points);
+    if (REQUIRED_MEMORY > FREE_PSRAM * 0.8) {  // Use only 80% of available PSRAM
+      actualPoints = (FREE_PSRAM * 0.8) / (sizeof(KDNode) + sizeof(ColorPoint));
+      Serial.printf("[KDTree] Reducing size to %u colors to fit in PSRAM\n", actualPoints);
     }
 
-    if (actual_points < 100) {
+    if (actualPoints < 100) {
       Serial.println("[KDTree] Error: Insufficient PSRAM for meaningful tree");
       return false;
     }
@@ -360,21 +356,21 @@ class LightweightKDTree {
       points.reserve(actual_points);
 
       // Copy subset of points
-      for (size_t i = 0; i < actual_points; i++) {
+      for (size_t i = 0; i < actualPoints; i++) {
         points.push_back(input_points[i]);
       }
 
       nodes.clear();
       nodes.resize(actual_points);
 
-      Serial.printf("[KDTree] PSRAM allocation successful for %u points\n", actual_points);
+      Serial.printf("[KDTree] PSRAM allocation successful for %u points\n", actualPoints);
 
       // Build a proper balanced tree iteratively
       if (buildBalancedTree()) {
         built = true;
-        unsigned long build_time = millis() - start_time;
+        unsigned long const BUILD_TIME = millis() - START_TIME;
 
-        Serial.printf("[KDTree] Tree built successfully in %u ms\n", build_time);
+        Serial.printf("[KDTree] Tree built successfully in %u ms\n", BUILD_TIME);
         Serial.printf("[KDTree] Nodes: %u, Memory: %u KB PSRAM\n", node_count,
                       getMemoryUsage() / 1024);
         Serial.printf("[KDTree] Remaining PSRAM: %u KB\n", ESP.getFreePsram() / 1024);
@@ -391,19 +387,19 @@ class LightweightKDTree {
   }
 
   // Find nearest neighbor using proper KD-tree search
-  ColorPoint findNearest(uint8_t r, uint8_t g, uint8_t b) {
+  ColorPoint findNearest(uint8_t r, uint8_t g, uint8_t b) const {
     if (!built || node_count == 0) {
       Serial.println("[KDTree] Warning: Tree not built or empty");
-      return ColorPoint();
+      return {};
     }
 
-    ColorPoint target(r, g, b, 0);
+    ColorPoint const TARGET(r, g, b, 0);
     ColorPoint best = nodes[0].point;  // Start with root
-    uint32_t best_dist = distanceSquared(target, best);
+    uint32_t bestDist = distanceSquared(TARGET, best);
 
     // Use proper KD-tree search if we have a complete tree
     if (node_count > 1) {
-      searchNearest(1, target, best, best_dist);  // 1-based indexing
+      searchNearest(1, TARGET, best, bestDist);  // 1-based indexing
     }
 
     return best;

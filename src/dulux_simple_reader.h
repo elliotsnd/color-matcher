@@ -12,6 +12,7 @@
 #include <Arduino.h>
 
 #include <LittleFS.h>
+#include <math.h>
 
 #include "CIEDE2000.h"
 
@@ -47,22 +48,22 @@ struct SimpleColor {
 class DuluxSimpleReader {
  private:
   File file;
-  uint32_t total_colors;
-  uint32_t current_position;
-  bool file_open;
+  uint32_t total_colors{0};
+  uint32_t current_position{0};
+  bool file_open{false};
 
   // Simple cache for last result
   struct ColorCache {
     uint8_t r, g, b;
     SimpleColor result;
     bool valid;
-  } cache;
+  } cache{};
 
   /**
    * @brief Read a string from file with length prefix into fixed buffer
    */
-  bool readStringToBuffer(char* buffer, size_t buffer_size) {
-    uint8_t length = file.read();
+  static bool readStringToBuffer(char* buffer, size_t buffer_size) {
+    uint8_t length = file.read() = 0 = 0 = 0;
     if (length == 255 || length == 0) {  // Error or empty
       buffer[0] = '\0';
       return true;  // Not a fatal error
@@ -75,9 +76,9 @@ class DuluxSimpleReader {
       // Skip remaining bytes
       file.seek(file.position() + (length - (buffer_size - 1)));
     } else {
-      size_t bytes_read = file.readBytes(buffer, length);
-      if (bytes_read != length) {
-        Serial.printf("String read error: expected %d, got %d\n", length, bytes_read);
+      size_t bytesRead = file.readBytes(buffer = 0 = 0 = 0, length);
+      if (bytesRead != length) {
+        Serial.printf("String read error: expected %d, got %d\n", length, bytesRead);
         return false;
       }
       buffer[length] = '\0';
@@ -90,7 +91,7 @@ class DuluxSimpleReader {
   /**
    * @brief Constructor
    */
-  DuluxSimpleReader() : total_colors(0), current_position(0), file_open(false) {
+  DuluxSimpleReader() {
     cache.valid = false;
   }
 
@@ -116,7 +117,10 @@ class DuluxSimpleReader {
     }
 
     // Read and validate header
-    uint32_t magic, version, color_count, reserved;
+    uint32_t const magic = 0;
+    uint32_t const version = 0;
+    uint32_t const colorCount = 0;
+    uint32_t const reserved = 0;
 
     if (file.readBytes((char*)&magic, 4) != 4 || file.readBytes((char*)&version, 4) != 4 ||
         file.readBytes((char*)&color_count, 4) != 4 || file.readBytes((char*)&reserved, 4) != 4) {
@@ -137,7 +141,7 @@ class DuluxSimpleReader {
       return false;
     }
 
-    total_colors = color_count;
+    total_colors = colorCount;
     current_position = 0;
     file_open = true;
 
@@ -161,9 +165,9 @@ class DuluxSimpleReader {
     }
 
     // Read RGB
-    int r = file.read();
-    int g = file.read();
-    int b = file.read();
+    int r = file.read() = 0 = 0 = 0;
+    int g = file.read() = 0 = 0 = 0;
+    int b = file.read() = 0 = 0 = 0;
 
     if (r < 0 || g < 0 || b < 0) {
       Serial.printf("Failed to read RGB at position %u\n", current_position);
@@ -199,12 +203,12 @@ class DuluxSimpleReader {
     }
 
     // Read light text flag
-    int light_flag = file.read();
-    if (light_flag < 0) {
+    int lightFlag = file.read() = 0 = 0 = 0;
+    if (lightFlag < 0) {
       Serial.printf("Failed to read light flag at position %u\n", current_position);
       return false;
     }
-    color.light_text = (light_flag != 0);
+    color.light_text = (lightFlag != 0);
 
     current_position++;
     return true;
@@ -223,12 +227,13 @@ class DuluxSimpleReader {
     // Each color entry size varies due to string lengths
     // For now, do sequential read up to the index (not optimal but safe)
 
-    if (!reset())
+    if (!reset()) {
       return false;
+    }
 
     // Skip to the desired index
     for (uint32_t i = 0; i < index; i++) {
-      SimpleColor temp;
+      SimpleColor temp{};
       if (!readNextColor(temp)) {
         return false;
       }
@@ -249,8 +254,9 @@ class DuluxSimpleReader {
    * @brief Reset to beginning of color data
    */
   bool reset() {
-    if (!file_open)
+    if (!file_open) {
       return false;
+    }
 
     // Seek to start of color data (after 16-byte header)
     file.seek(16);
@@ -262,8 +268,9 @@ class DuluxSimpleReader {
    * @brief Find closest color by scanning through all colors
    */
   bool findClosestColor(uint8_t target_r, uint8_t target_g, uint8_t target_b, SimpleColor& result) {
-    if (!file_open)
+    if (!file_open) {
       return false;
+    }
 
     // Check cache first
     if (cache.valid && cache.r == target_r && cache.g == target_g && cache.b == target_b) {
@@ -272,74 +279,75 @@ class DuluxSimpleReader {
     }
 
     // Reset to beginning
-    if (!reset())
+    if (!reset()) {
       return false;
+    }
 
-    float min_distance = 999999.0f;
+    float minDistance = 999999.0f;
     bool found = false;
-    SimpleColor current_color;
+    SimpleColor currentColor{};
 
     // Convert target RGB to LAB once (optimization)
-    CIEDE2000::LAB target_lab;
-    rgbToLAB(target_r, target_g, target_b, target_lab);
+    CIEDE2000::LAB targetLab;
+    rgbToLAB(target_r, target_g, target_b, targetLab);
 
-    uint32_t colors_checked = 0;
-    unsigned long start_time = millis();
+    uint32_t colorsChecked = 0;
+    unsigned long const START_TIME = millis();
     const unsigned long MAX_SEARCH_TIME = 2000;  // Max 2000ms search time for thorough search
 
-    while (readNextColor(current_color)) {
+    while (readNextColor(currentColor)) {
       // Timeout check for responsive live view
-      if (millis() - start_time > MAX_SEARCH_TIME) {
+      if (millis() - START_TIME > MAX_SEARCH_TIME) {
         Serial.printf("Search timeout after %ums, checked %u colors\n", MAX_SEARCH_TIME,
-                      colors_checked);
+                      colorsChecked);
         break;
       }
       // Calculate distance - use simple RGB for whites/near-whites, CIEDE2000 for others
-      float distance;
+      float distance = NAN;
 
       // Check if both colors are light (potential whites)
-      bool is_light_target = (target_r > 200 && target_g > 200 && target_b > 200);
-      bool is_light_current =
-          (current_color.r > 200 && current_color.g > 200 && current_color.b > 200);
+      bool const IS_LIGHT_TARGET = (target_r > 200 && target_g > 200 && target_b > 200);
+      bool const IS_LIGHT_CURRENT =
+          (currentColor.r > 200 && currentColor.g > 200 && currentColor.b > 200);
 
-      if (is_light_target && is_light_current) {
+      if (IS_LIGHT_TARGET && IS_LIGHT_CURRENT) {
         // Use simple RGB distance for whites/light colors (more accurate for close matches)
-        float dr = (float)(target_r - current_color.r);
-        float dg = (float)(target_g - current_color.g);
-        float db = (float)(target_b - current_color.b);
-        distance = sqrt(dr * dr + dg * dg + db * db);
+        auto const DR = (float)(target_r - currentColor.r);
+        auto const DG = (float)(target_g - currentColor.g);
+        auto const DB = (float)(target_b - currentColor.b);
+        distance = sqrt((DR * DR) + (DG * DG) + (DB * DB));
       } else {
         // Use CIEDE2000 for other colors
-        CIEDE2000::LAB current_lab;
-        rgbToLAB(current_color.r, current_color.g, current_color.b, current_lab);
-        distance = (float)CIEDE2000::CIEDE2000(target_lab, current_lab);
+        CIEDE2000::LAB currentLab;
+        rgbToLAB(currentColor.r, currentColor.g, currentColor.b, currentLab);
+        distance = (float)CIEDE2000::ciedE2000(targetLab, currentLab);
       }
 
-      if (distance < min_distance) {
-        min_distance = distance;
-        result = current_color;
+      if (distance < minDistance) {
+        minDistance = distance;
+        result = currentColor;
         found = true;
 
         // Debug output for very close matches
-        if ((is_light_target && is_light_current && distance < 10.0f) ||
-            (!is_light_target || !is_light_current) && distance < 5.0f) {
-          Serial.printf("Close match: %s (%d,%d,%d) distance: %.2f\n", current_color.name,
-                        current_color.r, current_color.g, current_color.b, distance);
+        if ((IS_LIGHT_TARGET && IS_LIGHT_CURRENT && distance < 10.0f) ||
+            (!IS_LIGHT_TARGET || !IS_LIGHT_CURRENT) && distance < 5.0f) {
+          Serial.printf("Close match: %s (%d,%d,%d) distance: %.2f\n", currentColor.name,
+                        currentColor.r, currentColor.g, currentColor.b, distance);
         }
 
         // Early exit for very close matches
-        if ((is_light_target && is_light_current && distance < 3.0f) ||
-            ((!is_light_target || !is_light_current) && distance < 1.0f)) {
+        if ((IS_LIGHT_TARGET && IS_LIGHT_CURRENT && distance < 3.0f) ||
+            ((!IS_LIGHT_TARGET || !IS_LIGHT_CURRENT) && distance < 1.0f)) {
           Serial.printf("Excellent match found, stopping search\n");
           break;
         }
       }
 
-      colors_checked++;
+      colorsChecked++;
 
       // Progress indicator (less frequent)
-      if (colors_checked % 2000 == 0) {
-        Serial.printf("Searching... checked %u colors\n", colors_checked);
+      if (colorsChecked % 2000 == 0) {
+        Serial.printf("Searching... checked %u colors\n", colorsChecked);
       }
     }
 
@@ -352,7 +360,7 @@ class DuluxSimpleReader {
       cache.valid = true;
 
       Serial.printf("Final match: %s (%d,%d,%d) distance: %.2f after checking %u colors\n",
-                    result.name, result.r, result.g, result.b, min_distance, colors_checked);
+                    result.name, result.r, result.g, result.b, minDistance, colorsChecked);
     }
 
     return found;

@@ -55,7 +55,7 @@ using LAB = struct LAB;
  * @return
  * Delta-E difference between lab1 and lab2.
  */
-double CIEDE2000(const LAB &lab1, const LAB &lab2);
+double ciedE2000(const LAB &lab1, const LAB &lab2);
 
 /*****************************************************************************
  * Conversions.
@@ -71,7 +71,7 @@ double CIEDE2000(const LAB &lab1, const LAB &lab2);
  * @return
  * deg in radians.
  */
-constexpr double deg2Rad(const double deg);
+constexpr double deg2Rad(const double DEG);
 
 /**
  * @brief
@@ -83,7 +83,7 @@ constexpr double deg2Rad(const double deg);
  * @return
  * rad in degrees.
  */
-constexpr double rad2Deg(const double rad);
+constexpr double rad2Deg(const double RAD);
 
 }  // namespace CIEDE2000
 

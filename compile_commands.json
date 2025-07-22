@@ -1,12 +1,12 @@
 [
   {
-    "directory": "/home/runner/work/color-matcher/color-matcher",
-    "command": "clang++ -std=c++17 -DARDUINO=10819 -DARDUINO_ESP32_DEV=1 -DESP32=1 -DESP_PLATFORM=1 -DF_CPU=240000000L -DBOARD_HAS_PSRAM=1 -DCONFIG_LITTLEFS_ENABLE=1 -DCONFIG_FATFS_ENABLE=0 -DCONFIG_SPIFFS_ENABLE=0 -DPROGMEM= -Isrc -Ilib -Iinclude src/main.cpp",
-    "file": "/home/runner/work/color-matcher/color-matcher/src/main.cpp"
+    "directory": "G:\\finalcolorwithcalibration",
+    "command": "clang++ -std=c++17 -DARDUINO=10819 -DARDUINO_ESP32_DEV=1 -DESP32=1 -DESP_PLATFORM=1 -DF_CPU=240000000L -DBOARD_HAS_PSRAM=1 -DCONFIG_LITTLEFS_ENABLE=1 -DCONFIG_FATFS_ENABLE=0 -DCONFIG_SPIFFS_ENABLE=0 -DPROGMEM= -Isrc -Ilib -Iinclude -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ArduinoJson\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ArduinoJson -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\AsyncTCP\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\AsyncTCP -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\DFRobot_TCS3430 -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ESPAsyncWebServer\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ESPAsyncWebServer -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\UMS3 Helper\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\UMS3 Helper G:/finalcolorwithcalibration/src/CIEDE2000.cpp",
+    "file": "G:/finalcolorwithcalibration/src/CIEDE2000.cpp"
   },
   {
-    "directory": "/home/runner/work/color-matcher/color-matcher",
-    "command": "clang++ -std=c++17 -DARDUINO=10819 -DARDUINO_ESP32_DEV=1 -DESP32=1 -DESP_PLATFORM=1 -DF_CPU=240000000L -DBOARD_HAS_PSRAM=1 -DCONFIG_LITTLEFS_ENABLE=1 -DCONFIG_FATFS_ENABLE=0 -DCONFIG_SPIFFS_ENABLE=0 -DPROGMEM= -Isrc -Ilib -Iinclude /home/runner/work/color-matcher/color-matcher/src/CIEDE2000.cpp",
-    "file": "/home/runner/work/color-matcher/color-matcher/src/CIEDE2000.cpp"
+    "directory": "G:\\finalcolorwithcalibration",
+    "command": "clang++ -std=c++17 -DARDUINO=10819 -DARDUINO_ESP32_DEV=1 -DESP32=1 -DESP_PLATFORM=1 -DF_CPU=240000000L -DBOARD_HAS_PSRAM=1 -DCONFIG_LITTLEFS_ENABLE=1 -DCONFIG_FATFS_ENABLE=0 -DCONFIG_SPIFFS_ENABLE=0 -DPROGMEM= -Isrc -Ilib -Iinclude -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ArduinoJson\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ArduinoJson -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\AsyncTCP\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\AsyncTCP -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\DFRobot_TCS3430 -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ESPAsyncWebServer\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\ESPAsyncWebServer -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\UMS3 Helper\\src -IG:\\finalcolorwithcalibration\\.pio\\libdeps\\um_pros3\\UMS3 Helper G:/finalcolorwithcalibration/src/main.cpp",
+    "file": "G:/finalcolorwithcalibration/src/main.cpp"
   }
 ]

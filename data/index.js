@@ -1,3 +1,6 @@
+// TCS3430 Calibration System JavaScript
+// Clean, focused implementation for the new calibration system
+
 // Utility function to convert RGB to HEX
 function rgbToHex(r, g, b) {
     return "#" + [r, g, b].map(x => {
@@ -9,46 +12,192 @@ function rgbToHex(r, g, b) {
 // Global variables
 let liveColor = null;
 let scannedColor = null;
-let savedColors = [];
-
-// Color stabilization variables
-let lastColorName = '';
+let calibrationData = null;
 let lastR = 0, lastG = 0, lastB = 0;
-
-// Separate tracking for fast data and color names
-let fastColorData = null;
-let colorNameData = { colorName: 'Loading...', timestamp: 0 };
-let lastFastUpdate = 0;
-let lastColorNameUpdate = 0;
 
 // Battery monitoring variables
 let batteryData = { voltage: 0, percentage: 0, status: 'unknown' };
-let lastBatteryUpdate = 0;
 
-// Load saved colors from localStorage
-function loadSavedColors() {
-    try {
-        const stored = localStorage.getItem('savedColors');
-        if (stored) {
-            savedColors = JSON.parse(stored);
-            updateSavedColorsDisplay();
-        }
-    } catch (e) {
-        console.error("Failed to load colors from localStorage", e);
+// Calibration status tracking
+let calibrationStatus = {
+    isCalibrated: false,
+    blackReference: null,
+    whiteReference: null,
+    vividWhiteCalibrated: false
+};
+
+// Update calibration status display
+function updateCalibrationStatus() {
+    fetch('/api/calibration-data')
+        .then(response => response.json())
+        .then(data => {
+            calibrationStatus = data;
+            
+            // Update main status indicator
+            const indicator = document.getElementById('calibrationIndicator');
+            const statusText = document.getElementById('calibrationStatusText');
+            const mainCalibrationStatus = document.getElementById('calibrationStatus');
+            
+            if (data.isCalibrated) {
+                indicator.className = 'fas fa-circle status-good';
+                statusText.textContent = 'Calibration Complete';
+                mainCalibrationStatus.textContent = 'Calibrated ✓';
+            } else {
+                indicator.className = 'fas fa-circle status-warning';
+                statusText.textContent = 'Calibration Required';
+                mainCalibrationStatus.textContent = 'Not Calibrated';
+            }
+            
+            // Update individual step status using explicit flags
+            // Use new explicit completion flags if available, otherwise fall back to data detection
+            const blackCalibrated = data.blackReferenceComplete || 
+                (data.blackReference && (data.blackReference.X > 0 || data.blackReference.Y > 0 || data.blackReference.Z > 0));
+            const whiteCalibrated = data.whiteReferenceComplete ||
+                (data.whiteReference && (data.whiteReference.X > 100 || data.whiteReference.Y > 100 || data.whiteReference.Z > 100));
+
+            updateStepStatus('blackStatus', blackCalibrated);
+            updateStepStatus('whiteStatus', whiteCalibrated);
+            updateStepStatus('vividWhiteStatus', data.isCalibrated);
+            
+            // Update progress indicator
+            if (blackCalibrated && !whiteCalibrated) {
+                statusText.textContent = 'Black Reference Complete - White Reference Needed';
+                mainCalibrationStatus.textContent = 'Partially Calibrated (1/2)';
+            } else if (blackCalibrated && whiteCalibrated && !data.isCalibrated) {
+                statusText.textContent = 'References Complete - Vivid White Calibration Needed';
+                mainCalibrationStatus.textContent = 'Partially Calibrated (2/3)';
+            }
+        })
+        .catch(error => {
+            console.error('Failed to get calibration status:', error);
+            document.getElementById('calibrationStatusText').textContent = 'Status Check Failed';
+        });
+}
+
+function updateStepStatus(elementId, isComplete) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = isComplete ? 'Completed ✓' : 'Not calibrated';
+        element.className = isComplete ? 'step-status completed' : 'step-status pending';
     }
 }
 
-// Save colors to localStorage
-function saveSavedColors() {
+// Calibration button handlers
+function setupCalibrationHandlers() {
+    // Black reference calibration
+    document.getElementById('calibrateBlackBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateBlackBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+        
+        try {
+            const response = await fetch('/api/calibrate-black', { method: 'POST' });
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                showNotification('Black reference calibrated successfully!', 'success');
+                updateCalibrationStatus();
+            } else {
+                showNotification('Black calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Black calibration error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-square" style="color: #000;"></i> Calibrate Black Reference';
+        }
+    });
+
+    // White reference calibration
+    document.getElementById('calibrateWhiteBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateWhiteBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+        
+        try {
+            const response = await fetch('/api/calibrate-white', { method: 'POST' });
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                showNotification('White reference calibrated successfully!', 'success');
+                updateCalibrationStatus();
+            } else {
+                showNotification('White calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('White calibration error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-square" style="color: #fff; border: 1px solid #ccc;"></i> Calibrate White Reference';
+        }
+    });
+
+    // Vivid white calibration
+    document.getElementById('calibrateVividWhiteBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateVividWhiteBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+        
+        try {
+            const response = await fetch('/api/calibrate-vivid-white', { method: 'POST' });
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                showNotification('Vivid white calibrated successfully!', 'success');
+                updateCalibrationStatus();
+            } else {
+                showNotification('Vivid white calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Vivid white calibration error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-bullseye"></i> Calibrate Vivid White Target';
+        }
+    });
+}
+
+// Fetch live color data from ESP32
+async function fetchFastColor() {
     try {
-        localStorage.setItem('savedColors', JSON.stringify(savedColors));
-    } catch (e) {
-        console.error("Failed to save colors to localStorage", e);
+        const response = await fetch('/api/color');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        updateLiveColorDisplay(data);
+        updateSensorStatus('Connected', true);
+        
+    } catch (error) {
+        console.error('Failed to fetch color data:', error);
+        updateSensorStatus('Connection Error', false);
+        
+        // Show error in live display
+        const container = document.getElementById('liveColorDisplay');
+        if (container) {
+            container.innerHTML = `
+                <div class="placeholder-container">
+                    <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
+                    <p class="placeholder-text">Connection Error</p>
+                    <p class="placeholder-text" style="font-size: 0.9rem;">Failed to fetch sensor data</p>
+                </div>
+            `;
+        }
+    }
+}
+
+// Update sensor status display
+function updateSensorStatus(status, isConnected) {
+    const statusText = document.getElementById('statusText');
+    if (statusText) {
+        statusText.textContent = status;
+        statusText.style.color = isConnected ? '#10b981' : '#ef4444';
     }
 }
 
 // Update the live color display
-function updateLiveColorDisplay(fastData, colorNameInfo) {
+function updateLiveColorDisplay(fastData) {
     const container = document.getElementById('liveColorDisplay');
     if (!container) {
         console.error('liveColorDisplay container not found!');
@@ -70,38 +219,29 @@ function updateLiveColorDisplay(fastData, colorNameInfo) {
 
     // Color stabilization - only update if color changed significantly
     const rgbDiff = Math.abs(fastData.r - lastR) + Math.abs(fastData.g - lastG) + Math.abs(fastData.b - lastB);
-    const colorNameChanged = colorNameInfo && colorNameInfo.colorName !== lastColorName;
     
-    // Only update display if RGB changed significantly (threshold of 3 for faster updates) or color name changed
-    if (!colorNameChanged && rgbDiff < 3) {
+    // Only update display if RGB changed significantly (threshold of 3 for faster updates)
+    if (rgbDiff < 3) {
         return; // Skip to avoid excessive DOM updates
     }
 
     lastR = fastData.r;
     lastG = fastData.g;
     lastB = fastData.b;
-    
-    if (colorNameInfo && colorNameInfo.colorName) {
-        lastColorName = colorNameInfo.colorName;
-    }
 
     const hex = rgbToHex(fastData.r, fastData.g, fastData.b);
-    const displayName = colorNameInfo ? colorNameInfo.colorName : lastColorName || 'Live Sensor Feed';
-    
-    // Show if color name is updating
-    const colorNameStatus = colorNameInfo && colorNameInfo.lookupInProgress ? ' (updating...)' : '';
 
     container.innerHTML = `
         <div class="color-display">
             <div class="color-swatch live-swatch" style="background-color: ${hex};"></div>
             <div class="color-details">
-                <p class="color-name">${displayName}${colorNameStatus}</p>
+                <p class="color-name">Live TCS3430 Reading</p>
                 <p class="color-values">RGB: ${fastData.r}, ${fastData.g}, ${fastData.b}</p>
                 <p class="color-values">HEX: ${hex}</p>
+                <p class="color-values">Sensor: X=${fastData.x || 'N/A'}, Y=${fastData.y || 'N/A'}, Z=${fastData.z || 'N/A'}</p>
+                <p class="color-values">IR: IR1=${fastData.ir1 || 'N/A'}, IR2=${fastData.ir2 || 'N/A'}</p>
                 <p class="color-values" style="font-size: 0.8rem; opacity: 0.7;">
-                    Sensor: ${new Date(fastData.timestamp).toLocaleTimeString()}
-                    ${colorNameInfo && colorNameInfo.colorNameTimestamp ? 
-                      ` | Color: ${new Date(colorNameInfo.colorNameTimestamp).toLocaleTimeString()}` : ''}
+                    Updated: ${new Date().toLocaleTimeString()}
                 </p>
             </div>
         </div>
@@ -109,7 +249,7 @@ function updateLiveColorDisplay(fastData, colorNameInfo) {
 
     liveColor = {
         id: 0,
-        name: displayName,
+        name: 'Live TCS3430 Reading',
         rgb: { r: fastData.r, g: fastData.g, b: fastData.b },
         hex: hex
     };
@@ -123,10 +263,177 @@ function updateLiveColorDisplay(fastData, colorNameInfo) {
     }
 }
 
+// Optimization and testing handlers
+function setupOptimizationHandlers() {
+    // Optimize accuracy button
+    document.getElementById('optimizeAccuracyBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('optimizeAccuracyBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Optimizing...';
+
+        try {
+            const response = await fetch('/api/optimize-accuracy', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                showNotification('Accuracy optimizations applied successfully!', 'success');
+                // Update sample count display if available
+                if (data.improvements && data.improvements.sampleCount) {
+                    document.getElementById('colorSamplesValue').textContent = data.improvements.sampleCount.new;
+                    document.getElementById('colorSamples').value = data.improvements.sampleCount.new;
+                }
+            } else {
+                showNotification('Optimization failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Optimization error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-magic"></i> Optimize for Maximum Accuracy';
+        }
+    });
+
+    // Test all improvements button
+    document.getElementById('testAllImprovementsBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('testAllImprovementsBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+
+        try {
+            const response = await fetch('/api/test-all-improvements');
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                displayTestResults(data);
+                showNotification('Comprehensive test completed!', 'success');
+            } else {
+                showNotification('Test failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Test error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-clipboard-check"></i> Test All Improvements';
+        }
+    });
+}
+
+function displayTestResults(data) {
+    const resultsDiv = document.getElementById('testResults');
+    const scoreSpan = document.getElementById('overallScore');
+    const gradeSpan = document.getElementById('overallGrade');
+    const recommendationsDiv = document.getElementById('recommendations');
+
+    scoreSpan.textContent = data.overallScore + '/100';
+    gradeSpan.textContent = data.grade;
+    gradeSpan.className = 'grade grade-' + data.grade.toLowerCase();
+
+    // Display recommendations
+    if (data.recommendations && data.recommendations.length > 0) {
+        recommendationsDiv.innerHTML = '<h4>Recommendations:</h4><ul>' +
+            data.recommendations.map(rec => `<li>${rec}</li>`).join('') + '</ul>';
+    } else {
+        recommendationsDiv.innerHTML = '<h4>All tests passed! ✓</h4>';
+    }
+
+    resultsDiv.style.display = 'block';
+}
+
+// Battery monitoring
+async function fetchBatteryStatus() {
+    try {
+        const response = await fetch('/api/battery');
+        if (response.ok) {
+            const data = await response.json();
+            // Validate the received data
+            if (data && typeof data === 'object') {
+                batteryData = data;
+                updateBatteryDisplay();
+            } else {
+                console.warn('Invalid battery data received:', data);
+                batteryData = null;
+                updateBatteryDisplay();
+            }
+        } else {
+            console.warn('Battery status request failed:', response.status);
+            batteryData = null;
+            updateBatteryDisplay();
+        }
+    } catch (error) {
+        console.error('Failed to fetch battery status:', error);
+        batteryData = null;
+        updateBatteryDisplay();
+    }
+}
+
+function updateBatteryDisplay() {
+    const voltageElement = document.getElementById('batteryVoltage');
+    const iconElement = document.getElementById('batteryIcon');
+
+    // Check if batteryData exists and has required properties
+    if (!batteryData || typeof batteryData.voltage === 'undefined') {
+        if (voltageElement) {
+            voltageElement.textContent = 'N/A';
+        }
+        if (iconElement) {
+            iconElement.className = 'fas fa-battery-empty';
+            iconElement.style.color = '#ef4444';
+        }
+        return;
+    }
+
+    if (voltageElement) {
+        const voltage = parseFloat(batteryData.voltage);
+        if (isNaN(voltage)) {
+            voltageElement.textContent = 'N/A';
+        } else {
+            voltageElement.textContent = `${voltage.toFixed(2)}V`;
+        }
+    }
+
+    if (iconElement) {
+        const percentage = parseFloat(batteryData.percentage) || 0;
+
+        // Update battery icon based on percentage
+        if (percentage > 75) {
+            iconElement.className = 'fas fa-battery-full';
+            iconElement.style.color = '#10b981';
+        } else if (percentage > 50) {
+            iconElement.className = 'fas fa-battery-three-quarters';
+            iconElement.style.color = '#f59e0b';
+        } else if (percentage > 25) {
+            iconElement.className = 'fas fa-battery-half';
+            iconElement.style.color = '#f59e0b';
+        } else {
+            iconElement.className = 'fas fa-battery-quarter';
+            iconElement.style.color = '#ef4444';
+        }
+    }
+}
+
+// Color capture functionality
+async function captureColor() {
+    if (!liveColor) {
+        showNotification('No live color data available', 'error');
+        return;
+    }
+
+    try {
+        // Capture current color
+        scannedColor = { ...liveColor };
+        updateScannedColorDisplay(scannedColor);
+        showNotification('Color captured successfully!', 'success');
+
+    } catch (error) {
+        console.error('Failed to capture color:', error);
+        showNotification('Failed to capture color', 'error');
+    }
+}
+
 // Update the scanned color display
 function updateScannedColorDisplay(color) {
     const container = document.getElementById('scannedColorDisplay');
-    
+
     if (color) {
         container.innerHTML = `
             <div class="color-display">
@@ -135,9 +442,9 @@ function updateScannedColorDisplay(color) {
                     <p class="color-name">${color.name}</p>
                     <p class="color-values">RGB: ${color.rgb.r}, ${color.rgb.g}, ${color.rgb.b}</p>
                     <p class="color-values">HEX: ${color.hex}</p>
-                    <button class="save-button" onclick="saveColor()">
-                        <i class="fas fa-save"></i> Save Sample
-                    </button>
+                    <p class="color-values" style="font-size: 0.8rem; opacity: 0.7;">
+                        Captured: ${new Date().toLocaleTimeString()}
+                    </p>
                 </div>
             </div>
         `;
@@ -151,785 +458,148 @@ function updateScannedColorDisplay(color) {
     }
 }
 
-// Update saved colors display
-function updateSavedColorsDisplay() {
-    const section = document.getElementById('savedColorsSection');
-    const grid = document.getElementById('savedColorsGrid');
-    
-    if (savedColors.length > 0) {
-        section.style.display = 'block';
-        grid.innerHTML = savedColors.map(color => `
-            <div class="saved-color-card">
-                <div class="saved-color-swatch" style="background-color: ${color.hex};"></div>
-                <div class="saved-color-info">
-                    <p class="saved-color-name">${color.name}</p>
-                    <p class="saved-color-values">${color.hex}</p>
-                </div>
-                <button class="delete-button" onclick="deleteColor(${color.id})">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        `).join('');
-    } else {
-        section.style.display = 'none';
-    }
-}
+// Utility handlers
+function setupUtilityHandlers() {
+    // Get calibration data button
+    document.getElementById('getCalibrationDataBtn').addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/calibration-data');
+            const data = await response.json();
 
-async function fetchFastColor() {
-    try {
-        const response = await fetch('/api/color-fast');
+            const info = `Calibration Status: ${data.isCalibrated ? 'Complete' : 'Incomplete'}\n` +
+                        `Black Reference: X=${data.blackReference?.X || 'N/A'}, Y=${data.blackReference?.Y || 'N/A'}, Z=${data.blackReference?.Z || 'N/A'}\n` +
+                        `White Reference: X=${data.whiteReference?.X || 'N/A'}, Y=${data.whiteReference?.Y || 'N/A'}, Z=${data.whiteReference?.Z || 'N/A'}\n` +
+                        `Target RGB: (${data.vividWhiteTarget?.R || 'N/A'}, ${data.vividWhiteTarget?.G || 'N/A'}, ${data.vividWhiteTarget?.B || 'N/A'})`;
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            alert(info);
+        } catch (error) {
+            showNotification('Failed to get calibration data: ' + error.message, 'error');
         }
+    });
 
-        const data = await response.json();
-        fastColorData = data;
-        lastFastUpdate = Date.now();
-        
-        // Update battery data if available in fast color response
-        if (data.batteryVoltage !== undefined) {
-            batteryData.voltage = data.batteryVoltage;
-            // Calculate percentage based on voltage (rough estimate)
-            if (data.batteryVoltage > 4.0) {
-                batteryData.percentage = 100;
-                batteryData.status = 'excellent';
-            } else if (data.batteryVoltage > 3.7) {
-                batteryData.percentage = Math.round((data.batteryVoltage - 3.0) / 1.2 * 100);
-                batteryData.status = 'good';
-            } else if (data.batteryVoltage > 3.4) {
-                batteryData.percentage = Math.round((data.batteryVoltage - 3.0) / 1.2 * 100);
-                batteryData.status = 'low';
-            } else {
-                batteryData.percentage = 0;
-                batteryData.status = 'critical';
+    // Reset calibration button
+    document.getElementById('resetCalibrationBtn').addEventListener('click', async () => {
+        if (confirm('Are you sure you want to reset all calibration data? This will require recalibration.')) {
+            try {
+                const response = await fetch('/api/reset-calibration', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    showNotification('Calibration reset successfully!', 'success');
+                    updateCalibrationStatus();
+                } else {
+                    showNotification('Reset failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showNotification('Reset error: ' + error.message, 'error');
             }
-            updateBatteryDisplay();
         }
-        
-        // Update display with current fast data and last known color name
-        updateLiveColorDisplay(fastColorData, colorNameData);
+    });
 
-    } catch (error) {
-        console.error('Fast color API error:', error);
-        showConnectionError('Fast Color', error.message);
+    // Diagnose calibration button
+    document.getElementById('diagnoseCalibrationBtn').addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/diagnose-calibration');
+            const data = await response.json();
+
+            const diagnosis = `Current RGB: (${data.currentRGB?.R || 'N/A'}, ${data.currentRGB?.G || 'N/A'}, ${data.currentRGB?.B || 'N/A'})\n` +
+                            `Target RGB: (${data.targetRGB?.R || 'N/A'}, ${data.targetRGB?.G || 'N/A'}, ${data.targetRGB?.B || 'N/A'})\n` +
+                            `Calibrated: ${data.isCalibrated ? 'Yes' : 'No'}\n` +
+                            `Recommendation: ${data.recommendation || 'N/A'}`;
+
+            alert(diagnosis);
+        } catch (error) {
+            showNotification('Diagnosis failed: ' + error.message, 'error');
+        }
+    });
+}
+
+// Setup sample count slider
+function setupSampleCountSlider() {
+    const slider = document.getElementById('colorSamples');
+    const valueDisplay = document.getElementById('colorSamplesValue');
+
+    if (slider && valueDisplay) {
+        slider.addEventListener('input', function() {
+            valueDisplay.textContent = this.value;
+        });
+
+        slider.addEventListener('change', async function() {
+            try {
+                const response = await fetch(`/api/set-color-samples?samples=${this.value}`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    showNotification(`Sample count updated to ${this.value}`, 'success');
+                } else {
+                    showNotification('Failed to update sample count', 'error');
+                }
+            } catch (error) {
+                showNotification('Error updating sample count: ' + error.message, 'error');
+            }
+        });
     }
 }
 
-async function fetchColorName() {
-    try {
-        const response = await fetch('/api/color-name');
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        colorNameData = data;
-        lastColorNameUpdate = Date.now();
-        
-        // Update display with current color name and last known fast data
-        if (fastColorData) {
-            updateLiveColorDisplay(fastColorData, colorNameData);
-        }
-
-    } catch (error) {
-        console.error('Color name API error:', error);
-        // Don't show error for color names - just continue with last known name
-    }
-}
-
-// Battery monitoring functions
-async function fetchBatteryStatus() {
-    try {
-        const response = await fetch('/api/battery');
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        batteryData = {
-            voltage: data.batteryVoltage,
-            percentage: data.percentage,
-            status: data.status
-        };
-        lastBatteryUpdate = Date.now();
-        
-        updateBatteryDisplay();
-
-    } catch (error) {
-        console.error('Battery API error:', error);
-        // Continue with last known battery data
-    }
-}
-
-function updateBatteryDisplay() {
-    const voltageElement = document.getElementById('batteryVoltage');
-    const iconElement = document.getElementById('batteryIcon');
-    
-    if (!voltageElement || !iconElement) {
-        console.error('Battery display elements not found');
-        return;
-    }
-
-    // Update voltage display
-    voltageElement.textContent = `${batteryData.voltage.toFixed(2)}V`;
-    
-    // Update icon based on status
-    iconElement.className = `fas fa-battery-full ${batteryData.status}`;
-    
-    // Update icon based on percentage
-    if (batteryData.percentage > 75) {
-        iconElement.className = `fas fa-battery-full ${batteryData.status}`;
-    } else if (batteryData.percentage > 50) {
-        iconElement.className = `fas fa-battery-three-quarters ${batteryData.status}`;
-    } else if (batteryData.percentage > 25) {
-        iconElement.className = `fas fa-battery-half ${batteryData.status}`;
-    } else if (batteryData.percentage > 10) {
-        iconElement.className = `fas fa-battery-quarter ${batteryData.status}`;
-    } else {
-        iconElement.className = `fas fa-battery-empty ${batteryData.status}`;
-    }
-}
-
-// Legacy function for backwards compatibility - combines both fast and color name data
-async function fetchLiveColor() {
-    try {
-        const response = await fetch('/api/color');
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        // Convert to new format
-        fastColorData = {
-            r: data.r, g: data.g, b: data.b,
-            x: data.x, y: data.y, z: data.z,
-            ir1: data.ir1, ir2: data.ir2,
-            timestamp: data.timestamp
-        };
-        colorNameData = {
-            colorName: data.colorName,
-            colorNameTimestamp: data.timestamp
-        };
-        
-        updateLiveColorDisplay(fastColorData, colorNameData);
-
-    } catch (error) {
-        console.error('API error:', error);
-        showConnectionError('Connection', error.message);
-    }
-}
-
-function showConnectionError(type, message) {
-    const container = document.getElementById('liveColorDisplay');
-    container.innerHTML = `
-        <div class="placeholder-container">
-            <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
-            <p class="placeholder-text">${type} Error</p>
-            <p class="placeholder-text" style="font-size: 0.9rem;">${message}</p>
-            <p class="placeholder-text" style="font-size: 0.8rem;">Retrying...</p>
-        </div>
+// Notification system
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+        <span>${message}</span>
+        <button class="notification-close" onclick="this.parentElement.remove()">×</button>
     `;
 
-    // Also show error in page title for debugging
-    document.title = `Color Matcher - ${type} Error: ${message}`;
+    // Add to page
+    document.body.appendChild(notification);
+
+    // Auto-remove after 5 seconds
     setTimeout(() => {
-        document.title = 'Color Matcher - Live View';
-    }, 2000);
-}
-
-// Capture current live color
-function captureColor() {
-    if (!liveColor) return;
-    
-    scannedColor = {
-        ...liveColor,
-        id: Date.now()
-    };
-    
-    updateScannedColorDisplay(scannedColor);
-}
-
-// Save scanned color to saved colors
-function saveColor() {
-    if (!scannedColor) return;
-    
-    // Check if color already exists
-    const exists = savedColors.some(c => c.id === scannedColor.id);
-    if (exists) return;
-    
-    // Add to beginning of array
-    savedColors.unshift(scannedColor);
-    
-    // Limit to 20 saved colors
-    if (savedColors.length > 20) {
-        savedColors = savedColors.slice(0, 20);
-    }
-    
-    saveSavedColors();
-    updateSavedColorsDisplay();
-    
-    // Clear scanned color
-    scannedColor = null;
-    updateScannedColorDisplay(null);
-    
-    // Show success feedback
-    showNotification('Color saved successfully!');
-}
-
-// Delete a saved color
-function deleteColor(id) {
-    savedColors = savedColors.filter(color => color.id !== id);
-    saveSavedColors();
-    updateSavedColorsDisplay();
-}
-
-// Show notification
-function showNotification(message) {
-    // Simple alert for now - could be enhanced with a toast notification
-    alert(message);
-}
-
-// Settings Management
-let currentSettings = {}
-
-// Load current settings from ESP32
-async function loadCurrentSettings() {
-    try {
-        const response = await fetch('/api/settings');
-        if (response.ok) {
-            currentSettings = await response.json();
-            updateSettingsUI();
-            console.log('Settings loaded:', currentSettings);
-        } else {
-            console.error('Failed to load settings:', response.status);
+        if (notification.parentElement) {
+            notification.remove();
         }
-    } catch (error) {
-        console.error('Error loading settings:', error);
-    }
+    }, 5000);
 }
 
-// Update the settings UI with current values
-function updateSettingsUI() {
-    // LED & Sensor Settings
-    document.getElementById('ledBrightness').value = currentSettings.ledBrightness || 85;
-    document.getElementById('ledBrightnessValue').textContent = currentSettings.ledBrightness || 85;
-    
-    document.getElementById('integrationTime').value = currentSettings.sensorIntegrationTime || 35;
-    
-    // Color Processing Settings
-    document.getElementById('colorSamples').value = currentSettings.colorReadingSamples || 5;
-    document.getElementById('colorSamplesValue').textContent = currentSettings.colorReadingSamples || 5;
-    
-    document.getElementById('sampleDelay').value = currentSettings.sensorSampleDelay || 2;
-    document.getElementById('sampleDelayValue').textContent = currentSettings.sensorSampleDelay || 2;
-    
-    // IR Compensation Settings
-    const ir1Value = Math.round((currentSettings.irCompensationFactor1 || 0.35) * 100);
-    const ir2Value = Math.round((currentSettings.irCompensationFactor2 || 0.34) * 100);
-    
-    document.getElementById('irFactor1').value = ir1Value;
-    document.getElementById('irFactor1Value').textContent = (ir1Value / 100).toFixed(2);
-    
-    document.getElementById('irFactor2').value = ir2Value;
-    document.getElementById('irFactor2Value').textContent = (ir2Value / 100).toFixed(2);
-    
-    // Debug Settings
-    document.getElementById('debugSensor').checked = currentSettings.debugSensorReadings || false;
-    document.getElementById('debugColors').checked = currentSettings.debugColorMatching || false;
-    
-    // Calibration Mode
-    const calibrationMode = currentSettings.calibrationMode || 'custom';
-    document.getElementById('calibrationMode').value = calibrationMode;
-    
-    // Show/hide quadratic calibration controls based on mode
-    const quadraticSections = document.querySelectorAll('.setting-group h3');
-    let quadraticSection = null;
-    for (let section of quadraticSections) {
-        if (section.textContent.includes('Quadratic Calibration')) {
-            quadraticSection = section.parentElement;
-            break;
-        }
-    }
-    
-    if (quadraticSection) {
-        if (calibrationMode === 'dfrobot') {
-            quadraticSection.style.opacity = '0.5';
-            quadraticSection.style.pointerEvents = 'none';
-        } else {
-            quadraticSection.style.opacity = '1';
-            quadraticSection.style.pointerEvents = 'auto';
-        }
-    }
-}
-
-// Send settings update to ESP32
-async function updateSetting(setting, value) {
-    try {
-        const body = { [setting]: value };
-        const response = await fetch('/api/settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body)
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            console.log('Setting updated:', setting, '=', value);
-            currentSettings[setting] = value; // Update local copy
-        } else {
-            console.error('Failed to update setting:', response.status);
-        }
-    } catch (error) {
-        console.error('Error updating setting:', error);
-    }
-}
-
-// Quick update functions for real-time changes (using GET for simplicity)
-async function updateLedBrightness(value) {
-    try {
-        const response = await fetch(`/api/set-led-brightness?value=${value}`);
-        if (response.ok) {
-            console.log('LED brightness updated to:', value);
-        }
-    } catch (error) {
-        console.error('Error updating LED brightness:', error);
-    }
-}
-
-async function updateIntegrationTime(value) {
-    try {
-        const response = await fetch(`/api/set-integration-time?value=${value}`);
-        if (response.ok) {
-            console.log('Integration time updated to:', value);
-        }
-    } catch (error) {
-        console.error('Error updating integration time:', error);
-    }
-}
-
-async function updateIRCompensation(ir1, ir2) {
-    try {
-        const response = await fetch(`/api/set-ir-factors?ir1=${ir1}&ir2=${ir2}`);
-        if (response.ok) {
-            console.log('IR compensation updated:', ir1, ir2);
-        }
-    } catch (error) {
-        console.error('Error updating IR compensation:', error);
-    }
-}
-
-async function updateColorSamples(value) {
-    try {
-        const response = await fetch(`/api/set-color-samples?value=${value}`);
-        if (response.ok) {
-            console.log('Color samples updated to:', value);
-        }
-    } catch (error) {
-        console.error('Error updating color samples:', error);
-    }
-}
-
-async function updateSampleDelay(value) {
-    try {
-        const response = await fetch(`/api/set-sample-delay?value=${value}`);
-        if (response.ok) {
-            console.log('Sample delay updated to:', value);
-        }
-    } catch (error) {
-        console.error('Error updating sample delay:', error);
-    }
-}
-
-async function updateDebugSettings(sensor, colors) {
-    try {
-        const response = await fetch(`/api/set-debug?sensor=${sensor}&colors=${colors}`);
-        if (response.ok) {
-            console.log('Debug settings updated:', sensor, colors);
-        }
-    } catch (error) {
-        console.error('Error updating debug settings:', error);
-    }
-}
-
-// Apply all current settings (mainly for batch updates of non-real-time settings)
-async function applyAllSettings() {
-    try {
-        // Most settings are now updated in real-time, but we can still provide this for completeness
-        console.log('All real-time settings are already applied!');
-        alert('Settings are applied in real-time! All changes have been saved.');
-    } catch (error) {
-        console.error('Error applying settings:', error);
-        alert('Error applying settings');
-    }
-}
-
-// Reset settings to defaults
-function resetToDefaults() {
-    // This function is replaced by resetToDFRobot and resetToCustom
-    console.warn('resetToDefaults called - this should use specific reset functions');
-}
-
-// Reset to DFRobot library defaults
-async function resetToDFRobot() {
-    if (confirm('Reset to DFRobot library defaults? This uses the standard sensor matrix conversion.')) {
-        try {
-            const response = await fetch('/api/reset-to-dfrobot', { method: 'POST' });
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                console.log('Reset to DFRobot defaults successful');
-                await loadCurrentSettings();
-                await loadCalibrationSettings();
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                alert('Failed to reset: ' + (result.error || 'Unknown error'));
-            }
-        } catch (error) {
-            console.error('Reset to DFRobot failed:', error);
-            alert('Failed to reset to DFRobot defaults');
-        }
-    }
-}
-
-// Reset to custom quadratic calibration defaults
-async function resetToCustom() {
-    if (confirm('Reset to custom quadratic calibration defaults? This uses advanced tunable equations.')) {
-        try {
-            const response = await fetch('/api/reset-to-custom', { method: 'POST' });
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                console.log('Reset to custom defaults successful');
-                await loadCurrentSettings();
-                await loadCalibrationSettings();
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                alert('Failed to reset: ' + (result.error || 'Unknown error'));
-            }
-        } catch (error) {
-            console.error('Reset to custom failed:', error);
-            alert('Failed to reset to custom defaults');
-        }
-    }
-}
-
-// Initialize settings event listeners
-function initializeSettingsListeners() {
-    // LED Brightness - real-time update
-    const ledBrightness = document.getElementById('ledBrightness');
-    const ledBrightnessValue = document.getElementById('ledBrightnessValue');
-    
-    ledBrightness.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        ledBrightnessValue.textContent = value;
-        currentSettings.ledBrightness = value;
-        updateLedBrightness(value); // Real-time update
-    });
-    
-    // Integration Time - immediate update
-    const integrationTime = document.getElementById('integrationTime');
-    integrationTime.addEventListener('change', (e) => {
-        const value = parseInt(e.target.value);
-        currentSettings.sensorIntegrationTime = value;
-        updateIntegrationTime(value); // Real-time update
-    });
-    
-    // Color Samples
-    const colorSamples = document.getElementById('colorSamples');
-    const colorSamplesValue = document.getElementById('colorSamplesValue');
-    
-    colorSamples.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        colorSamplesValue.textContent = value;
-        currentSettings.colorReadingSamples = value;
-        updateColorSamples(value); // Real-time update
-    });
-    
-    // Sample Delay
-    const sampleDelay = document.getElementById('sampleDelay');
-    const sampleDelayValue = document.getElementById('sampleDelayValue');
-    
-    sampleDelay.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        sampleDelayValue.textContent = value;
-        currentSettings.sensorSampleDelay = value;
-        updateSampleDelay(value); // Real-time update
-    });
-    
-    // IR Compensation factors - real-time update
-    const irFactor1 = document.getElementById('irFactor1');
-    const irFactor1Value = document.getElementById('irFactor1Value');
-    const irFactor2 = document.getElementById('irFactor2');
-    const irFactor2Value = document.getElementById('irFactor2Value');
-    
-    irFactor1.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value) / 100;
-        irFactor1Value.textContent = value.toFixed(2);
-        currentSettings.irCompensationFactor1 = value;
-        const ir2 = currentSettings.irCompensationFactor2 || 0.34;
-        updateIRCompensation(value, ir2); // Real-time update
-    });
-    
-    irFactor2.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value) / 100;
-        irFactor2Value.textContent = value.toFixed(2);
-        currentSettings.irCompensationFactor2 = value;
-        const ir1 = currentSettings.irCompensationFactor1 || 0.35;
-        updateIRCompensation(ir1, value); // Real-time update
-    });
-    
-    // Debug checkboxes - real-time update
-    document.getElementById('debugSensor').addEventListener('change', (e) => {
-        currentSettings.debugSensorReadings = e.target.checked;
-        const colorsChecked = document.getElementById('debugColors').checked;
-        updateDebugSettings(e.target.checked, colorsChecked);
-    });
-    
-    document.getElementById('debugColors').addEventListener('change', (e) => {
-        currentSettings.debugColorMatching = e.target.checked;
-        const sensorChecked = document.getElementById('debugSensor').checked;
-        updateDebugSettings(sensorChecked, e.target.checked);
-    });
-    
-    // Calibration control event listeners
-    document.getElementById('applyCalibration').addEventListener('click', updateCalibrationCoefficients);
-    document.getElementById('resetCalibration').addEventListener('click', resetCalibrationToDefaults);
-    document.getElementById('tuneVividWhite').addEventListener('click', tuneForVividWhite);
-    
-    // Action buttons
-    document.getElementById('loadSettings').addEventListener('click', loadCurrentSettings);
-    document.getElementById('saveSettings').addEventListener('click', applyAllSettings);
-    document.getElementById('resetToDFRobot').addEventListener('click', resetToDFRobot);
-    document.getElementById('resetToCustom').addEventListener('click', resetToCustom);
-    
-    // Calibration mode selector
-    document.getElementById('calibrationMode').addEventListener('change', async function() {
-        const mode = this.value;
-        try {
-            const response = await fetch(`/api/set-calibration-mode?mode=${mode}`);
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                console.log(`Calibration mode set to: ${mode}`);
-                // Update UI to show/hide calibration controls based on mode
-                const quadraticSections = document.querySelectorAll('.setting-group h3');
-                let quadraticSection = null;
-                for (let section of quadraticSections) {
-                    if (section.textContent.includes('Quadratic Calibration')) {
-                        quadraticSection = section.parentElement;
-                        break;
-                    }
-                }
-                if (quadraticSection) {
-                    if (mode === 'dfrobot') {
-                        // Hide quadratic calibration controls when using DFRobot mode
-                        quadraticSection.style.opacity = '0.5';
-                        quadraticSection.style.pointerEvents = 'none';
-                    } else {
-                        // Show quadratic calibration controls for custom mode
-                        quadraticSection.style.opacity = '1';
-                        quadraticSection.style.pointerEvents = 'auto';
-                    }
-                }
-            } else {
-                alert('Failed to set calibration mode: ' + (result.error || 'Unknown error'));
-            }
-        } catch (error) {
-            console.error('Failed to set calibration mode:', error);
-            alert('Failed to set calibration mode');
-        }
-    });
-}
-
-// Calibration Settings Management
-let calibrationSettings = {
-    redA: 5.756615248518086e-06,
-    redB: -0.10824971353127427,
-    redC: 663.2283515839658,
-    greenA: 7.700364703908128e-06,
-    greenB: -0.14873455804115546,
-    greenC: 855.288778468652,
-    blueA: -2.7588632792769936e-06,
-    blueB: 0.04959423885676833,
-    blueC: 35.55576869603341
-};
-
-// Load current calibration settings from ESP32
-async function loadCalibrationSettings() {
-    try {
-        const response = await fetch('/api/calibration');
-        if (response.ok) {
-            calibrationSettings = await response.json();
-            updateCalibrationUI();
-            console.log('Calibration settings loaded:', calibrationSettings);
-        } else {
-            console.error('Failed to load calibration settings:', response.status);
-        }
-    } catch (error) {
-        console.error('Error loading calibration settings:', error);
-    }
-}
-
-// Update the calibration UI with current values
-function updateCalibrationUI() {
-    // Update calibration mode if available
-    if (calibrationSettings.calibrationMode) {
-        document.getElementById('calibrationMode').value = calibrationSettings.calibrationMode;
-        
-        // Show/hide quadratic calibration controls
-        const quadraticSections = document.querySelectorAll('.setting-group h3');
-        let quadraticSection = null;
-        for (let section of quadraticSections) {
-            if (section.textContent.includes('Quadratic Calibration')) {
-                quadraticSection = section.parentElement;
-                break;
-            }
-        }
-        
-        if (quadraticSection) {
-            if (calibrationSettings.calibrationMode === 'dfrobot') {
-                quadraticSection.style.opacity = '0.5';
-                quadraticSection.style.pointerEvents = 'none';
-            } else {
-                quadraticSection.style.opacity = '1';
-                quadraticSection.style.pointerEvents = 'auto';
-            }
-        }
-    }
-    
-    // Red channel
-    document.getElementById('redA').value = (calibrationSettings.redA * 1e6).toFixed(2);
-    document.getElementById('redB').value = calibrationSettings.redB.toFixed(6);
-    document.getElementById('redC').value = calibrationSettings.redC.toFixed(1);
-    
-    // Green channel
-    document.getElementById('greenA').value = (calibrationSettings.greenA * 1e6).toFixed(2);
-    document.getElementById('greenB').value = calibrationSettings.greenB.toFixed(6);
-    document.getElementById('greenC').value = calibrationSettings.greenC.toFixed(1);
-    
-    // Blue channel
-    document.getElementById('blueA').value = (calibrationSettings.blueA * 1e6).toFixed(2);
-    document.getElementById('blueB').value = calibrationSettings.blueB.toFixed(6);
-    document.getElementById('blueC').value = calibrationSettings.blueC.toFixed(1);
-}
-
-// Send calibration update to ESP32
-async function updateCalibrationCoefficients() {
-    try {
-        const coefficients = {
-            redA: parseFloat(document.getElementById('redA').value) * 1e-6,
-            redB: parseFloat(document.getElementById('redB').value),
-            redC: parseFloat(document.getElementById('redC').value),
-            greenA: parseFloat(document.getElementById('greenA').value) * 1e-6,
-            greenB: parseFloat(document.getElementById('greenB').value),
-            greenC: parseFloat(document.getElementById('greenC').value),
-            blueA: parseFloat(document.getElementById('blueA').value) * 1e-6,
-            blueB: parseFloat(document.getElementById('blueB').value),
-            blueC: parseFloat(document.getElementById('blueC').value)
-        };
-
-        // Use query parameters for ESP32 compatibility
-        const params = new URLSearchParams();
-        for (const [key, value] of Object.entries(coefficients)) {
-            params.append(key, value);
-        }
-
-        const response = await fetch(`/api/calibration?${params.toString()}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            console.log('Calibration updated:', result);
-            calibrationSettings = coefficients;
-            showNotification('Calibration coefficients updated successfully!');
-        } else {
-            console.error('Failed to update calibration:', response.status);
-            showNotification('Failed to update calibration coefficients');
-        }
-    } catch (error) {
-        console.error('Error updating calibration:', error);
-        showNotification('Error updating calibration coefficients');
-    }
-}
-
-// Quick tuning for specific target colors
-async function tuneForVividWhite() {
-    try {
-        const response = await fetch('/api/tune-vivid-white', { method: 'POST' });
-        if (response.ok) {
-            const result = await response.json();
-            console.log('Tuned for Vivid White:', result);
-            calibrationSettings = result.calibration;
-            updateCalibrationUI();
-            showNotification('Tuned for Vivid White (247,248,244)');
-        } else {
-            console.error('Failed to tune for Vivid White:', response.status);
-            showNotification('Failed to tune for Vivid White');
-        }
-    } catch (error) {
-        console.error('Error tuning for Vivid White:', error);
-        showNotification('Error tuning for Vivid White');
-    }
-}
-
-// Reset calibration to defaults
-function resetCalibrationToDefaults() {
-    if (confirm('Reset calibration coefficients to factory defaults?')) {
-        calibrationSettings = {
-            redA: 5.756615248518086e-06,
-            redB: -0.10824971353127427,
-            redC: 663.2283515839658,
-            greenA: 7.700364703908128e-06,
-            greenB: -0.14873455804115546,
-            greenC: 855.288778468652,
-            blueA: -2.7588632792769936e-06,
-            blueB: 0.04959423885676833,
-            blueC: 35.55576869603341
-        };
-        updateCalibrationUI();
-        updateCalibrationCoefficients();
-    }
-}
-
-// Initialize application
+// Initialize TCS3430 Calibration System
 function init() {
-    // Load saved colors
-    loadSavedColors();
-    
+    console.log('Initializing TCS3430 Calibration System...');
+
     // Set up capture button
     const captureBtn = document.getElementById('captureBtn');
-    captureBtn.addEventListener('click', captureColor);
-    captureBtn.disabled = true; // Initially disabled until first color is fetched
-    
+    if (captureBtn) {
+        captureBtn.addEventListener('click', captureColor);
+        captureBtn.disabled = true; // Initially disabled until first color is fetched
+    }
+
+    // Set up calibration handlers
+    setupCalibrationHandlers();
+
+    // Set up optimization handlers
+    setupOptimizationHandlers();
+
+    // Set up utility handlers
+    setupUtilityHandlers();
+
+    // Set up sample count slider
+    setupSampleCountSlider();
+
     // Start fetching data immediately
     fetchFastColor();
-    fetchColorName();
     fetchBatteryStatus();
-    
+
     // Set up fast polling for sensor data (75ms for very smooth real-time updates)
     setInterval(fetchFastColor, 75);
-    
-    // Set up slower polling for color names (2 seconds - matches ESP32 internal lookup interval)
-    setInterval(fetchColorName, 2000);
-    
+
     // Set up battery monitoring (update every 10 seconds)
     setInterval(fetchBatteryStatus, 10000);
 
-    // Load current settings
-    loadCurrentSettings();
+    // Update calibration status
+    updateCalibrationStatus();
 
-    // Load calibration settings
-    loadCalibrationSettings();
-
-    // Initialize settings listeners
-    initializeSettingsListeners();
+    console.log('TCS3430 Calibration System initialized successfully!');
 }
 
 // Start the application when DOM is loaded

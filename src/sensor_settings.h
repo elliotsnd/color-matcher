@@ -81,7 +81,7 @@
 #define SENSOR_INTEGRATION_TIME 0x40  // ⚙️ TCS3430 integration time - 181ms for higher precision
 #define SENSOR_SATURATION_THRESHOLD 65000  // 🚨 Saturation detection limit (default: 65000)
 #define LED_PIN 5                          // 💡 LED pin number (default: 5)
-#define LED_BRIGHTNESS 75  // 🔆 LED brightness 0-255 - reduced to prevent saturation artifacts
+#define LED_BRIGHTNESS 220  // 🔆 LED brightness 0-255 - increased for low-light conditions
 
 // Color Calibration Fine-Tuning
 #define IR_COMPENSATION_FACTOR_1 \
