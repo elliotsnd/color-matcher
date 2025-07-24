@@ -115,10 +115,10 @@ float SwatchTesting::calculateDeltaE(const float lab1[3], const float lab2[3]) {
     return sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
 }
 
-void SwatchTesting::rgbToLab(uint8_t r, uint8_t g, uint8_t b, float lab[3]) {
+void SwatchTesting::rgbToLab(uint8_t red, uint8_t green, uint8_t blue, float lab[3]) {
     // Convert RGB to XYZ first
     float xyz[3];
-    rgbToXyz(r, g, b, xyz);
+    rgbToXyz(red, green, blue, xyz);
     
     // Convert XYZ to LAB
     xyzToLabArray(xyz, lab);

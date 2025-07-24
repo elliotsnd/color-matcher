@@ -6,7 +6,7 @@
 #include "TCS3430AutoGain.h"
 
 // Auto-gain list (high sensitivity first: high gain, long integration)
-const TCS3430AutoGain::agc_t TCS3430AutoGain::agc_list[] = {
+const TCS3430AutoGain::AgcT TCS3430AutoGain::AGC_LIST[] = {
     {X64, 0xFF, 0x1000, 0xFFFF},  // 64x, 256 cycles (~711 ms)
     {X64, 0x8F,  0x800, 0x7FFF},  // 64x, 144 cycles
     {X64, 0x3F,  0x200, 0x1FFF},  // 64x, 64 cycles
@@ -48,22 +48,22 @@ TCS3430AutoGain::Mode TCS3430AutoGain::mode(Mode m) {
     bool aen = en & 0x02;
     bool wen = en & 0x08;
 
-    if (m == Undefined) {
-        if (!pon) return Sleep;
-        if (!aen) return Idle;
-        if (wen) return WaitALS;
+    if (m == UNDEFINED) {
+        if (!pon) return SLEEP;
+        if (!aen) return IDLE;
+        if (wen) return WAIT_ALS;
         return ALS;
     }
 
     switch (m) {
-        case Sleep: en &= ~0x01; break;
-        case Idle: en = (en | 0x01) & ~0x0A; break;
+        case SLEEP: en &= ~0x01; break;
+        case IDLE: en = (en | 0x01) & ~0x0A; break;
         case ALS: en = (en | 0x03) & ~0x08; break;
-        case WaitALS: en |= 0x0B; break;
+        case WAIT_ALS: en |= 0x0B; break;
         default: break;
     }
     write8(TCS3430_ENABLE, en);
-    return mode(Undefined);
+    return mode(UNDEFINED);
 }
 
 float TCS3430AutoGain::integrationTime(float ms) {
@@ -104,8 +104,8 @@ float TCS3430AutoGain::gain(Gain g) {
 
 bool TCS3430AutoGain::autoGain(uint16_t minYCount, Gain initGain) {
     gain(initGain);  // Set initial gain
-    for (uint8_t i = 0; i < agc_list_size; ++i) {
-        const agc_t &ag = agc_list[i];
+    for (uint8_t i = 0; i < AGC_LIST_SIZE; ++i) {
+        const AgcT &ag = AGC_LIST[i];
         gain(ag.g);
         write8(TCS3430_ATIME, ag.atime);
         mode(ALS);
@@ -181,7 +181,7 @@ float TCS3430AutoGain::wait(float ms, bool enterWaitALS) {
     uint8_t cfg0 = read8(TCS3430_CFG0);
     if (wlong) cfg0 |= 0x04; else cfg0 &= ~0x04;
     write8(TCS3430_CFG0, cfg0);
-    if (enterWaitALS) mode(WaitALS);
+    if (enterWaitALS) mode(WAIT_ALS);
     return wait(-1.0f);
 }
 

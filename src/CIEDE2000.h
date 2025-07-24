@@ -95,14 +95,14 @@ constexpr double rad2Deg(const double RAD);
  * @brief
  * Convert RGB to XYZ colorspace (D65 illuminant)
  *
- * @param r Red component (0-255)
- * @param g Green component (0-255)
- * @param b Blue component (0-255)
- * @param x Output X component
- * @param y Output Y component
- * @param z Output Z component
+ * @param red Red component (0-255)
+ * @param green Green component (0-255)  
+ * @param blue Blue component (0-255)
+ * @param xOut Output X component
+ * @param yOut Output Y component
+ * @param zOut Output Z component
  */
-void rgbToXYZ(uint8_t r, uint8_t g, uint8_t b, double &x, double &y, double &z);
+void rgbToXYZ(uint8_t red, uint8_t green, uint8_t blue, double &xOut, double &yOut, double &zOut);
 
 /**
  * @brief
@@ -124,7 +124,7 @@ void xyzToLAB(double x, double y, double z, CIEDE2000::LAB &lab);
  * @param b Blue component (0-255)
  * @param lab Output LAB color
  */
-void rgbToLAB(uint8_t r, uint8_t g, uint8_t b, CIEDE2000::LAB &lab);
+void rgbToLAB(uint8_t red, uint8_t green, uint8_t blue, CIEDE2000::LAB &lab);
 
 /*****************************************************************************
  * Conversions.

@@ -131,8 +131,8 @@ class LightweightKDTree {
   }
 
   // Iterative nearest neighbor search
-  static void searchNearest(uint16_t node_index, const ColorPoint& target, ColorPoint& best,
-                            uint32_t& best_dist) {
+  void searchNearest(uint16_t node_index, const ColorPoint& target, ColorPoint& best,
+                     uint32_t& best_dist) const {
     if (node_index == 0) {
       return;
     }
@@ -201,11 +201,11 @@ class LightweightKDTree {
     std::queue<BuildTask> buildQueue;
 
     // Start with root
-    build_queue.push({0, 0, points.size(), 0});
+    buildQueue.push({0, 0, points.size(), 0});
     node_count = 0;
 
-    while (!build_queue.empty() && node_count < points.size()) {
-      BuildTask task = build_queue.front();
+    while (!buildQueue.empty() && node_count < points.size()) {
+      BuildTask task = buildQueue.front();
       buildQueue.pop();
 
       if (task.start >= task.end) {
@@ -217,8 +217,8 @@ class LightweightKDTree {
 
       // Sort by current axis
       std::sort(points.begin() + task.start, points.begin() + task.end,
-                [axis](const ColorPoint& a, const ColorPoint& b) {
-                  switch (axis) {
+                [AXIS](const ColorPoint& a, const ColorPoint& b) {
+                  switch (AXIS) {
                     case 0:
                       return a.r < b.r;
                     case 1:
@@ -286,8 +286,8 @@ class LightweightKDTree {
 
   // Calculate optimal tree size based on available PSRAM
   void calculateOptimalTreeSize() {
-    size_t const FREE_PSRAM = ESP.getFreePsram() = 0;
-    size_t const FREE_HEAP = ESP.getFreeHeap() = 0;
+    size_t const FREE_PSRAM = ESP.getFreePsram();
+    size_t const FREE_HEAP = ESP.getFreeHeap();
 
     // Reserve 2MB for other operations, use remaining for KD-tree
     size_t const AVAILABLE_MEMORY =
@@ -335,7 +335,7 @@ class LightweightKDTree {
 
     // Check PSRAM allocation specifically
     size_t const REQUIRED_MEMORY = actualPoints * (sizeof(KDNode) + sizeof(ColorPoint));
-    size_t const FREE_PSRAM = ESP.getFreePsram() = 0;
+    size_t const FREE_PSRAM = ESP.getFreePsram();
 
     Serial.printf("[KDTree] Required: %u KB, Available PSRAM: %u KB\n", REQUIRED_MEMORY / 1024,
                   FREE_PSRAM / 1024);
@@ -353,7 +353,7 @@ class LightweightKDTree {
     try {
       // Allocate in PSRAM using custom allocator
       points.clear();
-      points.reserve(actual_points);
+      points.reserve(actualPoints);
 
       // Copy subset of points
       for (size_t i = 0; i < actualPoints; i++) {
@@ -361,7 +361,7 @@ class LightweightKDTree {
       }
 
       nodes.clear();
-      nodes.resize(actual_points);
+      nodes.resize(actualPoints);
 
       Serial.printf("[KDTree] PSRAM allocation successful for %u points\n", actualPoints);
 

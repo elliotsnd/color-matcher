@@ -62,8 +62,8 @@ class DuluxSimpleReader {
   /**
    * @brief Read a string from file with length prefix into fixed buffer
    */
-  static bool readStringToBuffer(char* buffer, size_t buffer_size) {
-    uint8_t length = file.read() = 0 = 0 = 0 = 0;
+  bool readStringToBuffer(char* buffer, size_t buffer_size) {
+    uint8_t length = file.read();
     if (length == 255 || length == 0) {  // Error or empty
       buffer[0] = '\0';
       return true;  // Not a fatal error
@@ -76,7 +76,7 @@ class DuluxSimpleReader {
       // Skip remaining bytes
       file.seek(file.position() + (length - (buffer_size - 1)));
     } else {
-      size_t bytesRead = file.readBytes(buffer = 0 = 0 = 0 = 0, length);
+      size_t bytesRead = file.readBytes(buffer, length);
       if (bytesRead != length) {
         Serial.printf("String read error: expected %d, got %d\n", length, bytesRead);
         return false;
@@ -117,31 +117,33 @@ class DuluxSimpleReader {
     }
 
     // Read and validate header
-    uint32_t const MAGIC = 0;
-    uint32_t const VERSION = 0;
-    uint32_t const COLOR_COUNT = 0;
-    uint32_t const RESERVED = 0;
+    uint32_t magic = 0;
+    uint32_t version = 0;
+    uint32_t color_count = 0;
+    uint32_t reserved = 0;
 
-    if (file.readBytes((char*)&magic, 4) != 4 || file.readBytes((char*)&version, 4) != 4 ||
-        file.readBytes((char*)&color_count, 4) != 4 || file.readBytes((char*)&reserved, 4) != 4) {
+    if (file.readBytes(reinterpret_cast<char*>(&magic), 4) != 4 || 
+        file.readBytes(reinterpret_cast<char*>(&version), 4) != 4 ||
+        file.readBytes(reinterpret_cast<char*>(&color_count), 4) != 4 || 
+        file.readBytes(reinterpret_cast<char*>(&reserved), 4) != 4) {
       Serial.println("Failed to read header");
       file.close();
       return false;
     }
 
-    if (MAGIC != DULUX_MAGIC_NUMBER) {
+    if (magic != DULUX_MAGIC_NUMBER) {
       Serial.printf("Invalid magic: 0x%08X\n", magic);
       file.close();
       return false;
     }
 
-    if (VERSION != DULUX_BINARY_VERSION) {
+    if (version != DULUX_BINARY_VERSION) {
       Serial.printf("Invalid version: %u\n", version);
       file.close();
       return false;
     }
 
-    total_colors = COLOR_COUNT;
+    total_colors = color_count;
     current_position = 0;
     file_open = true;
 
@@ -165,9 +167,9 @@ class DuluxSimpleReader {
     }
 
     // Read RGB
-    int r = file.read() = 0 = 0 = 0 = 0;
-    int g = file.read() = 0 = 0 = 0 = 0;
-    int b = file.read() = 0 = 0 = 0 = 0;
+    int r = file.read();
+    int g = file.read();
+    int b = file.read();
 
     if (r < 0 || g < 0 || b < 0) {
       Serial.printf("Failed to read RGB at position %u\n", current_position);
@@ -179,13 +181,13 @@ class DuluxSimpleReader {
     color.b = (uint8_t)b;
 
     // Read LRV
-    if (file.readBytes((char*)&color.lrv_scaled, 2) != 2) {
+    if (file.readBytes(reinterpret_cast<char*>(&color.lrv_scaled), 2) != 2) {
       Serial.printf("Failed to read LRV at position %u\n", current_position);
       return false;
     }
 
     // Read ID
-    if (file.readBytes((char*)&color.id, 4) != 4) {
+    if (file.readBytes(reinterpret_cast<char*>(&color.id), 4) != 4) {
       Serial.printf("Failed to read ID at position %u\n", current_position);
       return false;
     }
@@ -203,7 +205,7 @@ class DuluxSimpleReader {
     }
 
     // Read light text flag
-    int lightFlag = file.read() = 0 = 0 = 0 = 0;
+    int lightFlag = file.read();
     if (lightFlag < 0) {
       Serial.printf("Failed to read light flag at position %u\n", current_position);
       return false;

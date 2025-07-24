@@ -98,7 +98,7 @@ class DuluxBinaryReader {
     }
 
     // Use heap allocation instead of PSRAM for temporary buffer
-    char* buffer = (char*)malloc(length + 1);
+    char* buffer = static_cast<char*>(malloc(length + 1));
     if (!buffer) {
       Serial.printf("Failed to allocate %d bytes for string buffer\n", length + 1);
       return String();
@@ -154,7 +154,7 @@ class DuluxBinaryReader {
 
     // Read and validate header
     DuluxBinaryHeader header;
-    if (file.readBytes((char*)&header, sizeof(header)) != sizeof(header)) {
+    if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header)) {
       Serial.println("Failed to read binary header");
       file.close();
       return false;
@@ -235,7 +235,7 @@ class DuluxBinaryReader {
       color.b = (uint8_t)b_val;
 
       // Read LRV (scaled) with validation
-      if (file.readBytes((char*)&color.lrv_scaled, sizeof(color.lrv_scaled)) !=
+      if (file.readBytes(reinterpret_cast<char*>(&color.lrv_scaled), sizeof(color.lrv_scaled)) !=
           sizeof(color.lrv_scaled)) {
         Serial.printf("Failed to read LRV for color %u\n", i);
         delete[] colors;
@@ -245,7 +245,7 @@ class DuluxBinaryReader {
       }
 
       // Read ID with validation
-      if (file.readBytes((char*)&color.id, sizeof(color.id)) != sizeof(color.id)) {
+      if (file.readBytes(reinterpret_cast<char*>(&color.id), sizeof(color.id)) != sizeof(color.id)) {
         Serial.printf("Failed to read ID for color %u\n", i);
         delete[] colors;
         colors = nullptr;

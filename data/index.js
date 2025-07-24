@@ -91,7 +91,7 @@ function setupCalibrationHandlers() {
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
         
         try {
-            const response = await fetch('/api/calibrate-black', { method: 'POST' });
+            const response = await fetch('/api/tune-black', { method: 'POST' });
             const data = await response.json();
             
             if (data.status === 'success') {

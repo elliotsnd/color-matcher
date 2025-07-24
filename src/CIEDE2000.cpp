@@ -8,19 +8,21 @@
 
 #include <cmath>
 
+namespace CIEDE2000 {
+
 /*****************************************************************************
  * Conversions.
  *****************************************************************************/
 
-constexpr double CIEDE2000::deg2Rad(const double deg) {
+constexpr double deg2Rad(const double deg) {
   return (deg * (M_PI / 180.0));
 }
 
-constexpr double CIEDE2000::rad2Deg(const double rad) {
+constexpr double rad2Deg(const double rad) {
   return ((180.0 / M_PI) * rad);
 }
 
-double CIEDE2000::CIEDE2000(const LAB &lab1, const LAB &lab2) {
+double ciedE2000(const LAB &lab1, const LAB &lab2) {
   /*
    * "For these and all other numerical/graphical 􏰀delta E00 values
    * reported in this article, we set the parametric weighting factors
@@ -146,38 +148,41 @@ double CIEDE2000::CIEDE2000(const LAB &lab1, const LAB &lab2) {
   return (deltaE);
 }
 
+} // namespace CIEDE2000
+
 /*****************************************************************************
  * RGB to LAB conversion functions for ESP32 color matching
  *****************************************************************************/
 
-void rgbToXYZ(uint8_t r, uint8_t g, uint8_t b, double &x, double &y, double &z) {
-  // Normalize RGB values to 0-1 range
-  double rNorm = r / 255.0;
-  double gNorm = g / 255.0;
-  double bNorm = b / 255.0;
-
-  // Apply gamma correction (sRGB)
-  auto gammaCorrect = [](double c) {
-    if (c > 0.04045) {
-      return pow((c + 0.055) / 1.055, 2.4);
+void rgbToXYZ(uint8_t red, uint8_t green, uint8_t blue, double &xOut, double &yOut, double &zOut) {
+  // Gamma correction function
+  auto gammaCorrect = [](double val) -> double {
+    if (val > 0.04045) {
+      return pow((val + 0.055) / 1.055, 2.4);
     } else {
-      return c / 12.92;
+      return val / 12.92;
     }
   };
 
-  rNorm = gammaCorrect(rNorm);
-  gNorm = gammaCorrect(gNorm);
-  bNorm = gammaCorrect(bNorm);
+  // Normalize to 0-1 range using improved variable names
+  const double RED_NORMALIZED = red / 255.0;
+  const double GREEN_NORMALIZED = green / 255.0;
+  const double BLUE_NORMALIZED = blue / 255.0;
+
+  // Apply gamma correction
+  const double RED_GAMMA_CORRECTED = gammaCorrect(RED_NORMALIZED);
+  const double GREEN_GAMMA_CORRECTED = gammaCorrect(GREEN_NORMALIZED);
+  const double BLUE_GAMMA_CORRECTED = gammaCorrect(BLUE_NORMALIZED);
 
   // Convert to XYZ using sRGB matrix (D65 illuminant)
-  x = rNorm * 0.4124564 + gNorm * 0.3575761 + bNorm * 0.1804375;
-  y = rNorm * 0.2126729 + gNorm * 0.7151522 + bNorm * 0.0721750;
-  z = rNorm * 0.0193339 + gNorm * 0.1191920 + bNorm * 0.9503041;
+  xOut = RED_GAMMA_CORRECTED * 0.4124564 + GREEN_GAMMA_CORRECTED * 0.3575761 + BLUE_GAMMA_CORRECTED * 0.1804375;
+  yOut = RED_GAMMA_CORRECTED * 0.2126729 + GREEN_GAMMA_CORRECTED * 0.7151522 + BLUE_GAMMA_CORRECTED * 0.0721750;
+  zOut = RED_GAMMA_CORRECTED * 0.0193339 + GREEN_GAMMA_CORRECTED * 0.1191920 + BLUE_GAMMA_CORRECTED * 0.9503041;
 
   // Scale by D65 illuminant
-  x *= 100.0;
-  y *= 100.0;
-  z *= 100.0;
+  xOut *= 100.0;
+  yOut *= 100.0;
+  zOut *= 100.0;
 }
 
 void xyzToLAB(double x, double y, double z, CIEDE2000::LAB &lab) {
@@ -187,22 +192,23 @@ void xyzToLAB(double x, double y, double z, CIEDE2000::LAB &lab) {
   const double Zn = 108.883;
 
   // Normalize by illuminant
-  double xr = x / Xn;
-  double yr = y / Yn;
-  double zr = z / Zn;
+  x /= Xn;
+  y /= Yn;
+  z /= Zn;
 
-  // Apply LAB transformation function
-  auto labTransform = [](double t) {
-    if (t > 0.008856) {
-      return pow(t, 1.0 / 3.0);
+  // Apply CIE standard function
+  auto f = [](double t) -> double {
+    const double delta = 6.0 / 29.0;
+    if (t > pow(delta, 3)) {
+      return cbrt(t);
     } else {
-      return (7.787 * t) + (16.0 / 116.0);
+      return (t / (3.0 * delta * delta)) + (4.0 / 29.0);
     }
   };
 
-  double fx = labTransform(xr);
-  double fy = labTransform(yr);
-  double fz = labTransform(zr);
+  double fx = f(x);
+  double fy = f(y);
+  double fz = f(z);
 
   // Calculate LAB values
   lab.l = (116.0 * fy) - 16.0;
@@ -210,10 +216,12 @@ void xyzToLAB(double x, double y, double z, CIEDE2000::LAB &lab) {
   lab.b = 200.0 * (fy - fz);
 }
 
-void rgbToLAB(uint8_t r, uint8_t g, uint8_t b, CIEDE2000::LAB &lab) {
-  double x, y, z;
-  rgbToXYZ(r, g, b, x, y, z);
-  xyzToLAB(x, y, z, lab);
+void rgbToLAB(uint8_t red, uint8_t green, uint8_t blue, CIEDE2000::LAB &lab) {
+  double xValue = 0.0;
+  double yValue = 0.0; 
+  double zValue = 0.0;
+  rgbToXYZ(red, green, blue, xValue, yValue, zValue);
+  xyzToLAB(xValue, yValue, zValue, lab);
 }
 
 /*****************************************************************************

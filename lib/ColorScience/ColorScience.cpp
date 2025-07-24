@@ -24,7 +24,7 @@ ColorScience::RGBColor ColorScience::xyzToRGB(const XYZColor& xyz, const IRData&
     
     // Step 4: Select conversion matrix
     const float* matrix = calibData.useCustomMatrix ? calibData.customMatrix :
-                         (calibData.useAdobeRGB ? XYZ_TO_ADOBE_RGB_MATRIX : XYZ_TO_sRGB_MATRIX);
+                         (calibData.useAdobeRGB ? XYZ_TO_ADOBE_RGB_MATRIX : XYZ_TO_S_RGB_MATRIX);
     
     // Step 5: Apply matrix transformation
     float xyzArray[3] = {compensatedXYZ.X, compensatedXYZ.Y, compensatedXYZ.Z};
