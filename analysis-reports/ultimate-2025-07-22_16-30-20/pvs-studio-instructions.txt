@@ -1,1 +1,0 @@
-Use PVS-Studio VS Code extension for GUI analysis
