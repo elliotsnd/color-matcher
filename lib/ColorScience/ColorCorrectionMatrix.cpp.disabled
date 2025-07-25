@@ -1,0 +1,178 @@
+/*!
+ * @file ColorCorrectionMatrix.cpp
+ * @brief Professional Color Correction Matrix Implementation
+ * @copyright Professional Color Calibration System
+ * @version 2.0
+ * @date 2024
+ */
+
+#include "ColorCorrectionMatrix.h"
+#include <cmath>
+
+namespace ColorCalibration {
+
+// Global CCM manager instance
+ColorCorrectionMatrixManager ccmManager;
+
+bool ColorCorrectionMatrixManager::generateColorCorrectionMatrix(const EnhancedCalibrationData& calibData) {
+    // Validate that we have complete 4-point calibration data
+    if (!calibData.status.is4PointCalibrated()) {
+        return false;
+    }
+    
+    // Validate ground truth colors
+    if (!groundTruth.validateGroundTruth()) {
+        return false;
+    }
+    
+    // 1. Create source matrix from measured sensor XYZ values (White, Blue, Yellow)
+    // We subtract the black reference to make the data zero-based
+    Matrix3x3 sourceMatrix;
+    
+    // White reference (column 0)
+    sourceMatrix.m[0][0] = calibData.whiteReference.raw.X - calibData.blackReference.raw.X;
+    sourceMatrix.m[1][0] = calibData.whiteReference.raw.Y - calibData.blackReference.raw.Y;
+    sourceMatrix.m[2][0] = calibData.whiteReference.raw.Z - calibData.blackReference.raw.Z;
+    
+    // Blue reference (column 1)
+    sourceMatrix.m[0][1] = calibData.blueReference.raw.X - calibData.blackReference.raw.X;
+    sourceMatrix.m[1][1] = calibData.blueReference.raw.Y - calibData.blackReference.raw.Y;
+    sourceMatrix.m[2][1] = calibData.blueReference.raw.Z - calibData.blackReference.raw.Z;
+    
+    // Yellow reference (column 2)
+    sourceMatrix.m[0][2] = calibData.yellowReference.raw.X - calibData.blackReference.raw.X;
+    sourceMatrix.m[1][2] = calibData.yellowReference.raw.Y - calibData.blackReference.raw.Y;
+    sourceMatrix.m[2][2] = calibData.yellowReference.raw.Z - calibData.blackReference.raw.Z;
+    
+    // 2. Create target matrix from ground truth sRGB values
+    Matrix3x3 targetMatrix;
+    
+    // White target (column 0)
+    targetMatrix.m[0][0] = groundTruth.white.r;
+    targetMatrix.m[1][0] = groundTruth.white.g;
+    targetMatrix.m[2][0] = groundTruth.white.b;
+    
+    // Blue target (column 1)
+    targetMatrix.m[0][1] = groundTruth.blue.r;
+    targetMatrix.m[1][1] = groundTruth.blue.g;
+    targetMatrix.m[2][1] = groundTruth.blue.b;
+    
+    // Yellow target (column 2)
+    targetMatrix.m[0][2] = groundTruth.yellow.r;
+    targetMatrix.m[1][2] = groundTruth.yellow.g;
+    targetMatrix.m[2][2] = groundTruth.yellow.b;
+    
+    // 3. Solve for the Color Correction Matrix (CCM)
+    // CCM * sourceMatrix = targetMatrix
+    // CCM = targetMatrix * inverse(sourceMatrix)
+    Matrix3x3 sourceInverse = sourceMatrix.inverse();
+    
+    // Check if matrix inversion was successful
+    if (abs(sourceMatrix.determinant()) < 1e-9f) {
+        calibrationQuality_ = 0.0f;
+        return false;
+    }
+    
+    // Matrix multiplication: colorCorrectionMatrix = targetMatrix * sourceInverse
+    colorCorrectionMatrix_ = targetMatrix.multiply(sourceInverse);
+    
+    // 4. Calculate calibration quality based on matrix conditioning
+    float det = sourceMatrix.determinant();
+    calibrationQuality_ = std::min(100.0f, abs(det) * 10.0f); // Simple quality metric
+    
+    isCCMCalibrated_ = true;
+    
+    return true;
+}
+
+bool ColorCorrectionMatrixManager::applyColorCorrectionMatrix(uint16_t X, uint16_t Y, uint16_t Z, 
+                                                             uint8_t& R, uint8_t& G, uint8_t& B) const {
+    if (!isCCMCalibrated_) {
+        // Fallback to simple mapping if not calibrated
+        R = constrain(X / 256, 0, 255);
+        G = constrain(Y / 256, 0, 255);
+        B = constrain(Z / 256, 0, 255);
+        return false;
+    }
+    
+    // 1. Apply black-level compensation (convert to normalized float values)
+    float compensatedX = (float)X * (1.0f / 65535.0f) - 0.0f; // Assuming black is near 0
+    float compensatedY = (float)Y * (1.0f / 65535.0f) - 0.0f;
+    float compensatedZ = (float)Z * (1.0f / 65535.0f) - 0.0f;
+    
+    // 2. Apply the Color Correction Matrix
+    float r_f, g_f, b_f;
+    colorCorrectionMatrix_.transform(compensatedX, compensatedY, compensatedZ, r_f, g_f, b_f);
+    
+    // 3. Scale back to 8-bit range and constrain
+    R = static_cast<uint8_t>(constrain(r_f, 0, 255));
+    G = static_cast<uint8_t>(constrain(g_f, 0, 255));
+    B = static_cast<uint8_t>(constrain(b_f, 0, 255));
+    
+    return true;
+}
+
+float ColorCorrectionMatrixManager::validateCCM(const EnhancedCalibrationData& calibData) const {
+    if (!isCCMCalibrated_) {
+        return 0.0f;
+    }
+    
+    float totalError = 0.0f;
+    int validationCount = 0;
+    
+    // Test white reference
+    uint8_t testR, testG, testB;
+    uint16_t whiteX = static_cast<uint16_t>(calibData.whiteReference.raw.X * 65535.0f);
+    uint16_t whiteY = static_cast<uint16_t>(calibData.whiteReference.raw.Y * 65535.0f);
+    uint16_t whiteZ = static_cast<uint16_t>(calibData.whiteReference.raw.Z * 65535.0f);
+    
+    if (applyColorCorrectionMatrix(whiteX, whiteY, whiteZ, testR, testG, testB)) {
+        float errorR = abs(testR - groundTruth.white.r);
+        float errorG = abs(testG - groundTruth.white.g);
+        float errorB = abs(testB - groundTruth.white.b);
+        totalError += (errorR + errorG + errorB) / 3.0f;
+        validationCount++;
+    }
+    
+    // Test blue reference (direct access via inheritance)
+    uint16_t blueX = static_cast<uint16_t>(calibData.blueReference.raw.X * 65535.0f);
+    uint16_t blueY = static_cast<uint16_t>(calibData.blueReference.raw.Y * 65535.0f);
+    uint16_t blueZ = static_cast<uint16_t>(calibData.blueReference.raw.Z * 65535.0f);
+    
+    if (applyColorCorrectionMatrix(blueX, blueY, blueZ, testR, testG, testB)) {
+        float errorR = abs(testR - groundTruth.blue.r);
+        float errorG = abs(testG - groundTruth.blue.g);
+        float errorB = abs(testB - groundTruth.blue.b);
+        totalError += (errorR + errorG + errorB) / 3.0f;
+        validationCount++;
+    }
+    
+    // Test yellow reference (direct access via inheritance)
+    uint16_t yellowX = static_cast<uint16_t>(calibData.yellowReference.raw.X * 65535.0f);
+    uint16_t yellowY = static_cast<uint16_t>(calibData.yellowReference.raw.Y * 65535.0f);
+    uint16_t yellowZ = static_cast<uint16_t>(calibData.yellowReference.raw.Z * 65535.0f);
+    
+    if (applyColorCorrectionMatrix(yellowX, yellowY, yellowZ, testR, testG, testB)) {
+        float errorR = abs(testR - groundTruth.yellow.r);
+        float errorG = abs(testG - groundTruth.yellow.g);
+        float errorB = abs(testB - groundTruth.yellow.b);
+        totalError += (errorR + errorG + errorB) / 3.0f;
+        validationCount++;
+    }
+    
+    if (validationCount == 0) {
+        return 0.0f;
+    }
+    
+    float averageError = totalError / validationCount;
+    float accuracy = std::max(0.0f, 100.0f - averageError * 2.0f); // Convert error to accuracy percentage
+    
+    return accuracy;
+}
+
+// Professional RGB conversion using Color Correction Matrix
+void getRgbFromXyzCCM(uint16_t X, uint16_t Y, uint16_t Z, uint8_t& R, uint8_t& G, uint8_t& B) {
+    ccmManager.applyColorCorrectionMatrix(X, Y, Z, R, G, B);
+}
+
+} // namespace ColorCalibration

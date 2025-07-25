@@ -4,90 +4,92 @@
  */
 
 #include "TCS3430AutoGain.h"
+#include <functional>
+#include <vector>
 
 // Auto-gain list (high sensitivity first: high gain, long integration)
-const TCS3430AutoGain::AgcT TCS3430AutoGain::AGC_LIST[] = {
-    {X64, 0xFF, 0x1000, 0xFFFF},  // 64x, 256 cycles (~711 ms)
-    {X64, 0x8F,  0x800, 0x7FFF},  // 64x, 144 cycles
-    {X64, 0x3F,  0x200, 0x1FFF},  // 64x, 64 cycles
-    {X64, 0x0F,   0x80, 0x07FF},  // 64x, 16 cycles
-    {X16, 0xFF,  0x400, 0x3FFF},  // 16x, 256 cycles
-    {X16, 0x8F,  0x200, 0x1FFF},
-    {X16, 0x3F,   0x80, 0x07FF},
-    {X16, 0x0F,   0x20, 0x01FF},
-    {X04, 0xFF,  0x100, 0x0FFF},  // 4x, 256 cycles
-    {X04, 0x8F,   0x80, 0x07FF},
-    {X04, 0x3F,   0x20, 0x01FF},
-    {X04, 0x0F,    0x8, 0x007F},
-    {X01, 0xFF,   0x40, 0x03FF},  // 1x, 256 cycles
-    {X01, 0x8F,   0x20, 0x01FF},
-    {X01, 0x3F,    0x8, 0x007F},
-    {X01, 0x0F,    0x1, 0x001F}   // 1x, 16 cycles (lowest)
-};
+const std::array<TCS3430AutoGain::AgcT, TCS3430AutoGain::AGC_LIST_SIZE> TCS3430AutoGain::AGC_LIST = {{
+    {TCS3430AutoGain::Gain::GAIN_64X, 0xFF, 0x1000, 0xFFFF},
+    {TCS3430AutoGain::Gain::GAIN_64X, 0x8F,  0x800, 0x7FFF},
+    {TCS3430AutoGain::Gain::GAIN_64X, 0x3F,  0x200, 0x1FFF},
+    {TCS3430AutoGain::Gain::GAIN_64X, 0x0F,   0x80, 0x07FF},
+    {TCS3430AutoGain::Gain::GAIN_16X, 0xFF,  0x400, 0x3FFF},
+    {TCS3430AutoGain::Gain::GAIN_16X, 0x8F,  0x200, 0x1FFF},
+    {TCS3430AutoGain::Gain::GAIN_16X, 0x3F,   0x80, 0x07FF},
+    {TCS3430AutoGain::Gain::GAIN_16X, 0x0F,   0x20, 0x01FF},
+    {TCS3430AutoGain::Gain::GAIN_4X, 0xFF,  0x100, 0x0FFF},
+    {TCS3430AutoGain::Gain::GAIN_4X, 0x8F,   0x80, 0x07FF},
+    {TCS3430AutoGain::Gain::GAIN_4X, 0x3F,   0x20, 0x01FF},
+    {TCS3430AutoGain::Gain::GAIN_4X, 0x0F,    0x8, 0x007F},
+    {TCS3430AutoGain::Gain::GAIN_1X, 0xFF,   0x40, 0x03FF},
+    {TCS3430AutoGain::Gain::GAIN_1X, 0x8F,   0x20, 0x01FF},
+    {TCS3430AutoGain::Gain::GAIN_1X, 0x3F,    0x8, 0x007F},
+    {TCS3430AutoGain::Gain::GAIN_1X, 0x0F,    0x1, 0x001F}
+}};
 
 bool TCS3430AutoGain::begin(TwoWire &w, uint8_t addr) {
     _wire = &w;
     _addr = addr;
     _wire->begin();
-    if (read8(TCS3430_ID) != 0xDC) return false;  // Check device ID
+    if (read8(static_cast<uint8_t>(TCS3430Register::ID)) != 0xDC) return false;
     power(true);
-    setAMux(false);  // Default to X on CH3
+    setAMux(false);
     return true;
 }
 
 void TCS3430AutoGain::power(bool b) {
-    uint8_t en = read8(TCS3430_ENABLE);
+    uint8_t en = read8(static_cast<uint8_t>(TCS3430Register::ENABLE));
     if (b) en |= 0x01; else en &= ~0x01;
-    write8(TCS3430_ENABLE, en);
-    if (b) delay(3);  // Power-on delay
+    write8(static_cast<uint8_t>(TCS3430Register::ENABLE), en);
+    if (b) delay(3);
 }
 
 TCS3430AutoGain::Mode TCS3430AutoGain::mode(Mode m) {
-    uint8_t en = read8(TCS3430_ENABLE);
+    uint8_t en = read8(static_cast<uint8_t>(TCS3430Register::ENABLE));
     bool pon = en & 0x01;
     bool aen = en & 0x02;
     bool wen = en & 0x08;
 
-    if (m == UNDEFINED) {
-        if (!pon) return SLEEP;
-        if (!aen) return IDLE;
-        if (wen) return WAIT_ALS;
-        return ALS;
+    if (m == Mode::UNDEFINED) {
+        if (!pon) return Mode::SLEEP;
+        if (!aen) return Mode::IDLE;
+        if (wen) return Mode::WAIT_ALS;
+        return Mode::ALS;
     }
 
     switch (m) {
-        case SLEEP: en &= ~0x01; break;
-        case IDLE: en = (en | 0x01) & ~0x0A; break;
-        case ALS: en = (en | 0x03) & ~0x08; break;
-        case WAIT_ALS: en |= 0x0B; break;
+        case Mode::SLEEP:    en &= ~0x01; break;
+        case Mode::IDLE:     en = (en | 0x01) & ~0x0A; break;
+        case Mode::ALS:      en = (en | 0x03) & ~0x08; break;
+        case Mode::WAIT_ALS: en |= 0x0B; break;
         default: break;
     }
-    write8(TCS3430_ENABLE, en);
-    return mode(UNDEFINED);
+    write8(static_cast<uint8_t>(TCS3430Register::ENABLE), en);
+    return mode(Mode::UNDEFINED);
 }
 
 float TCS3430AutoGain::integrationTime(float ms) {
     if (ms < 0) {
-        uint8_t at = read8(TCS3430_ATIME);
+        uint8_t at = read8(static_cast<uint8_t>(TCS3430Register::ATIME));
         return (at + 1) * TCS3430_STEP_MS;
     }
     uint8_t at = constrain(round(ms / TCS3430_STEP_MS) - 1, 0, 255);
-    write8(TCS3430_ATIME, at);
+    write8(static_cast<uint8_t>(TCS3430Register::ATIME), at);
     return integrationTime(-1.0f);
 }
 
 int16_t TCS3430AutoGain::integrationCycles(int16_t cycles) {
     if (cycles < 0) {
-        return read8(TCS3430_ATIME) + 1;
+        return read8(static_cast<uint8_t>(TCS3430Register::ATIME)) + 1;
     }
     uint8_t at = constrain(cycles - 1, 0, 255);
-    write8(TCS3430_ATIME, at);
+    write8(static_cast<uint8_t>(TCS3430Register::ATIME), at);
     return integrationCycles(-1);
 }
 
 float TCS3430AutoGain::gain(Gain g) {
-    uint8_t cfg1 = read8(TCS3430_CFG1);
-    if (g == (Gain)-1) {
+    uint8_t cfg1 = read8(static_cast<uint8_t>(TCS3430Register::CFG1));
+    if (g == static_cast<Gain>(-1)) {
         uint8_t ag = cfg1 & 0x03;
         switch (ag) {
             case 0: return 1.0f;
@@ -98,105 +100,106 @@ float TCS3430AutoGain::gain(Gain g) {
     }
     uint8_t ag = static_cast<uint8_t>(g);
     cfg1 = (cfg1 & ~0x03) | (ag & 0x03);
-    write8(TCS3430_CFG1, cfg1);
-    return gain((Gain)-1);
+    write8(static_cast<uint8_t>(TCS3430Register::CFG1), cfg1);
+    return gain(static_cast<Gain>(-1));
 }
 
 bool TCS3430AutoGain::autoGain(uint16_t minYCount, Gain initGain) {
-    gain(initGain);  // Set initial gain
+    gain(initGain);
     for (uint8_t i = 0; i < AGC_LIST_SIZE; ++i) {
         const AgcT &ag = AGC_LIST[i];
         gain(ag.g);
-        write8(TCS3430_ATIME, ag.atime);
-        mode(ALS);
-        delay((ag.atime + 1) * TCS3430_STEP_MS + 1.0f);  // Wait for integration
+        write8(static_cast<uint8_t>(TCS3430Register::ATIME), ag.atime);
+        mode(Mode::ALS);
+        delay((ag.atime + 1) * TCS3430_STEP_MS + 1.0f);
         RawData rd = raw();
         uint8_t status = getDeviceStatus();
-        if ((status & 0x80) || rd.Y > ag.maxcnt) continue;  // Saturated or too high, try lower sensitivity
-        if (rd.Y < ag.mincnt || rd.Y < minYCount) return false;  // Too low
-        return true;  // Optimal
+        if ((status & 0x80) || rd.Y > ag.maxcnt) continue;
+        if (rd.Y < ag.mincnt && rd.Y < minYCount) continue;
+        return true;
     }
-    return false;  // Could not find suitable setting
+    return false;
 }
 
 bool TCS3430AutoGain::singleRead() {
-    mode(ALS);
+    mode(Mode::ALS);
     delay(integrationTime(-1.0f) + 1.0f);
     return true;
 }
 
 TCS3430AutoGain::RawData TCS3430AutoGain::raw() {
     RawData d;
-    d.Z = read16(TCS3430_CH0DATAL);
-    d.Y = read16(TCS3430_CH1DATAL);
-    d.IR1 = read16(TCS3430_CH2DATAL);
-    d.X = read16(TCS3430_CH3DATAL);
-    d.IR2 = read16(TCS3430_CH4DATAL);
+    d.Z = read16(static_cast<uint8_t>(TCS3430Register::CH0DATAL));
+    d.Y = read16(static_cast<uint8_t>(TCS3430Register::CH1DATAL));
+    d.IR1 = read16(static_cast<uint8_t>(TCS3430Register::CH2DATAL));
+    d.X = read16(static_cast<uint8_t>(TCS3430Register::CH3DATAL));
+    d.IR2 = read16(static_cast<uint8_t>(TCS3430Register::CH4DATAL));
     return d;
 }
 
 bool TCS3430AutoGain::interrupt() {
-    return (read8(TCS3430_STATUS) & 0x10) != 0;
+    return (read8(static_cast<uint8_t>(TCS3430Register::STATUS)) & 0x10) != 0;
 }
 
 uint8_t TCS3430AutoGain::persistence() {
-    return read8(TCS3430_PERS) & 0x0F;
+    return read8(static_cast<uint8_t>(TCS3430Register::PERS)) & 0x0F;
 }
 
 void TCS3430AutoGain::persistence(uint8_t p) {
-    write8(TCS3430_PERS, p & 0x0F);
+    write8(static_cast<uint8_t>(TCS3430Register::PERS), p & 0x0F);
 }
 
 uint16_t TCS3430AutoGain::lowInterruptThreshold() {
-    return read16(TCS3430_AILTL);
+    return read16(static_cast<uint8_t>(TCS3430Register::AILTL));
 }
 
 uint16_t TCS3430AutoGain::highInterruptThreshold() {
-    return read16(TCS3430_AIHTL);
+    return read16(static_cast<uint8_t>(TCS3430Register::AIHTL));
 }
 
 void TCS3430AutoGain::interruptThresholds(uint16_t low, uint16_t high) {
-    write8(TCS3430_AILTL, low & 0xFF);
-    write8(TCS3430_AILTH, low >> 8);
-    write8(TCS3430_AIHTL, high & 0xFF);
-    write8(TCS3430_AIHTH, high >> 8);
+    write8(static_cast<uint8_t>(TCS3430Register::AILTL), low & 0xFF);
+    write8(static_cast<uint8_t>(TCS3430Register::AILTH), low >> 8);
+    write8(static_cast<uint8_t>(TCS3430Register::AIHTL), high & 0xFF);
+    write8(static_cast<uint8_t>(TCS3430Register::AIHTH), high >> 8);
 }
 
 float TCS3430AutoGain::wait(float ms, bool enterWaitALS) {
-    bool wlong = (read8(TCS3430_CFG0) & 0x04) != 0;
+    bool wlong = (read8(static_cast<uint8_t>(TCS3430Register::CFG0)) & 0x04) != 0;
     float mul = wlong ? TCS3430_LONG_WAIT_MUL : 1.0f;
     if (ms < 0) {
-        uint8_t wt = read8(TCS3430_WTIME);
+        uint8_t wt = read8(static_cast<uint8_t>(TCS3430Register::WTIME));
         return (wt + 1) * TCS3430_STEP_MS * mul;
     }
     if (ms > 256 * TCS3430_STEP_MS) {
         wlong = true;
         uint8_t wt = constrain(round(ms / (TCS3430_STEP_MS * TCS3430_LONG_WAIT_MUL)) - 1, 0, 255);
-        write8(TCS3430_WTIME, wt);
+        write8(static_cast<uint8_t>(TCS3430Register::WTIME), wt);
     } else {
         wlong = false;
         uint8_t wt = constrain(round(ms / TCS3430_STEP_MS) - 1, 0, 255);
-        write8(TCS3430_WTIME, wt);
+        write8(static_cast<uint8_t>(TCS3430Register::WTIME), wt);
     }
-    uint8_t cfg0 = read8(TCS3430_CFG0);
+    uint8_t cfg0 = read8(static_cast<uint8_t>(TCS3430Register::CFG0));
     if (wlong) cfg0 |= 0x04; else cfg0 &= ~0x04;
-    write8(TCS3430_CFG0, cfg0);
-    if (enterWaitALS) mode(WAIT_ALS);
+    write8(static_cast<uint8_t>(TCS3430Register::CFG0), cfg0);
+    if (enterWaitALS) mode(Mode::WAIT_ALS);
     return wait(-1.0f);
 }
 
 float TCS3430AutoGain::lux() {
     if (!_calcEnabled) return 0.0f;
     RawData rd = raw();
-    return static_cast<float>(rd.Y) / _ga;  // Approximate, user can calibrate further
+    return static_cast<float>(rd.Y) / _ga;
 }
 
 float TCS3430AutoGain::colorTemp() {
     if (!_calcEnabled) return 0.0f;
     float x = chromaticityX();
     float y = chromaticityY();
+    if (y == 0.0f) return 0.0f;
     float n = (x - 0.3320f) / (0.1858f - y);
-    return 449.0f * n * n * n + 3525.0f * n * n + 6823.3f * n + 5520.33f;
+    return 449.0f * pow(n, 3) + 3525.0f * pow(n, 2) + 6823.3f * n + 5520.33f;
 }
 
 float TCS3430AutoGain::chromaticityX() {
@@ -212,30 +215,9 @@ float TCS3430AutoGain::chromaticityY() {
 }
 
 void TCS3430AutoGain::setAMux(bool ir2) {
-    uint8_t cfg1 = read8(TCS3430_CFG1);
+    uint8_t cfg1 = read8(static_cast<uint8_t>(TCS3430Register::CFG1));
     if (ir2) cfg1 |= 0x08; else cfg1 &= ~0x08;
-    write8(TCS3430_CFG1, cfg1);
-}
-
-void TCS3430AutoGain::write8(uint8_t reg, uint8_t val) {
-    _wire->beginTransmission(_addr);
-    _wire->write(reg);
-    _wire->write(val);
-    _wire->endTransmission();
-}
-
-uint8_t TCS3430AutoGain::read8(uint8_t reg) {
-    _wire->beginTransmission(_addr);
-    _wire->write(reg);
-    _wire->endTransmission();
-    _wire->requestFrom(_addr, (uint8_t)1);
-    return _wire->available() ? _wire->read() : 0;
-}
-
-uint16_t TCS3430AutoGain::read16(uint8_t reg_low) {
-    uint8_t low = read8(reg_low);
-    uint8_t high = read8(reg_low + 1);
-    return (high << 8) | low;
+    write8(static_cast<uint8_t>(TCS3430Register::CFG1), cfg1);
 }
 
 // ========================================
@@ -244,42 +226,26 @@ uint16_t TCS3430AutoGain::read16(uint8_t reg_low) {
 
 ColorScience::RGBColor TCS3430AutoGain::getRGBColor(bool useAdvancedColorScience) {
     if (!useAdvancedColorScience) {
-        // Fallback to simple conversion for compatibility
         RawData data = raw();
         ColorScience::RGBColor result;
-
-        // Simple normalization and basic sRGB conversion
         float X_norm = static_cast<float>(data.X) / 65535.0f;
         float Y_norm = static_cast<float>(data.Y) / 65535.0f;
         float Z_norm = static_cast<float>(data.Z) / 65535.0f;
-
-        // Basic sRGB matrix (simplified)
         result.r = 3.2406f * X_norm - 1.5372f * Y_norm - 0.4986f * Z_norm;
         result.g = -0.9689f * X_norm + 1.8758f * Y_norm + 0.0415f * Z_norm;
         result.b = 0.0557f * X_norm - 0.2040f * Y_norm + 1.0570f * Z_norm;
-
-        // Clamp and convert to 8-bit
         result.r = ColorScience::clamp(result.r);
         result.g = ColorScience::clamp(result.g);
         result.b = ColorScience::clamp(result.b);
-
         ColorScience::floatToRGB8(result.r, result.g, result.b, result.r8, result.g8, result.b8);
         return result;
     }
-
-    // Advanced color science conversion
     RawData data = raw();
-
-    // Convert raw data to XYZ
     ColorScience::XYZColor xyz = ColorScience::rawToXYZ(data.X, data.Y, data.Z, data.IR1, data.IR2, _calibData);
-
-    // Prepare IR data
     ColorScience::IRData irData;
     irData.IR1 = static_cast<float>(data.IR1) / 65535.0f;
     irData.IR2 = static_cast<float>(data.IR2) / 65535.0f;
     irData.ratio = (irData.IR2 > 0.0f) ? (irData.IR1 / irData.IR2) : 1.0f;
-
-    // Apply advanced color science
     return ColorScience::xyzToRGB(xyz, irData, _calibData);
 }
 
@@ -298,74 +264,45 @@ ColorScience::CalibrationData TCS3430AutoGain::getCalibrationData() const {
 
 bool TCS3430AutoGain::calibrateWhiteReference(int numSamples) {
     if (numSamples <= 0) return false;
-
-    // Accumulate samples
-    float sumX = 0, sumY = 0, sumZ = 0;
-    float sumIR1 = 0, sumIR2 = 0;
-
+    double sumX = 0, sumY = 0, sumZ = 0;
+    double sumIR1 = 0, sumIR2 = 0;
     for (int i = 0; i < numSamples; i++) {
         RawData data = raw();
-        sumX += static_cast<float>(data.X);
-        sumY += static_cast<float>(data.Y);
-        sumZ += static_cast<float>(data.Z);
-        sumIR1 += static_cast<float>(data.IR1);
-        sumIR2 += static_cast<float>(data.IR2);
-        delay(50); // Small delay between samples
+        sumX += data.X; sumY += data.Y; sumZ += data.Z;
+        sumIR1 += data.IR1; sumIR2 += data.IR2;
+        delay(50);
     }
-
-    // Calculate averages and normalize
     _calibData.whiteReference.X = (sumX / numSamples) / 65535.0f;
     _calibData.whiteReference.Y = (sumY / numSamples) / 65535.0f;
     _calibData.whiteReference.Z = (sumZ / numSamples) / 65535.0f;
-
     _calibData.whiteIR.IR1 = (sumIR1 / numSamples) / 65535.0f;
     _calibData.whiteIR.IR2 = (sumIR2 / numSamples) / 65535.0f;
-    _calibData.whiteIR.ratio = (_calibData.whiteIR.IR2 > 0.0f) ?
-                               (_calibData.whiteIR.IR1 / _calibData.whiteIR.IR2) : 1.0f;
-
+    _calibData.whiteIR.ratio = (_calibData.whiteIR.IR2 > 1e-5) ? (_calibData.whiteIR.IR1 / _calibData.whiteIR.IR2) : 1.0f;
     return ColorScience::validateCalibrationData(_calibData);
 }
 
 bool TCS3430AutoGain::calibrateBlackReference(int numSamples) {
     if (numSamples <= 0) return false;
-
-    // Accumulate samples
-    float sumX = 0, sumY = 0, sumZ = 0;
-    float sumIR1 = 0, sumIR2 = 0;
-
+    double sumX = 0, sumY = 0, sumZ = 0;
+    double sumIR1 = 0, sumIR2 = 0;
     for (int i = 0; i < numSamples; i++) {
         RawData data = raw();
-        sumX += static_cast<float>(data.X);
-        sumY += static_cast<float>(data.Y);
-        sumZ += static_cast<float>(data.Z);
-        sumIR1 += static_cast<float>(data.IR1);
-        sumIR2 += static_cast<float>(data.IR2);
-        delay(50); // Small delay between samples
+        sumX += data.X; sumY += data.Y; sumZ += data.Z;
+        sumIR1 += data.IR1; sumIR2 += data.IR2;
+        delay(50);
     }
-
-    // Calculate averages and normalize
     _calibData.blackReference.X = (sumX / numSamples) / 65535.0f;
     _calibData.blackReference.Y = (sumY / numSamples) / 65535.0f;
     _calibData.blackReference.Z = (sumZ / numSamples) / 65535.0f;
-
     _calibData.blackIR.IR1 = (sumIR1 / numSamples) / 65535.0f;
     _calibData.blackIR.IR2 = (sumIR2 / numSamples) / 65535.0f;
-    _calibData.blackIR.ratio = (_calibData.blackIR.IR2 > 0.0f) ?
-                               (_calibData.blackIR.IR1 / _calibData.blackIR.IR2) : 1.0f;
-
+    _calibData.blackIR.ratio = (_calibData.blackIR.IR2 > 1e-5) ? (_calibData.blackIR.IR1 / _calibData.blackIR.IR2) : 1.0f;
     return ColorScience::validateCalibrationData(_calibData);
 }
 
-void TCS3430AutoGain::configureColorScience(bool enableIRCompensation,
-                                           bool enableAmbientCompensation,
-                                           float irCompensationFactor) {
-    _calibData.irCompensationFactor = ColorScience::clamp(irCompensationFactor, 0.0f, 1.0f);
+void TCS3430AutoGain::configureColorScience(bool enableIRCompensation, bool enableAmbientCompensation, float irCompensationFactor) {
     _calibData.ambientCompensationEnabled = enableAmbientCompensation;
-
-    // IR compensation is controlled by the irCompensationFactor (0 = disabled)
-    if (!enableIRCompensation) {
-        _calibData.irCompensationFactor = 0.0f;
-    }
+    _calibData.irCompensationFactor = enableIRCompensation ? ColorScience::clamp(irCompensationFactor, 0.0f, 1.0f) : 0.0f;
 }
 
 void TCS3430AutoGain::setColorSpace(bool useAdobeRGB) {
@@ -379,16 +316,12 @@ void TCS3430AutoGain::setCustomMatrix(const float matrix[9]) {
     }
 }
 
-void TCS3430AutoGain::configureLEDIRCompensation(float baseCompensation,
-                                                float brightnessResponse,
-                                                bool adaptToBrightness) {
+void TCS3430AutoGain::configureLEDIRCompensation(float baseCompensation, float brightnessResponse, bool adaptToBrightness) {
     _calibData.ledIR.baseIRCompensation = ColorScience::clamp(baseCompensation, 0.0f, 0.3f);
     _calibData.ledIR.ledBrightnessResponse = ColorScience::clamp(brightnessResponse, 0.0f, 0.1f);
     _calibData.ledIR.adaptToLEDBrightness = adaptToBrightness;
-
-    // Set reasonable min/max limits based on base compensation
-    _calibData.ledIR.minCompensation = baseCompensation * 0.25f;  // 25% of base
-    _calibData.ledIR.maxCompensation = baseCompensation * 3.0f;   // 300% of base
+    _calibData.ledIR.minCompensation = baseCompensation * 0.25f;
+    _calibData.ledIR.maxCompensation = baseCompensation * 3.0f;
 }
 
 void TCS3430AutoGain::setChannelIRLeakage(float xLeakage, float yLeakage, float zLeakage) {
@@ -398,23 +331,66 @@ void TCS3430AutoGain::setChannelIRLeakage(float xLeakage, float yLeakage, float 
     _calibData.spectral.useChannelSpecificIR = true;
 }
 
-bool TCS3430AutoGain::calibrateLEDIRResponse(int numBrightnessLevels, int samplesPerLevel) {
-    if (numBrightnessLevels < 3 || numBrightnessLevels > 10 ||
-        samplesPerLevel < 5 || samplesPerLevel > 20) {
-        return false;
+bool TCS3430AutoGain::calibrateLEDIRResponse(std::function<void(uint8_t)> setLedBrightness, int numBrightnessLevels, int samplesPerLevel) {
+    if (numBrightnessLevels < 3 || numBrightnessLevels > 10 || samplesPerLevel < 5 || samplesPerLevel > 20) return false;
+
+    setLedBrightness(0);
+    delay(200);
+
+    double ambientIR1 = 0, ambientIR2 = 0;
+    for (int i = 0; i < samplesPerLevel; i++) {
+        RawData data = raw();
+        ambientIR1 += data.IR1;
+        ambientIR2 += data.IR2;
+        delay(20);
+    }
+    ambientIR1 /= samplesPerLevel;
+    ambientIR2 /= samplesPerLevel;
+    float ambientIR_avg = (ambientIR1 + ambientIR2) / 2.0f;
+
+    std::vector<std::pair<float, float>> irDataPoints;
+    for (int i = 1; i <= numBrightnessLevels; i++) {
+        uint8_t brightness = map(i, 0, numBrightnessLevels, 50, 255);
+        setLedBrightness(brightness);
+        delay(100);
+
+        double levelIR1 = 0, levelIR2 = 0;
+        for (int s = 0; s < samplesPerLevel; s++) {
+            RawData data = raw();
+            levelIR1 += data.IR1;
+            levelIR2 += data.IR2;
+            delay(20);
+        }
+        levelIR1 /= samplesPerLevel;
+        levelIR2 /= samplesPerLevel;
+
+        float contamination = ((levelIR1 + levelIR2) / 2.0f) - ambientIR_avg;
+        if (contamination < 0) contamination = 0;
+        irDataPoints.push_back({(float)brightness, contamination});
     }
 
-    // This method would require external LED control
-    // For now, we'll set up the framework and return success
-    // In a real implementation, this would:
-    // 1. Set LED to different brightness levels
-    // 2. Measure XYZ and IR at each level
-    // 3. Calculate the relationship between LED brightness and IR contamination
-    // 4. Update the calibration parameters
+    setLedBrightness(255);
 
-    // Placeholder implementation - sets reasonable defaults
-    configureLEDIRCompensation(0.08f, 0.02f, true);
-    setChannelIRLeakage(0.03f, 0.015f, 0.08f);
+    float sum_x = 0, sum_y = 0, sum_xy = 0, sum_x_squared = 0;
+    int n = irDataPoints.size();
+    for (const auto& p : irDataPoints) {
+        sum_x += p.first;
+        sum_y += p.second;
+        sum_xy += p.first * p.second;
+        sum_x_squared += p.first * p.first;
+    }
+
+    float denominator = n * sum_x_squared - sum_x * sum_x;
+    if (abs(denominator) < 1e-6) return false;
+
+    float slope = (n * sum_xy - sum_x * sum_y) / denominator;
+    float intercept = (sum_y - slope * sum_x) / n;
+
+    float baseCompensation = intercept / 65535.0f;
+    float brightnessResponse = slope / 65535.0f;
+
+    configureLEDIRCompensation(baseCompensation, brightnessResponse, true);
+    setChannelIRLeakage(baseCompensation * 0.4f, baseCompensation * 0.2f, baseCompensation);
 
     return true;
 }

@@ -401,6 +401,12 @@ constexpr int SCL_PIN = 4;
 // Set the optimized LED pin
 static int leDpin = LED_PIN;
 
+// LED brightness control function for calibration
+void setLedBrightnessForCalibration(uint8_t brightness) {
+    // 'leDpin' is the global variable for your LED pin
+    analogWrite(leDpin, brightness);
+}
+
 // === START OF FINAL, DEFINITIVE CALIBRATION PARAMETERS ===
 // Confirmed to produce accurate results for three targets.
 
@@ -2502,6 +2508,34 @@ void setup() {
 
   server.on("/api/calibrate-vivid-white", HTTP_POST, handleCalibrateVividWhite);
   Logger::debug("Route registered: /api/calibrate-vivid-white (POST) -> handleCalibrateVividWhite");
+
+  // LED IR Response Calibration
+  server.on("/api/calibrate-led-ir", HTTP_POST, [](AsyncWebServerRequest *request) {
+    Logger::info("Starting LED IR Response Calibration...");
+
+    // Call the new library function with our callback
+    bool success = colorSensor.calibrateLEDIRResponse(setLedBrightnessForCalibration);
+
+    if (success) {
+        // Get the new calibration data to return to the user
+        ColorScience::CalibrationData calibData = colorSensor.getCalibrationData();
+
+        JsonResponseBuilder builder;
+        builder.addField("status", "success");
+        builder.addField("message", "LED IR response calibrated successfully.");
+        builder.addField("baseIRCompensation", calibData.ledIR.baseIRCompensation, 4);
+        builder.addField("ledBrightnessResponse", calibData.ledIR.ledBrightnessResponse, 4);
+
+        request->send(HTTP_STATUS_OK, JSON_CONTENT_TYPE, builder.build());
+        Logger::info("LED IR calibration successful.");
+
+    } else {
+        request->send(HTTP_STATUS_INTERNAL_SERVER_ERROR, JSON_CONTENT_TYPE,
+            "{\"status\":\"error\",\"message\":\"LED IR calibration failed. Check sensor connection.\"}");
+        Logger::error("LED IR calibration failed.");
+    }
+  });
+  Logger::debug("Route registered: /api/calibrate-led-ir (POST) -> LED IR Response Calibration");
 
   // Yellow-optimized LED brightness calibration
   server.on("/api/optimize-led-yellow", HTTP_POST, handleOptimizeLEDForYellow);
@@ -4666,9 +4700,11 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   float finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
 
   // Convert best gain to string for response
-  String bestGainStr = (bestGain == TCS3430AutoGain::Gain::GAIN_1X) ? "1x" :
-                       (bestGain == TCS3430AutoGain::Gain::GAIN_4X) ? "4x" :
-                       (bestGain == TCS3430AutoGain::Gain::GAIN_16X) ? "16x" : "64x";
+  // Convert gain enum to string using static_cast to avoid enum access issues
+  int gainValue = static_cast<int>(bestGain);
+  String bestGainStr = (gainValue == 0) ? "1x" :
+                       (gainValue == 1) ? "4x" :
+                       (gainValue == 2) ? "16x" : "64x";
 
   builder.addField("optimizedGain", bestGainStr);
   builder.addField("optimizedIntegrationTime", String(bestIntegrationTime, 1));

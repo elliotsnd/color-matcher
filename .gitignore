@@ -25,9 +25,56 @@ data_uploaded/
 *.hex
 *.elf
 
+# Keep essential binary files
+!data/dulux.bin
+
 # Large data files (keep source, ignore generated)
 dulux.json
 *.zip
+
+# Static Analysis and Development Tools
+analysis-reports/
+.sonarlint/
+*.plog
+*.pvsconfig
+PVS-Studio-Analysis-Report.md
+actions-runner/
+build/
+compile_commands.json.backup*
+
+# Generated Documentation (keep essential docs)
+*_GUIDE.md
+*_SUMMARY.md
+*_COMPLETE.md
+*_STATUS.md
+*_REPORT.md
+*_ANALYSIS*.md
+*_TROUBLESHOOTING*.md
+*_INTEGRATION*.md
+*_OPTIMIZATION*.md
+*_FIXES*.md
+
+# Visual Studio / Windows
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+CMakeLists.txt
+Makefile
+
+# Data processing scripts and generated data
+scrape_dulux_*.py
+dulux_*.csv
+dulux_*.json
+colors.csv
+xkcd_colors.csv
+*.png
+
+# Test files (keep framework, exclude specific tests)
+test_*.py
+test_*.cpp
+test_*.html
+test_*.json
 
 # Temporary files
 *.tmp
@@ -37,6 +84,8 @@ dulux.json
 *.bak
 *.backup
 *_backup/
+*.enhanced_backup
+*.fucked*
 
 # OS generated files
 .DS_Store

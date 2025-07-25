@@ -17,8 +17,18 @@
 #ifndef COLOR_SCIENCE_H
 #define COLOR_SCIENCE_H
 
-#include <Arduino.h>
-#include <math.h>
+#ifdef ARDUINO
+    #include <Arduino.h>
+#else
+    #include <stdint.h>
+    #include <cstdint>
+    #include <cstring>
+    #include <string>
+    // Minimal Arduino compatibility for non-Arduino builds
+    typedef std::string String;
+    #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+#endif
+#include <cmath>
 
 class ColorScience {
 public:
@@ -52,8 +62,92 @@ public:
     
     struct XYZColor {
         float X, Y, Z;
+
+        // Extended fields for compatibility with persistent storage
+        struct {
+            float X, Y, Z;
+        } raw;
+
+        struct {
+            float IR1, IR2;
+            float ratio;
+            float totalIR;
+            float irTemperature;
+            float ambientIRLevel;
+        } ir;
+
+        uint32_t timestamp;
+        float quality;
+
+        // Constructor to initialize raw values
+        XYZColor() : X(0), Y(0), Z(0), timestamp(0), quality(0) {
+            raw.X = raw.Y = raw.Z = 0;
+            ir.IR1 = ir.IR2 = ir.ratio = ir.totalIR = ir.irTemperature = ir.ambientIRLevel = 0;
+        }
+
+        XYZColor(float x, float y, float z) : X(x), Y(y), Z(z), timestamp(0), quality(1.0f) {
+            raw.X = x; raw.Y = y; raw.Z = z;
+            ir.IR1 = ir.IR2 = ir.ratio = ir.totalIR = ir.irTemperature = ir.ambientIRLevel = 0;
+        }
     };
-    
+
+    /**
+     * @brief CIELAB color space (L*a*b*)
+     *
+     * Professional color space for perceptual uniformity:
+     * - L*: Lightness (0-100)
+     * - a*: Green-Red axis (-128 to +127)
+     * - b*: Blue-Yellow axis (-128 to +127)
+     */
+    struct LABColor {
+        float L, a, b;
+
+        LABColor() : L(0), a(0), b(0) {}
+        LABColor(float l, float a_val, float b_val) : L(l), a(a_val), b(b_val) {}
+    };
+
+    /**
+     * @brief CIELUV color space (L*u*v*)
+     *
+     * Alternative perceptual color space:
+     * - L*: Lightness (0-100)
+     * - u*: Green-Red axis
+     * - v*: Blue-Yellow axis
+     */
+    struct LUVColor {
+        float L, u, v;
+
+        LUVColor() : L(0), u(0), v(0) {}
+        LUVColor(float l, float u_val, float v_val) : L(l), u(u_val), v(v_val) {}
+    };
+
+    /**
+     * @brief HSV color space (Hue, Saturation, Value)
+     *
+     * Intuitive color space for color selection:
+     * - H: Hue (0-360 degrees)
+     * - S: Saturation (0-100%)
+     * - V: Value/Brightness (0-100%)
+     */
+    struct HSVColor {
+        float H, S, V;
+
+        HSVColor() : H(0), S(0), V(0) {}
+        HSVColor(float h, float s, float v) : H(h), S(s), V(v) {}
+    };
+
+    /**
+     * @brief Color temperature and illuminant information
+     */
+    struct ColorTemperatureInfo {
+        float temperature;      // Color temperature in Kelvin
+        float deltaUV;         // Distance from blackbody locus
+        const char* illuminant; // Closest standard illuminant
+        bool isValid;          // Whether calculation is valid
+
+        ColorTemperatureInfo() : temperature(0), deltaUV(0), illuminant("Unknown"), isValid(false) {}
+    };
+
     struct IRData {
         float IR1, IR2;
         float ratio;  // IR1/IR2 ratio for adaptive compensation
@@ -62,16 +156,91 @@ public:
         float ambientIRLevel;  // Ambient IR contamination level
     };
     
-    struct CalibrationData {
-        // White and black reference points
-        XYZColor whiteReference;
-        XYZColor blackReference;
-        IRData whiteIR;
-        IRData blackIR;
+    // Enhanced reference point structure with quality metrics
+    struct ReferencePoint {
+        XYZColor raw;           // Raw sensor values
+        XYZColor normalized;    // Normalized to [0,1] range
+        IRData ir;              // IR compensation data
+        float quality;          // Quality metric (0-1)
+        uint32_t timestamp;     // When calibrated (for validation)
 
-        // Dynamic IR compensation parameters
+        ReferencePoint() : quality(0.0f), timestamp(0) {
+            raw = {0.0f, 0.0f, 0.0f};
+            normalized = {0.0f, 0.0f, 0.0f};
+            ir = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+        }
+    };
+
+    // Consolidated calibration status management
+    struct CalibrationStatus {
+        bool blackComplete = false;
+        bool whiteComplete = false;
+        bool blueComplete = false;
+        bool yellowComplete = false;
+
+        // Derived status flags
+        bool is2PointCalibrated() const { return blackComplete && whiteComplete; }
+        bool is4PointCalibrated() const { return blackComplete && whiteComplete && blueComplete && yellowComplete; }
+        uint8_t completedSteps() const { return blackComplete + whiteComplete + blueComplete + yellowComplete; }
+        float progressPercent() const { return (completedSteps() / 4.0f) * 100.0f; }
+    };
+
+    struct CalibrationData {
+        // Enhanced reference points with quality tracking
+        XYZColor blackReference;
+        XYZColor whiteReference;
+        XYZColor blueReference;
+        XYZColor yellowReference;
+
+        // Consolidated calibration status
+        CalibrationStatus status;
+
+        // Dynamic IR compensation parameters (preserved for compatibility)
         float irCompensationFactor;  // Base IR compensation strength (0.0-1.0)
         bool ambientCompensationEnabled;
+
+        // IR reference data for TCS3430AutoGain compatibility
+        IRData blackIR;
+        IRData whiteIR;
+
+        // LED brightness consistency tracking
+        struct LightingConditions {
+            uint8_t calibrationBrightness = 0;  // LED brightness used during calibration
+            bool brightnessLocked = false;      // Prevent changes during calibration sequence
+            uint16_t ambientIRLevel = 0;        // Ambient IR level during calibration
+            uint32_t calibrationTimestamp = 0;  // When lighting was established
+        } lighting;
+
+        // Enhanced validation thresholds (empirically tunable)
+        struct ValidationThresholds {
+            float blueZRatioMin = 0.6f;         // Z channel dominance for blue
+            float yellowXYRatioMin = 0.8f;      // X+Y dominance for yellow
+            float maxCIEDE2000Error = 5.0f;     // Maximum acceptable color error
+            float minSignalNoiseRatio = 10.0f;  // Minimum SNR requirement
+            float repeatabilityThreshold = 90.0f; // Minimum repeatability %
+
+            // Adaptive thresholds based on sensor characteristics
+            float adaptiveBlueThreshold = 0.6f;
+            float adaptiveYellowThreshold = 0.8f;
+        } thresholds;
+
+        // Interpolation method and parameters
+        enum class InterpolationMethod {
+            LINEAR_2POINT,          // Backward compatibility
+            TETRAHEDRAL_4POINT,     // Recommended for 4-point
+            TRIANGULAR_4POINT,      // Alternative 4-point method
+            RADIAL_BASIS           // Advanced option
+        } interpolationMethod = InterpolationMethod::TETRAHEDRAL_4POINT;
+
+        // Quality metrics and validation results
+        struct QualityMetrics {
+            float overallAccuracy = 0.0f;       // CIEDE2000-based accuracy %
+            float repeatability = 0.0f;         // Consistency across readings %
+            float spectralCoverage = 0.0f;      // How well references span spectrum
+            float interpolationError = 0.0f;    // Error in intermediate colors
+            float channelSNR[5] = {0};           // SNR for X,Y,Z,IR1,IR2
+            uint32_t lastValidationTime = 0;    // When last validated
+        } quality;
 
         // LED-specific IR compensation (simplified for controlled LED environment)
         struct {
@@ -219,7 +388,68 @@ public:
      * @return Default calibration data structure
      */
     static CalibrationData createDefaultCalibration();
-    
+
+    // ========================================
+    // Professional Color Space Conversions
+    // ========================================
+
+    /**
+     * @brief Convert XYZ to CIELAB color space
+     * @param xyz Input XYZ color (normalized to D65 white point)
+     * @return LAB color with L* (0-100), a* and b* (-128 to +127)
+     */
+    static LABColor xyzToLAB(const XYZColor& xyz);
+
+    /**
+     * @brief Convert CIELAB to XYZ color space
+     * @param lab Input LAB color
+     * @return XYZ color (normalized to D65 white point)
+     */
+    static XYZColor labToXYZ(const LABColor& lab);
+
+    /**
+     * @brief Convert XYZ to CIELUV color space
+     * @param xyz Input XYZ color (normalized to D65 white point)
+     * @return LUV color with L* (0-100), u* and v*
+     */
+    static LUVColor xyzToLUV(const XYZColor& xyz);
+
+    /**
+     * @brief Convert CIELUV to XYZ color space
+     * @param luv Input LUV color
+     * @return XYZ color (normalized to D65 white point)
+     */
+    static XYZColor luvToXYZ(const LUVColor& luv);
+
+    /**
+     * @brief Convert RGB to HSV color space
+     * @param rgb Input RGB color (0-255 range)
+     * @return HSV color with H (0-360°), S and V (0-100%)
+     */
+    static HSVColor rgbToHSV(const RGBColor& rgb);
+
+    /**
+     * @brief Convert HSV to RGB color space
+     * @param hsv Input HSV color
+     * @return RGB color (0-255 range)
+     */
+    static RGBColor hsvToRGB(const HSVColor& hsv);
+
+    /**
+     * @brief Enhanced color temperature calculation with illuminant detection
+     * @param xyz Input XYZ color
+     * @return Detailed color temperature information
+     */
+    static ColorTemperatureInfo calculateEnhancedColorTemperature(const XYZColor& xyz);
+
+    /**
+     * @brief Calculate color difference using CIEDE2000 formula
+     * @param lab1 First LAB color
+     * @param lab2 Second LAB color
+     * @return CIEDE2000 ΔE value (lower is more similar)
+     */
+    static float calculateCIEDE2000(const LABColor& lab1, const LABColor& lab2);
+
 private:
     // Helper functions for advanced color science
     static float linearInterpolate(float x, float x1, float y1, float x2, float y2);

@@ -5,9 +5,8 @@
 #define RGB_MAX_VALUE 255
 #define RGB_DIVISOR 256  // For 16-bit to 8-bit conversion
 
-// IR Compensation Factors
-#define IR_COMPENSATION_FACTOR_1 0.05F  // Uppercase F suffix
-#define IR_COMPENSATION_FACTOR_2 0.025F
+// IR Compensation Factors - REMOVED TO PREVENT REDEFINITION
+// These are now defined exclusively in sensor_settings.h
 
 // Sensor Range Constants
 #define SENSOR_MAX_VALUE 65535
@@ -28,6 +27,9 @@
 
 // Test Score Constants
 #define TEST_SCORE_MAX 100
+
+// Calibration Constants
+#define CALIBRATION_SAMPLES 7  // Number of samples for calibration readings
 #define TEST_SCORE_GOOD 80
 #define TEST_SCORE_MEDIUM 60
 #define TEST_SCORE_LOW 40
@@ -56,5 +58,29 @@
 // X, Y, Z are standard CIE color space coordinates
 // R, G, B are standard RGB color space coordinates
 // These short parameter names are industry standard in color science
+
+// Network Constants
+#define AP_IP "192.168.4.1"  // Default AP IP address
+
+// HTTP Status Constants
+#define HTTP_STATUS_OK 200
+#define HTTP_STATUS_INTERNAL_SERVER_ERROR 500
+
+// JSON Constants
+#define JSON_FIELD_STATUS "status"
+#define JSON_FIELD_MESSAGE "message"
+#define JSON_STATUS_SUCCESS "success"
+#define JSON_CONTENT_TYPE "application/json"
+
+// Timing Constants
+#define TIMING_WIFI_RETRY_DELAY_MS 500
+#define TIMING_STABILIZATION_DELAY_MS 1000
+#define TIMING_OPTIMIZATION_INTERVAL_MS 5000
+#define TIMING_STATUS_LOG_INTERVAL_MS 10000
+#define TEST_DELAY_MS 100
+
+// Sensor Constants
+#define SENSOR_MAX_SAMPLES 20
+#define COLOR_RGB_MAX 255
 
 #endif  // CONSTANTS_H

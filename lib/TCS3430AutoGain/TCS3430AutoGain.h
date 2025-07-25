@@ -27,45 +27,58 @@
 #ifndef TCS3430_AUTO_GAIN_H
 #define TCS3430_AUTO_GAIN_H
 
+#ifdef ARDUINO
 #include <Arduino.h>
 #include <Wire.h>
+#include <functional>
+#else
+// Provide minimal definitions for non-Arduino environments
+#include <stdint.h>
+#include <stdbool.h>
+class TwoWire {};
+#endif
+
+#include <array>
+
 #include "../ColorScience/ColorScience.h"
 
-#define TCS3430_ADDRESS         0x39
+constexpr uint8_t TCS3430_ADDRESS = 0x39;
 
 // Registers (command-included addresses)
-#define TCS3430_ENABLE          0x80
-#define TCS3430_ATIME           0x81
-#define TCS3430_WTIME           0x83
-#define TCS3430_AILTL           0x84
-#define TCS3430_AILTH           0x85
-#define TCS3430_AIHTL           0x86
-#define TCS3430_AIHTH           0x87
-#define TCS3430_PERS            0x8C
-#define TCS3430_CFG0            0x8D
-#define TCS3430_CFG1            0x90
-#define TCS3430_REVID           0x91
-#define TCS3430_ID              0x92
-#define TCS3430_STATUS          0x93
-#define TCS3430_CH0DATAL        0x94  // Z low
-#define TCS3430_CH0DATAH        0x95  // Z high
-#define TCS3430_CH1DATAL        0x96  // Y low
-#define TCS3430_CH1DATAH        0x97  // Y high
-#define TCS3430_CH2DATAL        0x98  // IR1 low
-#define TCS3430_CH2DATAH        0x99  // IR1 high
-#define TCS3430_CH3DATAL        0x9A  // X low (or IR2 if AMUX=1)
-#define TCS3430_CH3DATAH        0x9B  // X high
-#define TCS3430_CH4DATAL        0x9C  // IR2 low
-#define TCS3430_CH4DATAH        0x9D  // IR2 high
+enum class TCS3430Register : uint8_t {
+    ENABLE          = 0x80,
+    ATIME           = 0x81,
+    WTIME           = 0x83,
+    AILTL           = 0x84,
+    AILTH           = 0x85,
+    AIHTL           = 0x86,
+    AIHTH           = 0x87,
+    PERS            = 0x8C,
+    CFG0            = 0x8D,
+    CFG1            = 0x90,
+    REVID           = 0x91,
+    ID              = 0x92,
+    STATUS          = 0x93,
+    CH0DATAL        = 0x94,  // Z low
+    CH0DATAH        = 0x95,  // Z high
+    CH1DATAL        = 0x96,  // Y low
+    CH1DATAH        = 0x97,  // Y high
+    CH2DATAL        = 0x98,  // IR1 low
+    CH2DATAH        = 0x99,  // IR1 high
+    CH3DATAL        = 0x9A,  // X low (or IR2 if AMUX=1)
+    CH3DATAH        = 0x9B,  // X high
+    CH4DATAL        = 0x9C,  // IR2 low
+    CH4DATAH        = 0x9D   // IR2 high
+};
 
 // Magic numbers for calculations (adapted from ams DN40 for similar sensors, McCamy for CCT)
-#define TCS3430_STEP_MS         2.78f  // Integration step in ms
-#define TCS3430_LONG_WAIT_MUL   12.0f  // Wait long multiplier
+constexpr float TCS3430_STEP_MS = 2.78f;  // Integration step in ms
+constexpr float TCS3430_LONG_WAIT_MUL = 12.0f;  // Wait long multiplier
 
 class TCS3430AutoGain {
 public:
-    enum Gain { X01 = 0, X04 = 1, X16 = 2, X64 = 3 };
-    enum Mode { UNDEFINED = -1, SLEEP, IDLE, ALS, WAIT_ALS };
+    enum class Gain { GAIN_1X = 0, GAIN_4X = 1, GAIN_16X = 2, GAIN_64X = 3 };
+    enum class Mode { UNDEFINED = -1, SLEEP, IDLE, ALS, WAIT_ALS };
 
     struct RawData {
         uint16_t X;
@@ -84,7 +97,13 @@ public:
      * @param addr The I2C address (default: 0x39).
      * @return true if initialization succeeds, false otherwise.
      */
-    bool begin(TwoWire &w = Wire, uint8_t addr = TCS3430_ADDRESS);
+    bool begin(TwoWire &wire, uint8_t addr = TCS3430_ADDRESS);
+
+    /**
+     * @brief Initializes the sensor with default Wire and address.
+     * @return true if initialization succeeds, false otherwise.
+     */
+    bool begin() { return begin(Wire, TCS3430_ADDRESS); }
 
     /**
      * @brief Powers the sensor on or off.
@@ -97,7 +116,7 @@ public:
      * @param m The mode to set (Undefined to get current mode).
      * @return The current mode.
      */
-    Mode mode(Mode m = UNDEFINED);
+    Mode mode(Mode m = Mode::UNDEFINED);
 
     /**
      * @brief Sets or gets the integration time in milliseconds.
@@ -118,17 +137,17 @@ public:
      * @param g The gain to set ((Gain)-1 to get current).
      * @return The current gain multiplier (1, 4, 16, 64).
      */
-    float gain(Gain g = (Gain)-1);
+    float gain(Gain g = static_cast<Gain>(-1));
 
     /**
      * @brief Performs automatic gain and integration time adjustment.
      * @param minYCount Minimum Y-channel count for reliable measurement (default: 100).
-     * @param initGain Initial gain to start with (default: X01).
+     * @param initGain Initial gain to start with (default: GAIN_1X).
      * @return true if successful, false if unable to achieve min count.
      *
      * After success, a valid measurement is available via raw().
      */
-    bool autoGain(uint16_t minYCount = 100, Gain initGain = X01);
+    bool autoGain(uint16_t minYCount = 100, Gain initGain = Gain::GAIN_1X);
 
     /**
      * @brief Performs a single blocking readout.
@@ -149,7 +168,7 @@ public:
      */
     static bool available(float /*timeoutMs*/ = 0.0f) {
       return false;
-    }  // Placeholder for compatibility
+    }  // Non-blocking read not supported: TCS3430 lacks AVALID bit for data-ready indication
 
     /**
      * @brief Checks if an interrupt is active.
@@ -203,8 +222,10 @@ public:
     void enableColorTempAndLuxCalculation(bool b) { _calcEnabled = b; }
 
     /**
-     * @brief Sets the glass attenuation factor (transmissivity, default: 1.0 no glass).
-     * @param ga Attenuation factor (e.g., 0.5 for 50% transmissivity).
+     * @brief Sets the glass attenuation factor (transmissivity, default: 1.0 means no glass).
+     * @param ga Attenuation factor in the range (0.0, 1.0], where 1.0 means no attenuation and lower values reduce measured lux and color temperature proportionally (e.g., 0.5 for 50% transmissivity).
+     *
+     * This factor linearly scales the calculated lux and color temperature to compensate for light loss due to glass or other optical elements.
      */
     void glassAttenuation(float ga) { _ga = ga; }
 
@@ -242,7 +263,7 @@ public:
      * @brief Gets the device status.
      * @return Status register value.
      */
-    uint8_t getDeviceStatus() { return read8(TCS3430_STATUS); }
+    uint8_t getDeviceStatus() { return read8(static_cast<uint8_t>(TCS3430Register::STATUS)); }
 
     // ========================================
     // ADVANCED COLOR SCIENCE METHODS
@@ -330,30 +351,30 @@ public:
                             float zLeakage = 0.08f);
 
     /**
-     * @brief Calibrate IR compensation using LED at different brightness levels
-     * @param numBrightnessLevels Number of LED brightness levels to test (3-10)
-     * @param samplesPerLevel Number of samples per brightness level (5-20)
-     * @return true if calibration successful
+     * @brief Calibrates the IR compensation by measuring the sensor's response to the LED at different brightness levels.
+     * @param setLedBrightness A callback function that takes a uint8_t (0-255) and sets the LED brightness.
+     * @param numBrightnessLevels The number of brightness levels to test (default: 5).
+     * @param samplesPerLevel The number of sensor readings to average at each level (default: 10).
+     * @return true if calibration was successful, false otherwise.
      */
-    bool calibrateLEDIRResponse(int numBrightnessLevels = 5, int samplesPerLevel = 10);
+    bool calibrateLEDIRResponse(std::function<void(uint8_t)> setLedBrightness, int numBrightnessLevels = 5, int samplesPerLevel = 10);
 
     // ========================================
     // COMPATIBILITY LAYER FOR OLD TCS3430 API
     // ========================================
 
     // Old gain enum compatibility - using different name to avoid conflicts
-    enum class OldGain { GAIN_0_25X = 0, GAIN_1X, GAIN_4X, GAIN_16X, GAIN_64X, GAIN_128X };
+    enum class OldGain { GAIN_1X = 0, GAIN_4X, GAIN_16X, GAIN_64X };
 
     /**
      * @brief Compatibility wrapper for old setGain(OldGain)
      */
     void setGain(OldGain g) {
         switch (g) {
-            case OldGain::GAIN_1X: gain(X01); break;
-            case OldGain::GAIN_4X: gain(X04); break;
-            case OldGain::GAIN_16X: gain(X16); break;
-            case OldGain::GAIN_64X: gain(X64); break;
-            default: gain(X16); break; // Default to 16x for unsupported gains
+            case OldGain::GAIN_1X: gain(Gain::GAIN_1X); break;
+            case OldGain::GAIN_4X: gain(Gain::GAIN_4X); break;
+            case OldGain::GAIN_16X: gain(Gain::GAIN_16X); break;
+            case OldGain::GAIN_64X: gain(Gain::GAIN_64X); break;
         }
     }
 
@@ -431,9 +452,9 @@ public:
      */
     void enableALS(bool enable) {
       if (enable) {
-        mode(ALS);
+        mode(Mode::ALS);
       } else {
-        mode(IDLE);
+        mode(Mode::IDLE);
       }
     }
 
@@ -442,22 +463,19 @@ public:
      */
     bool autoGain(uint16_t targetY, OldGain initGain, float /*maxIntTimeMs*/) {
       // Convert old gain to new gain
-      TCS3430AutoGain::Gain newGain = X16;  // default
+      TCS3430AutoGain::Gain newGain = Gain::GAIN_16X;  // default
       switch (initGain) {
         case OldGain::GAIN_1X:
-          newGain = X01;
+          newGain = Gain::GAIN_1X;
           break;
         case OldGain::GAIN_4X:
-          newGain = X04;
+          newGain = Gain::GAIN_4X;
           break;
         case OldGain::GAIN_16X:
-          newGain = X16;
+          newGain = Gain::GAIN_16X;
           break;
         case OldGain::GAIN_64X:
-          newGain = X64;
-          break;
-        default:
-          newGain = X16;
+          newGain = Gain::GAIN_64X;
           break;
       }
       return autoGain(targetY, newGain);
@@ -538,28 +556,65 @@ public:
     }
 
 private:
- TwoWire *_wire{nullptr};
- uint8_t _addr{TCS3430_ADDRESS};
  float _ga{1.0f};  // Glass attenuation
+ TwoWire* _wire{nullptr};  // I2C wire object
+ uint8_t _addr{TCS3430_ADDRESS};  // I2C address
+
+ /**
+  * @brief Enables or disables color temperature and lux calculations.
+  * Set via enableColorTempAndLuxCalculation().
+  */
  bool _calcEnabled{true};
 
  // Advanced color science data
+ // Advanced color science data
  ColorScience::CalibrationData _calibData;
-
- // Auto-gain configuration list (adapted for TCS3430 gains, sorted from high to low sensitivity)
+ 
+ // AGC configuration structure
  struct AgcT {
-   Gain g;
-   uint8_t atime;  // ATIME register value (0-255)
-   uint16_t mincnt;
-   uint16_t maxcnt;
+   Gain g;           ///< Gain setting (sensor sensitivity multiplier)
+   uint8_t atime;    ///< ATIME register value (integration time cycles, 0-255)
+   uint16_t mincnt;  ///< Minimum Y-channel count for this configuration
+   uint16_t maxcnt;  ///< Maximum Y-channel count for this configuration
  };
- static const AgcT AGC_LIST[];
- static const uint8_t AGC_LIST_SIZE = 16;
-
+ 
+ // AGC list will be defined in the implementation file
+ static constexpr size_t AGC_LIST_SIZE = 16; // Actual size based on implementation
+ static const std::array<AgcT, AGC_LIST_SIZE> AGC_LIST;
  // Helper functions
- void write8(uint8_t reg, uint8_t val);
- uint8_t read8(uint8_t reg);
- uint16_t read16(uint8_t reg_low);
+ void write8(uint8_t reg, uint8_t val) {
+   if (!_wire) return; // Prevent undefined behavior if _wire is null
+   _wire->beginTransmission(_addr);
+   _wire->write(reg);
+   _wire->write(val);
+   _wire->endTransmission();
+ }
+ uint8_t read8(uint8_t reg) {
+   if (!_wire) return 0; // Return default value if _wire is null
+   _wire->beginTransmission(_addr);
+   _wire->write(reg);
+   _wire->endTransmission(false);
+   _wire->requestFrom(_addr, (uint8_t)1);
+   if (_wire->available()) {
+     return _wire->read();
+   }
+   return 0;
+ }
+ uint16_t read16(uint8_t reg_low) {
+   if (!_wire) return 0; // Return default value if _wire is null
+   _wire->beginTransmission(_addr);
+   _wire->write(reg_low);
+   _wire->endTransmission(false);
+   _wire->requestFrom(_addr, (uint8_t)2);
+   uint16_t val = 0;
+   if (_wire->available()) {
+     val = _wire->read();
+     if (_wire->available()) {
+       val |= (_wire->read() << 8);
+     }
+   }
+   return val;
+ }
 };
 
 #endif  // TCS3430_AUTO_GAIN_H
