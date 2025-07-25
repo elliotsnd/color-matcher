@@ -70,11 +70,13 @@ colors.csv
 xkcd_colors.csv
 *.png
 
-# Test files (keep framework, exclude specific tests)
+# Test files and examples (exclude all)
 test_*.py
 test_*.cpp
 test_*.html
 test_*.json
+examples/
+test/
 
 # Temporary files
 *.tmp
