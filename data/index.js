@@ -23,8 +23,16 @@ let calibrationStatus = {
     isCalibrated: false,
     blackReference: null,
     whiteReference: null,
-    vividWhiteCalibrated: false
+    vividWhiteCalibrated: false,
+    // Professional 4-point calibration
+    is4PointCalibrated: false,
+    blueReference: null,
+    yellowReference: null,
+    interpolationMethod: 'linear'
 };
+
+// Professional mode state
+let professionalMode = false;
 
 // Update calibration status display
 function updateCalibrationStatus() {
@@ -48,24 +56,37 @@ function updateCalibrationStatus() {
                 mainCalibrationStatus.textContent = 'Not Calibrated';
             }
             
+            // Update professional calibration status
+            if (data.calibrationStatus) {
+                calibrationStatus.is4PointCalibrated = data.calibrationStatus.is4PointCalibrated;
+                calibrationStatus.interpolationMethod = data.calibrationStatus.interpolationMethod || 'linear';
+            }
+
             // Update individual step status using explicit flags
-            // Use new explicit completion flags if available, otherwise fall back to data detection
-            const blackCalibrated = data.blackReferenceComplete || 
-                (data.blackReference && (data.blackReference.X > 0 || data.blackReference.Y > 0 || data.blackReference.Z > 0));
+            const blackCalibrated = data.blackReferenceComplete ||
+                (data.calibrationStatus && data.calibrationStatus.blackComplete);
             const whiteCalibrated = data.whiteReferenceComplete ||
-                (data.whiteReference && (data.whiteReference.X > 100 || data.whiteReference.Y > 100 || data.whiteReference.Z > 100));
+                (data.calibrationStatus && data.calibrationStatus.whiteComplete);
+            const blueCalibrated = data.calibrationStatus && data.calibrationStatus.blueComplete;
+            const yellowCalibrated = data.calibrationStatus && data.calibrationStatus.yellowComplete;
 
             updateStepStatus('blackStatus', blackCalibrated);
             updateStepStatus('whiteStatus', whiteCalibrated);
+            updateStepStatus('blueStatus', blueCalibrated);
+            updateStepStatus('yellowStatus', yellowCalibrated);
             updateStepStatus('vividWhiteStatus', data.isCalibrated);
-            
-            // Update progress indicator
-            if (blackCalibrated && !whiteCalibrated) {
-                statusText.textContent = 'Black Reference Complete - White Reference Needed';
-                mainCalibrationStatus.textContent = 'Partially Calibrated (1/2)';
-            } else if (blackCalibrated && whiteCalibrated && !data.isCalibrated) {
-                statusText.textContent = 'References Complete - Vivid White Calibration Needed';
-                mainCalibrationStatus.textContent = 'Partially Calibrated (2/3)';
+
+            // Update progress indicator based on calibration mode
+            if (professionalMode) {
+                updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, data.isCalibrated);
+            } else {
+                updateStandardProgress(blackCalibrated, whiteCalibrated, data.isCalibrated);
+            }
+
+            // Update professional status display
+            if (calibrationStatus.is4PointCalibrated) {
+                statusText.textContent += ' (Professional 4-Point)';
+                mainCalibrationStatus.textContent += ' - Tetrahedral Interpolation';
             }
         })
         .catch(error => {
@@ -79,6 +100,46 @@ function updateStepStatus(elementId, isComplete) {
     if (element) {
         element.textContent = isComplete ? 'Completed ✓' : 'Not calibrated';
         element.className = isComplete ? 'step-status completed' : 'step-status pending';
+    }
+}
+
+function updateStandardProgress(blackCalibrated, whiteCalibrated, isCalibrated) {
+    const statusText = document.getElementById('calibrationStatusText');
+    const mainCalibrationStatus = document.getElementById('calibrationStatus');
+
+    if (blackCalibrated && !whiteCalibrated) {
+        statusText.textContent = 'Black Reference Complete - White Reference Needed';
+        mainCalibrationStatus.textContent = 'Partially Calibrated (1/3)';
+    } else if (blackCalibrated && whiteCalibrated && !isCalibrated) {
+        statusText.textContent = 'References Complete - Vivid White Calibration Needed';
+        mainCalibrationStatus.textContent = 'Partially Calibrated (2/3)';
+    }
+}
+
+function updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isCalibrated) {
+    const statusText = document.getElementById('calibrationStatusText');
+    const mainCalibrationStatus = document.getElementById('calibrationStatus');
+
+    const completedSteps = [blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isCalibrated].filter(Boolean).length;
+
+    if (completedSteps === 0) {
+        statusText.textContent = 'Professional 4-Point Calibration - Start with Black Reference';
+        mainCalibrationStatus.textContent = 'Not Calibrated (0/5)';
+    } else if (completedSteps === 1 && blackCalibrated) {
+        statusText.textContent = 'Black Complete - White Reference Needed';
+        mainCalibrationStatus.textContent = 'Professional Calibration (1/5)';
+    } else if (completedSteps === 2 && whiteCalibrated) {
+        statusText.textContent = 'Basic References Complete - Blue Reference Needed';
+        mainCalibrationStatus.textContent = 'Professional Calibration (2/5)';
+    } else if (completedSteps === 3 && blueCalibrated) {
+        statusText.textContent = 'Blue Complete - Yellow Reference Needed';
+        mainCalibrationStatus.textContent = 'Professional Calibration (3/5)';
+    } else if (completedSteps === 4 && yellowCalibrated) {
+        statusText.textContent = '4-Point References Complete - Vivid White Calibration Needed';
+        mainCalibrationStatus.textContent = 'Professional Calibration (4/5)';
+    } else if (completedSteps === 5) {
+        statusText.textContent = 'Professional 4-Point Calibration Complete';
+        mainCalibrationStatus.textContent = 'Professional Calibrated (5/5) - Tetrahedral';
     }
 }
 
@@ -155,6 +216,167 @@ function setupCalibrationHandlers() {
             btn.innerHTML = '<i class="fas fa-bullseye"></i> Calibrate Vivid White Target';
         }
     });
+
+    // Professional mode toggle
+    document.getElementById('professionalModeToggle').addEventListener('change', function() {
+        professionalMode = this.checked;
+        toggleProfessionalMode(professionalMode);
+    });
+
+    // Blue reference calibration (Professional mode)
+    document.getElementById('calibrateBlueBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateBlueBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+
+        try {
+            const response = await fetch('/api/calibrate-blue', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                showNotification('Blue reference calibrated successfully! Professional 4-point calibration in progress.', 'success');
+                updateCalibrationStatus();
+            } else {
+                showNotification('Blue calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Blue calibration error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-square" style="color: #0066ff;"></i> Calibrate Blue Reference';
+        }
+    });
+
+    // Yellow reference calibration (Professional mode)
+    document.getElementById('calibrateYellowBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateYellowBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+
+        try {
+            const response = await fetch('/api/calibrate-yellow', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                showNotification('Yellow reference calibrated successfully! 4-point calibration complete - Tetrahedral interpolation enabled!', 'success');
+                updateCalibrationStatus();
+            } else {
+                showNotification('Yellow calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Yellow calibration error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-square" style="color: #ffcc00;"></i> Calibrate Yellow Reference';
+        }
+    });
+
+    // CIEDE2000 Validation (Professional mode)
+    document.getElementById('validateCIEDE2000Btn').addEventListener('click', async () => {
+        const btn = document.getElementById('validateCIEDE2000Btn');
+        const resultsDiv = document.getElementById('validationResults');
+        const statusDiv = document.getElementById('validationStatus');
+        const threshold = document.getElementById('validationThreshold').value;
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running Validation...';
+        resultsDiv.style.display = 'block';
+        statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running CIEDE2000 validation...';
+
+        try {
+            const response = await fetch(`/api/validate-ciede2000?threshold=${threshold}`);
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                displayValidationResults(data);
+                showNotification('CIEDE2000 validation completed successfully!', 'success');
+            } else {
+                showNotification('Validation failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+                statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Validation failed';
+            }
+        } catch (error) {
+            showNotification('Validation error: ' + error.message, 'error');
+            statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Validation error';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-flask"></i> Run CIEDE2000 Validation';
+        }
+    });
+}
+
+// Professional mode toggle functionality
+function toggleProfessionalMode(enabled) {
+    const processTitle = document.getElementById('calibrationProcessTitle');
+    const processHelp = document.getElementById('calibrationHelp');
+    const blueStep = document.getElementById('blueCalibrationStep');
+    const yellowStep = document.getElementById('yellowCalibrationStep');
+    const vividWhiteStepNumber = document.getElementById('vividWhiteStepNumber');
+    const validationPanel = document.getElementById('validationPanel');
+
+    if (enabled) {
+        // Enable professional 4-point calibration
+        processTitle.innerHTML = '<i class="fas fa-graduation-cap"></i> Professional 4-Point Calibration Process';
+        processHelp.textContent = 'Professional workflow with tetrahedral interpolation for industry-grade accuracy:';
+        blueStep.style.display = 'block';
+        yellowStep.style.display = 'block';
+        vividWhiteStepNumber.textContent = '5';
+        validationPanel.style.display = 'block';
+
+        showNotification('Professional 4-Point Calibration enabled! This provides industry-grade color accuracy with tetrahedral interpolation.', 'success');
+    } else {
+        // Disable professional mode - standard 3-step calibration
+        processTitle.innerHTML = '<i class="fas fa-list-ol"></i> 3-Step Calibration Process';
+        processHelp.textContent = 'Follow these steps in a dark room for best results:';
+        blueStep.style.display = 'none';
+        yellowStep.style.display = 'none';
+        vividWhiteStepNumber.textContent = '3';
+        validationPanel.style.display = 'none';
+    }
+
+    // Update calibration status display
+    updateCalibrationStatus();
+}
+
+// Display CIEDE2000 validation results
+function displayValidationResults(data) {
+    const statusDiv = document.getElementById('validationStatus');
+    const avgDeltaE = document.getElementById('averageDeltaE');
+    const maxDeltaE = document.getElementById('maxDeltaE');
+    const testColorCount = document.getElementById('testColorCount');
+    const qualityLevel = document.getElementById('qualityLevel');
+    const recommendationsDiv = document.getElementById('validationRecommendations');
+
+    const result = data.result;
+    const passed = result.passed;
+
+    // Update status
+    statusDiv.innerHTML = `
+        <i class="fas fa-${passed ? 'check-circle' : 'exclamation-triangle'}" style="color: ${passed ? '#10b981' : '#ef4444'};"></i>
+        ${passed ? 'Validation PASSED' : 'Validation FAILED'} - ${result.qualityLevel}
+    `;
+
+    // Update metrics
+    avgDeltaE.textContent = result.averageDeltaE.toFixed(3);
+    avgDeltaE.style.color = result.averageDeltaE < 1.0 ? '#10b981' : result.averageDeltaE < 2.0 ? '#f59e0b' : '#ef4444';
+
+    maxDeltaE.textContent = result.maxDeltaE.toFixed(3);
+    maxDeltaE.style.color = result.maxDeltaE < 1.5 ? '#10b981' : result.maxDeltaE < 3.0 ? '#f59e0b' : '#ef4444';
+
+    testColorCount.textContent = result.testColorCount;
+    qualityLevel.textContent = result.qualityLevel;
+    qualityLevel.style.color = passed ? '#10b981' : '#ef4444';
+
+    // Update recommendations
+    if (data.recommendations && data.recommendations.length > 0) {
+        recommendationsDiv.innerHTML = `
+            <h4><i class="fas fa-lightbulb"></i> Recommendations</h4>
+            <ul>
+                ${data.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+            </ul>
+        `;
+    } else {
+        recommendationsDiv.innerHTML = '<h4><i class="fas fa-check"></i> No recommendations - calibration is optimal!</h4>';
+    }
 }
 
 // Fetch live color data from ESP32
@@ -231,15 +453,22 @@ function updateLiveColorDisplay(fastData) {
 
     const hex = rgbToHex(fastData.r, fastData.g, fastData.b);
 
+    // Live view shows RGB values only - color matching happens on capture
+    const colorName = 'Live TCS3430 Reading';
+    const displayTitle = 'Live TCS3430 Reading';
+
     container.innerHTML = `
         <div class="color-display">
             <div class="color-swatch live-swatch" style="background-color: ${hex};"></div>
             <div class="color-details">
-                <p class="color-name">Live TCS3430 Reading</p>
+                <p class="color-name">${displayTitle}</p>
                 <p class="color-values">RGB: ${fastData.r}, ${fastData.g}, ${fastData.b}</p>
                 <p class="color-values">HEX: ${hex}</p>
                 <p class="color-values">Sensor: X=${fastData.x || 'N/A'}, Y=${fastData.y || 'N/A'}, Z=${fastData.z || 'N/A'}</p>
                 <p class="color-values">IR: IR1=${fastData.ir1 || 'N/A'}, IR2=${fastData.ir2 || 'N/A'}</p>
+                <p class="color-values" style="font-size: 0.9rem; color: #007bff; font-weight: 500;">
+                    💡 Click "Capture Color" to identify color name
+                </p>
                 <p class="color-values" style="font-size: 0.8rem; opacity: 0.7;">
                     Updated: ${new Date().toLocaleTimeString()}
                 </p>
@@ -249,7 +478,7 @@ function updateLiveColorDisplay(fastData) {
 
     liveColor = {
         id: 0,
-        name: 'Live TCS3430 Reading',
+        name: colorName,
         rgb: { r: fastData.r, g: fastData.g, b: fastData.b },
         hex: hex
     };
@@ -419,10 +648,31 @@ async function captureColor() {
     }
 
     try {
-        // Capture current color
-        scannedColor = { ...liveColor };
+        // Call the force color lookup API to get color name
+        const response = await fetch('/api/force-color-lookup');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const captureData = await response.json();
+
+        // Create captured color object with name (matching display function format)
+        const hex = `#${captureData.rgb.r.toString(16).padStart(2, '0')}${captureData.rgb.g.toString(16).padStart(2, '0')}${captureData.rgb.b.toString(16).padStart(2, '0')}`;
+
+        scannedColor = {
+            name: captureData.colorName,
+            rgb: {
+                r: captureData.rgb.r,
+                g: captureData.rgb.g,
+                b: captureData.rgb.b
+            },
+            hex: hex,
+            timestamp: captureData.timestamp,
+            searchDuration: captureData.searchDuration
+        };
+
         updateScannedColorDisplay(scannedColor);
-        showNotification('Color captured successfully!', 'success');
+        showNotification(`Color captured: ${captureData.colorName}`, 'success');
 
     } catch (error) {
         console.error('Failed to capture color:', error);

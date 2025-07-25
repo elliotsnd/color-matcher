@@ -111,7 +111,7 @@
 // =============================================================================
 
 // Memory Management
-#define ENABLE_KDTREE 1               // 🌳 Enable KD-tree 1=ON, 0=OFF (default: 1)
+#define ENABLE_KDTREE 0               // 🌳 Enable KD-tree 1=ON, 0=OFF (default: 1) - TEMPORARILY DISABLED DUE TO BUG
 #define KDTREE_MAX_COLORS 4500        // 📊 Maximum colors in KD-tree (default: 4500)
 #define PSRAM_SAFETY_MARGIN_KB 2048   // 💾 PSRAM to keep free in KB (default: 2048)
 #define KDTREE_LOAD_TIMEOUT_MS 20000  // ⏱️ KD-tree build timeout in ms (default: 20000)
