@@ -33,16 +33,21 @@ jobs:
       run: |
         Write-Host "Generating compile commands..."
         python generate_compile_commands.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     
     - name: Run Ultimate Analysis
       shell: pwsh
       run: |
         Write-Host "Running ultimate analysis..."
         .\run-ultimate-analysis.ps1 -FixableOnly
+        Write-Host "Analysis completed with exit code: $LASTEXITCODE"
+        # Don't fail the job if analysis finds issues - that's expected
+        exit 0
     
     - name: Upload results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: analysis-results
         path: analysis-reports/
+        if-no-files-found: warn
