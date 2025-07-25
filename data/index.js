@@ -648,8 +648,11 @@ async function captureColor() {
     }
 
     try {
-        // Call the force color lookup API to get color name
-        const response = await fetch('/api/force-color-lookup');
+        // Call the new capture API that saves to storage
+        const response = await fetch('/api/capture-color', {
+            method: 'POST'
+        });
+
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -668,11 +671,20 @@ async function captureColor() {
             },
             hex: hex,
             timestamp: captureData.timestamp,
-            searchDuration: captureData.searchDuration
+            searchDuration: captureData.searchDuration,
+            saved: captureData.saved
         };
 
         updateScannedColorDisplay(scannedColor);
-        showNotification(`Color captured: ${captureData.colorName}`, 'success');
+
+        // Show appropriate notification based on save status
+        if (captureData.saved) {
+            showNotification(`Color captured and saved: ${captureData.colorName}`, 'success');
+            // Refresh storage status after successful capture
+            await fetchStorageStatus();
+        } else {
+            showNotification(`Color captured: ${captureData.colorName} (not saved to storage)`, 'warning');
+        }
 
     } catch (error) {
         console.error('Failed to capture color:', error);
@@ -813,6 +825,256 @@ function showNotification(message, type = 'info') {
     }, 5000);
 }
 
+// Storage Management Functions
+let storageData = {
+    captures: [],
+    status: null
+};
+
+// Fetch storage status
+async function fetchStorageStatus() {
+    try {
+        const response = await fetch('/api/storage-status');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        storageData.status = data;
+        updateStorageStatusDisplay();
+
+    } catch (error) {
+        console.error('Failed to fetch storage status:', error);
+        showNotification('Failed to fetch storage status', 'error');
+    }
+}
+
+// Update storage status display
+function updateStorageStatusDisplay() {
+    const status = storageData.status;
+    if (!status) return;
+
+    // Update capture count
+    const capturesCount = document.getElementById('storedCapturesCount');
+    const maxCaptures = document.getElementById('maxCaptures');
+    if (capturesCount && status.captures) {
+        capturesCount.textContent = status.captures.total || 0;
+        if (maxCaptures) {
+            maxCaptures.textContent = status.captures.max || 30;
+        }
+    }
+
+    // Update storage usage
+    const storageUsed = document.getElementById('storageUsed');
+    if (storageUsed && status.storage) {
+        const usagePercent = status.storage.usagePercent || 0;
+        storageUsed.textContent = `${usagePercent.toFixed(1)}%`;
+
+        // Update progress bar
+        const progressFill = document.getElementById('storageProgressFill');
+        if (progressFill) {
+            progressFill.style.width = `${usagePercent}%`;
+        }
+    }
+
+    // Update calibration status
+    const calibrationStored = document.getElementById('calibrationStored');
+    if (calibrationStored && status.calibration) {
+        calibrationStored.textContent = status.calibration.hasData ? 'Saved' : 'None';
+        calibrationStored.style.color = status.calibration.hasData ? '#10b981' : '#6b7280';
+    }
+}
+
+// Fetch stored captures
+async function fetchStoredCaptures() {
+    try {
+        const response = await fetch('/api/stored-captures');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        storageData.captures = data.captures || [];
+        displayStoredCaptures();
+
+    } catch (error) {
+        console.error('Failed to fetch stored captures:', error);
+        showNotification('Failed to fetch stored captures', 'error');
+    }
+}
+
+// Display stored captures
+function displayStoredCaptures() {
+    const container = document.getElementById('storedCapturesContainer');
+    const capturesList = document.getElementById('capturesList');
+
+    if (!container || !capturesList) return;
+
+    // Show the container
+    container.style.display = 'block';
+
+    if (storageData.captures.length === 0) {
+        capturesList.innerHTML = `
+            <div class="empty-captures">
+                <i class="fas fa-inbox"></i>
+                <p>No stored captures found</p>
+                <p>Capture some colors to see them here!</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Sort captures by timestamp (newest first)
+    const sortedCaptures = [...storageData.captures].sort((a, b) => b.timestamp - a.timestamp);
+
+    capturesList.innerHTML = sortedCaptures.map((capture, index) => {
+        const date = new Date(capture.timestamp * 1000);
+        const timeStr = date.toLocaleString();
+        const hexColor = capture.hex || rgbToHex(capture.rgb.r, capture.rgb.g, capture.rgb.b);
+
+        return `
+            <div class="capture-item" data-index="${capture.index}">
+                <div class="capture-info">
+                    <div class="capture-color-preview" style="background-color: ${hexColor}"></div>
+                    <div class="capture-details">
+                        <div class="capture-name">${capture.colorName}</div>
+                        <div class="capture-meta">
+                            RGB(${capture.rgb.r}, ${capture.rgb.g}, ${capture.rgb.b}) • ${timeStr}
+                        </div>
+                    </div>
+                </div>
+                <div class="capture-actions">
+                    <button class="btn-small btn-danger" onclick="deleteCapture(${capture.index})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Delete a specific capture
+async function deleteCapture(index) {
+    if (!confirm('Are you sure you want to delete this capture?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/delete-capture?index=${index}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        showNotification(data.message, data.status === 'success' ? 'success' : 'error');
+
+        if (data.status === 'success') {
+            // Refresh the captures list and storage status
+            await fetchStoredCaptures();
+            await fetchStorageStatus();
+        }
+
+    } catch (error) {
+        console.error('Failed to delete capture:', error);
+        showNotification('Failed to delete capture', 'error');
+    }
+}
+
+// Clear all captures
+async function clearAllCaptures() {
+    if (!confirm('Are you sure you want to clear ALL stored captures? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/clear-captures', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        showNotification(data.message, data.status === 'success' ? 'success' : 'error');
+
+        if (data.status === 'success') {
+            // Clear the display and refresh status
+            storageData.captures = [];
+            displayStoredCaptures();
+            await fetchStorageStatus();
+        }
+
+    } catch (error) {
+        console.error('Failed to clear captures:', error);
+        showNotification('Failed to clear captures', 'error');
+    }
+}
+
+// Export data
+async function exportData() {
+    try {
+        const response = await fetch('/api/export-captures');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Create and download the file
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `color-captures-export-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showNotification('Data exported successfully', 'success');
+
+    } catch (error) {
+        console.error('Failed to export data:', error);
+        showNotification('Failed to export data', 'error');
+    }
+}
+
+// Setup storage management handlers
+function setupStorageHandlers() {
+    // View stored captures button
+    const viewCapturesBtn = document.getElementById('viewStoredCapturesBtn');
+    if (viewCapturesBtn) {
+        viewCapturesBtn.addEventListener('click', async () => {
+            await fetchStoredCaptures();
+        });
+    }
+
+    // Export data button
+    const exportBtn = document.getElementById('exportDataBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportData);
+    }
+
+    // Clear captures button
+    const clearBtn = document.getElementById('clearCapturesBtn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearAllCaptures);
+    }
+
+    // Refresh storage button
+    const refreshBtn = document.getElementById('refreshStorageBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            await fetchStorageStatus();
+            showNotification('Storage status refreshed', 'success');
+        });
+    }
+}
+
 // Initialize TCS3430 Calibration System
 function init() {
     console.log('Initializing TCS3430 Calibration System...');
@@ -836,15 +1098,22 @@ function init() {
     // Set up sample count slider
     setupSampleCountSlider();
 
+    // Set up storage management handlers
+    setupStorageHandlers();
+
     // Start fetching data immediately
     fetchFastColor();
     fetchBatteryStatus();
+    fetchStorageStatus();
 
     // Set up fast polling for sensor data (75ms for very smooth real-time updates)
     setInterval(fetchFastColor, 75);
 
     // Set up battery monitoring (update every 10 seconds)
     setInterval(fetchBatteryStatus, 10000);
+
+    // Set up storage status monitoring (update every 30 seconds)
+    setInterval(fetchStorageStatus, 30000);
 
     // Update calibration status
     updateCalibrationStatus();

@@ -43,6 +43,7 @@
 #include "sensor_settings.h"
 #include "constants.h"
 #include "psram_utils.h"
+#include "persistent_storage.h"
 
 #include "ArduinoJson/Memory/Allocator.hpp"
 #include <cmath>
@@ -1247,6 +1248,377 @@ void handleForceColorLookup(AsyncWebServerRequest *request) {
                " | Duration: " + String(LOOKUP_DURATION) + "Î¼s");
 }
 
+// Handle color capture and storage API endpoint
+void handleCaptureColor(AsyncWebServerRequest *request) {
+  Logger::debug("Handling color capture request");
+
+  // Check if a lookup is already in progress
+  if (colorLookup.inProgress) {
+    request->send(
+        HTTP_TOO_MANY_REQUESTS, "application/json",
+        "{\"error\":\"Color lookup in progress\",\"message\":\"Please wait for "
+        "current lookup to complete\"}");
+    return;
+  }
+
+  // Get current color data
+  uint8_t const CURRENT_R = currentColorData.fast.red;
+  uint8_t const CURRENT_G = currentColorData.fast.green;
+  uint8_t const CURRENT_B = currentColorData.fast.blue;
+  uint16_t const CURRENT_X = currentColorData.fast.xValue;
+  uint16_t const CURRENT_Y = currentColorData.fast.yValue;
+  uint16_t const CURRENT_Z = currentColorData.fast.zValue;
+  uint16_t const CURRENT_IR1 = currentColorData.fast.ir1;
+  uint16_t const CURRENT_IR2 = currentColorData.fast.ir2;
+
+  // Force immediate color lookup if needed
+  String COLOR_NAME = currentColorData.colorName;
+  unsigned long LOOKUP_DURATION = currentColorData.colorSearchDuration;
+
+  if (COLOR_NAME.isEmpty() || (millis() - currentColorData.colorNameTimestamp) > 5000) {
+    colorLookup.inProgress = true;
+    unsigned long const LOOKUP_START = micros();
+    COLOR_NAME = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
+    LOOKUP_DURATION = micros() - LOOKUP_START;
+
+    // Update color name data
+    unsigned long const CURRENT_TIME = millis();
+    currentColorData.colorName = COLOR_NAME;
+    currentColorData.colorNameTimestamp = CURRENT_TIME;
+    currentColorData.colorSearchDuration = LOOKUP_DURATION;
+    colorLookup.inProgress = false;
+  }
+
+  // Create capture data
+  StoredColorCapture capture = StorageHelpers::createCaptureFromCurrent(
+    CURRENT_X, CURRENT_Y, CURRENT_Z, CURRENT_IR1, CURRENT_IR2,
+    CURRENT_R, CURRENT_G, CURRENT_B, COLOR_NAME,
+    currentColorData.fast.batteryVoltage, LOOKUP_DURATION
+  );
+
+  // Save to persistent storage
+  bool saveSuccess = false;
+  String statusMessage = "Color captured successfully";
+
+  if (persistentStorage.isInitialized()) {
+    saveSuccess = persistentStorage.saveColorCapture(capture);
+    if (!saveSuccess) {
+      statusMessage = "Color captured but failed to save to flash";
+      Logger::warn("Failed to save color capture to persistent storage");
+    }
+  } else {
+    statusMessage = "Color captured but storage not available";
+    Logger::warn("Persistent storage not initialized - capture not saved");
+  }
+
+  // Create response
+  JsonDocument doc;
+  doc["status"] = saveSuccess ? "success" : "partial";
+  doc["message"] = statusMessage;
+  doc["colorName"] = COLOR_NAME;
+  doc["searchDuration"] = LOOKUP_DURATION;
+  doc["rgb"]["r"] = CURRENT_R;
+  doc["rgb"]["g"] = CURRENT_G;
+  doc["rgb"]["b"] = CURRENT_B;
+  doc["xyz"]["x"] = CURRENT_X;
+  doc["xyz"]["y"] = CURRENT_Y;
+  doc["xyz"]["z"] = CURRENT_Z;
+  doc["ir"]["ir1"] = CURRENT_IR1;
+  doc["ir"]["ir2"] = CURRENT_IR2;
+  doc["timestamp"] = millis();
+  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
+  doc["saved"] = saveSuccess;
+
+  if (persistentStorage.isInitialized()) {
+    doc["totalCaptures"] = persistentStorage.getTotalCaptures();
+    doc["maxCaptures"] = persistentStorage.getMaxCaptures();
+    doc["storageFull"] = persistentStorage.isStorageFull();
+  }
+
+  String response;
+  serializeJson(doc, response);
+
+  // Add CORS headers
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(HTTP_OK, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+
+  Logger::info("Color captured and " + String(saveSuccess ? "saved" : "not saved") +
+               ": RGB(" + String(CURRENT_R) + "," + String(CURRENT_G) + "," +
+               String(CURRENT_B) + ") -> " + COLOR_NAME);
+}
+
+// Handle get stored captures API endpoint
+void handleGetStoredCaptures(AsyncWebServerRequest *request) {
+  Logger::debug("Handling get stored captures request");
+
+  if (!persistentStorage.isInitialized()) {
+    request->send(503, "application/json",
+                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    return;
+  }
+
+  // Get all stored captures
+  StoredColorCapture captures[MAX_COLOR_CAPTURES];
+  uint8_t count = 0;
+
+  if (!persistentStorage.getAllCaptures(captures, count)) {
+    request->send(500, "application/json",
+                  "{\"error\":\"Failed to load captures\",\"message\":\"Could not retrieve stored captures\"}");
+    return;
+  }
+
+  // Create JSON response
+  JsonDocument doc;
+  doc["status"] = "success";
+  doc["totalCaptures"] = count;
+  doc["maxCaptures"] = MAX_COLOR_CAPTURES;
+
+  JsonArray capturesArray = doc["captures"].to<JsonArray>();
+
+  for (uint8_t i = 0; i < count; i++) {
+    if (captures[i].isValid) {
+      JsonObject capture = capturesArray.add<JsonObject>();
+      capture["index"] = i;
+      capture["timestamp"] = captures[i].timestamp;
+      capture["colorName"] = captures[i].colorName;
+
+      JsonObject rgb = capture["rgb"].to<JsonObject>();
+      rgb["r"] = captures[i].r;
+      rgb["g"] = captures[i].g;
+      rgb["b"] = captures[i].b;
+
+      JsonObject xyz = capture["xyz"].to<JsonObject>();
+      xyz["x"] = captures[i].x;
+      xyz["y"] = captures[i].y;
+      xyz["z"] = captures[i].z;
+
+      JsonObject ir = capture["ir"].to<JsonObject>();
+      ir["ir1"] = captures[i].ir1;
+      ir["ir2"] = captures[i].ir2;
+
+      capture["batteryVoltage"] = captures[i].batteryVoltage;
+      capture["searchDuration"] = captures[i].searchDuration;
+
+      // Add hex color for convenience
+      char hexColor[8];
+      sprintf(hexColor, "#%02x%02x%02x", captures[i].r, captures[i].g, captures[i].b);
+      capture["hex"] = hexColor;
+    }
+  }
+
+  String response;
+  serializeJson(doc, response);
+
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(HTTP_OK, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+
+  Logger::info("Returned " + String(count) + " stored captures");
+}
+
+// Handle clear stored captures API endpoint
+void handleClearStoredCaptures(AsyncWebServerRequest *request) {
+  Logger::debug("Handling clear stored captures request");
+
+  if (!persistentStorage.isInitialized()) {
+    request->send(503, "application/json",
+                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    return;
+  }
+
+  bool success = persistentStorage.clearAllCaptures();
+
+  JsonDocument doc;
+  doc["status"] = success ? "success" : "error";
+  doc["message"] = success ? "All captures cleared successfully" : "Failed to clear captures";
+  doc["totalCaptures"] = persistentStorage.getTotalCaptures();
+
+  String response;
+  serializeJson(doc, response);
+
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(success ? HTTP_OK : 500, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+
+  Logger::info(success ? "All captures cleared successfully" : "Failed to clear captures");
+}
+
+// Handle storage status API endpoint
+void handleStorageStatus(AsyncWebServerRequest *request) {
+  Logger::debug("Handling storage status request");
+
+  JsonDocument doc;
+
+  if (!persistentStorage.isInitialized()) {
+    doc["status"] = "unavailable";
+    doc["message"] = "Persistent storage not initialized";
+    doc["initialized"] = false;
+  } else {
+    PersistentStorage::StorageStats stats;
+    bool statsSuccess = persistentStorage.getStorageStats(stats);
+
+    doc["status"] = "available";
+    doc["initialized"] = true;
+
+    if (statsSuccess) {
+      doc["captures"]["total"] = stats.totalCaptures;
+      doc["captures"]["max"] = stats.maxCaptures;
+      doc["captures"]["remaining"] = stats.maxCaptures - stats.totalCaptures;
+      doc["captures"]["full"] = (stats.totalCaptures >= stats.maxCaptures);
+
+      if (stats.totalCaptures > 0) {
+        doc["captures"]["oldestTimestamp"] = stats.oldestCaptureTimestamp;
+        doc["captures"]["newestTimestamp"] = stats.newestCaptureTimestamp;
+      }
+
+      doc["calibration"]["hasData"] = stats.hasCalibration;
+      doc["storage"]["usedBytes"] = stats.usedBytes;
+      doc["storage"]["freeBytes"] = stats.freeBytes;
+      doc["storage"]["totalBytes"] = stats.usedBytes + stats.freeBytes;
+
+      float usagePercent = (stats.usedBytes + stats.freeBytes > 0) ?
+                          (float)stats.usedBytes / (stats.usedBytes + stats.freeBytes) * 100.0f : 0.0f;
+      doc["storage"]["usagePercent"] = usagePercent;
+    } else {
+      doc["error"] = "Failed to get storage statistics";
+    }
+  }
+
+  String response;
+  serializeJson(doc, response);
+
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(HTTP_OK, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+
+  Logger::debug("Storage status response sent");
+}
+
+// Handle delete specific capture API endpoint
+void handleDeleteCapture(AsyncWebServerRequest *request) {
+  Logger::debug("Handling delete capture request");
+
+  if (!persistentStorage.isInitialized()) {
+    request->send(503, "application/json",
+                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    return;
+  }
+
+  // Get index parameter
+  if (!request->hasParam("index")) {
+    request->send(HTTP_BAD_REQUEST, "application/json",
+                  "{\"error\":\"Missing parameter\",\"message\":\"Index parameter required\"}");
+    return;
+  }
+
+  int index = request->getParam("index")->value().toInt();
+
+  if (index < 0 || index >= MAX_COLOR_CAPTURES) {
+    request->send(HTTP_BAD_REQUEST, "application/json",
+                  "{\"error\":\"Invalid index\",\"message\":\"Index must be between 0 and " + String(MAX_COLOR_CAPTURES-1) + "\"}");
+    return;
+  }
+
+  bool success = persistentStorage.deleteColorCapture(index);
+
+  JsonDocument doc;
+  doc["status"] = success ? "success" : "error";
+  doc["message"] = success ? "Capture deleted successfully" : "Failed to delete capture";
+  doc["deletedIndex"] = index;
+  doc["totalCaptures"] = persistentStorage.getTotalCaptures();
+
+  String response;
+  serializeJson(doc, response);
+
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(success ? HTTP_OK : 500, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(apiResponse);
+
+  Logger::info(success ? ("Deleted capture " + String(index)) : ("Failed to delete capture " + String(index)));
+}
+
+// Handle export captures API endpoint
+void handleExportCaptures(AsyncWebServerRequest *request) {
+  Logger::debug("Handling export captures request");
+
+  if (!persistentStorage.isInitialized()) {
+    request->send(503, "application/json",
+                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    return;
+  }
+
+  // Get all stored captures
+  StoredColorCapture captures[MAX_COLOR_CAPTURES];
+  uint8_t count = 0;
+
+  if (!persistentStorage.getAllCaptures(captures, count)) {
+    request->send(500, "application/json",
+                  "{\"error\":\"Failed to load captures\",\"message\":\"Could not retrieve stored captures for export\"}");
+    return;
+  }
+
+  // Create export JSON with metadata
+  JsonDocument doc;
+  doc["exportInfo"]["timestamp"] = millis() / 1000;
+  doc["exportInfo"]["deviceId"] = "ESP32-ColorMatcher";
+  doc["exportInfo"]["version"] = "1.0";
+  doc["exportInfo"]["totalCaptures"] = count;
+
+  // Add calibration status
+  StoredCalibrationData calibData;
+  bool hasCalibration = persistentStorage.loadCalibrationData(calibData);
+  doc["exportInfo"]["hasCalibration"] = hasCalibration;
+
+  if (hasCalibration) {
+    JsonObject calib = doc["calibration"].to<JsonObject>();
+    calib["isCalibrated"] = calibData.isCalibrated;
+    calib["blackComplete"] = calibData.blackComplete;
+    calib["whiteComplete"] = calibData.whiteComplete;
+    calib["blueComplete"] = calibData.blueComplete;
+    calib["yellowComplete"] = calibData.yellowComplete;
+    calib["ledBrightness"] = calibData.ledBrightness;
+    calib["timestamp"] = calibData.calibrationTimestamp;
+  }
+
+  // Add captures data
+  JsonArray capturesArray = doc["captures"].to<JsonArray>();
+
+  for (uint8_t i = 0; i < count; i++) {
+    if (captures[i].isValid) {
+      JsonObject capture = capturesArray.add<JsonObject>();
+      capture["timestamp"] = captures[i].timestamp;
+      capture["colorName"] = captures[i].colorName;
+      capture["r"] = captures[i].r;
+      capture["g"] = captures[i].g;
+      capture["b"] = captures[i].b;
+      capture["x"] = captures[i].x;
+      capture["y"] = captures[i].y;
+      capture["z"] = captures[i].z;
+      capture["ir1"] = captures[i].ir1;
+      capture["ir2"] = captures[i].ir2;
+      capture["batteryVoltage"] = captures[i].batteryVoltage;
+      capture["searchDuration"] = captures[i].searchDuration;
+    }
+  }
+
+  String response;
+  serializeJson(doc, response);
+
+  AsyncWebServerResponse *apiResponse =
+      request->beginResponse(HTTP_OK, "application/json", response);
+  apiResponse->addHeader("Access-Control-Allow-Origin", "*");
+  apiResponse->addHeader("Content-Disposition", "attachment; filename=\"color-captures-export.json\"");
+  request->send(apiResponse);
+
+  Logger::info("Exported " + String(count) + " captures and calibration data");
+}
+
 // Settings API handlers
 void handleGetSettings(AsyncWebServerRequest *request) {
   Logger::debug("Handling get settings API request");
@@ -1696,16 +2068,51 @@ void handleIRCompensationAPI(AsyncWebServerRequest *request) {
   Logger::debug("IR compensation API response sent");
 }
 
-// Function to scan for WiFi networks and start AP mode if target SSID not found
+// Function to setup dual mode (STA + AP) - AP mode ALWAYS starts
 bool connectToWiFiOrStartAP() {
-  Logger::info("Scanning for available WiFi networks...");
+  Logger::info("=== WiFi Setup: Dual Mode Configuration ===");
+  Logger::info("Target SSID: '" + String(ssid) + "'");
+  Logger::info("AP SSID: '" + String(apSsid) + "'");
+  Logger::info("AP IP: " + String(AP_IP));
+  Logger::info("Strategy: AP mode ALWAYS starts, WiFi connection attempted if available");
 
-  // Scan for networks
+  // Initialize WiFi first
+  WiFi.disconnect(true);
+  delay(1000);
+
+  // STEP 1: ALWAYS START AP MODE FIRST
+  Logger::info("=== STEP 1: Starting Access Point Mode ===");
+  WiFi.mode(WIFI_AP);
+  delay(500);
+
+  // Configure AP with custom IP
+  IPAddress apIP;
+  apIP.fromString(AP_IP);
+  IPAddress apGateway = apIP;
+  IPAddress apSubnet(255, 255, 255, 0);
+
+  WiFi.softAPConfig(apIP, apGateway, apSubnet);
+  bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
+
+  if (AP_STARTED) {
+    delay(1000);  // Give AP time to start
+    IPAddress const ACTUAL_AP_IP = WiFi.softAPIP();
+    Logger::info("✅ Access Point started successfully!");
+    Logger::info("AP SSID: " + String(apSsid));
+    Logger::info("AP Password: " + String(apPassword));
+    Logger::info("AP IP address: " + ACTUAL_AP_IP.toString());
+  } else {
+    Logger::error("❌ Failed to start Access Point mode!");
+    return false;  // If AP fails, we can't continue
+  }
+
+  // STEP 2: SCAN FOR TARGET WIFI NETWORK
+  Logger::info("=== STEP 2: Scanning for WiFi networks ===");
   int const NUM_NETWORKS = WiFi.scanNetworks();
   bool targetFound = false;
 
   if (NUM_NETWORKS == 0) {
-    Logger::warn("No WiFi networks found");
+    Logger::warn("No WiFi networks found - AP mode only");
   } else {
     Logger::info("Found " + String(NUM_NETWORKS) + " WiFi networks:");
     for (int i = 0; i < NUM_NETWORKS; i++) {
@@ -1715,81 +2122,104 @@ bool connectToWiFiOrStartAP() {
 
       if (FOUND_SSID == String(ssid)) {
         targetFound = true;
-        Logger::info("Target SSID '" + String(ssid) + "' found!");
+        Logger::info("✅ Target SSID '" + String(ssid) + "' found!");
       }
     }
   }
 
-  if (!targetFound) {
-    Logger::warn("Target SSID '" + String(ssid) + "' not found in scan results");
-    Logger::info("Starting Access Point mode...");
+  // STEP 3: ATTEMPT WIFI CONNECTION IF TARGET FOUND
+  if (targetFound) {
+    Logger::info("=== STEP 3: Attempting WiFi Connection ===");
+    Logger::info("Switching to dual mode (AP + STA)...");
 
-    // Start AP mode
-    WiFi.mode(WIFI_AP);
-    bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
+    // Switch to dual mode
+    WiFi.mode(WIFI_AP_STA);
+    delay(1000);
 
-    if (AP_STARTED) {
-      IPAddress const AP_IP = WiFi.softAPIP();
-      Logger::info("Access Point started successfully!");
-      Logger::info("AP SSID: " + String(apSsid));
-      Logger::info("AP Password: " + String(apPassword));
-      Logger::info("AP IP address: " + AP_IP.toString());
-      Logger::info("Connect to the AP and visit http://" + AP_IP.toString() +
-                   " to access the color matcher");
-      return true;  // AP mode started successfully
+    // Configure static IP for station mode
+    if (!WiFi.config(localIp, gateway, subnet)) {
+      Logger::error("Static IP configuration failed, using DHCP");
+    } else {
+      Logger::debug("Static IP configuration successful");
     }
-    Logger::error("Failed to start Access Point mode!");
-    return false;
-  }
 
-  // Target SSID found, attempt to connect
-  Logger::info("Attempting to connect to WiFi network: " + String(ssid));
+    WiFi.begin(ssid, password);
+    Logger::info("Connecting to WiFi network: " + String(ssid));
 
-  // Configure static IP for station mode
-  WiFi.mode(WIFI_STA);
-  if (!WiFi.config(localIp, gateway, subnet)) {
-    Logger::error("Static IP configuration failed, using DHCP");
+    unsigned long const WIFI_START_TIME = millis();
+    const unsigned long WIFI_TIMEOUT = WIFI_TIMEOUT_MS;
+
+    while (WiFiClass::status() != WL_CONNECTED && (millis() - WIFI_START_TIME) < WIFI_TIMEOUT) {
+      delay(TIMING_WIFI_RETRY_DELAY_MS);
+      Serial.print(".");
+    }
+
+    if (WiFiClass::status() == WL_CONNECTED) {
+      Serial.println();
+      Logger::info("✅ WiFi connected successfully!");
+      Logger::info("Station IP: " + WiFi.localIP().toString());
+      Logger::info("Connection time: " + String((millis() - WIFI_START_TIME) / 1000) + " seconds");
+      Logger::info("🎉 DUAL MODE ACTIVE: Both AP and WiFi connected!");
+    } else {
+      Serial.println();
+      Logger::warn("❌ WiFi connection failed - continuing with AP mode only");
+      WiFi.mode(WIFI_AP);  // Switch back to AP only
+    }
   } else {
-    Logger::debug("Static IP configuration successful");
+    Logger::info("=== STEP 3: WiFi Connection Skipped ===");
+    Logger::info("Target SSID not found - continuing with AP mode only");
   }
 
-  WiFi.begin(ssid, password);
+  Logger::info("✅ Network setup complete - AP mode guaranteed active");
+  return true;
 
-  unsigned long const WIFI_START_TIME = millis();
-  const unsigned long WIFI_TIMEOUT = WIFI_TIMEOUT_MS;  // Configurable WiFi timeout
 
-  Logger::info("Connecting to WiFi");
-  while (WiFiClass::status() != WL_CONNECTED && (millis() - WIFI_START_TIME) < WIFI_TIMEOUT) {
-    delay(TIMING_WIFI_RETRY_DELAY_MS);
-    Serial.print(".");
+}
+
+// Function to display current WiFi status
+void displayWiFiStatus() {
+  Logger::info("=== FINAL NETWORK STATUS ===");
+
+  wifi_mode_t mode = WiFi.getMode();
+  switch (mode) {
+    case WIFI_MODE_STA:
+      Logger::info("🔗 Mode: Station (STA) only");
+      break;
+    case WIFI_MODE_AP:
+      Logger::info("📡 Mode: Access Point (AP) only");
+      break;
+    case WIFI_MODE_APSTA:
+      Logger::info("🌐 Mode: Dual (STA + AP) - BEST SETUP!");
+      break;
+    default:
+      Logger::info("❌ Mode: Off or Unknown");
+      break;
   }
 
-  if (WiFiClass::status() == WL_CONNECTED) {
-    Serial.println();
-    Logger::info("WiFi connected successfully!");
-    Logger::info("IP address: " + WiFi.localIP().toString());
-    Logger::info("Connection time: " + String((millis() - WIFI_START_TIME) / 1000) + " seconds");
-    return true;
+  // Station status
+  if (WiFi.status() == WL_CONNECTED) {
+    Logger::info("✅ Station Status: Connected to " + WiFi.SSID());
+    Logger::info("🏠 Station IP: " + WiFi.localIP().toString());
+    Logger::info("📶 Signal Strength: " + String(WiFi.RSSI()) + " dBm");
+    Logger::info("🌍 Internet Access: Available");
+  } else {
+    Logger::info("❌ Station Status: Disconnected");
+    Logger::info("🌍 Internet Access: Not available");
   }
-  Serial.println();
-  Logger::warn("WiFi connection failed after timeout, starting Access Point mode...");
 
-  // Start AP mode as fallback
-  WiFi.mode(WIFI_AP);
-  bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
-
-  if (AP_STARTED) {
-    IPAddress const AP_IP = WiFi.softAPIP();
-    Logger::info("Fallback Access Point started successfully!");
-    Logger::info("AP SSID: " + String(apSsid));
-    Logger::info("AP Password: " + String(apPassword));
-    Logger::info("AP IP address: " + AP_IP.toString());
-    Logger::info("Connect to the AP and visit http://" + AP_IP.toString() +
-                 " to access the color matcher");
-    return true;
+  // AP status
+  if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
+    Logger::info("✅ AP Status: Active and Broadcasting");
+    Logger::info("📡 AP SSID: '" + String(apSsid) + "'");
+    Logger::info("🔐 AP Password: '" + String(apPassword) + "'");
+    Logger::info("🏠 AP IP: " + WiFi.softAPIP().toString());
+    Logger::info("👥 Connected Clients: " + String(WiFi.softAPgetStationNum()));
+    Logger::info("🔗 Direct Access: http://" + WiFi.softAPIP().toString());
+  } else {
+    Logger::info("❌ AP Status: Not active");
   }
-  Logger::error("Failed to start fallback Access Point mode!");
-  return false;
+
+  Logger::info("============================");
 }
 
 void setup() {
@@ -1915,6 +2345,25 @@ void setup() {
   Logger::info("LittleFS Used: " + String(USED / BYTES_PER_KB) + " KB");
   Logger::info("LittleFS Free: " + String((TOTAL - USED) / BYTES_PER_KB) + " KB");
 
+  // Initialize persistent storage for calibration data and color captures
+  Logger::info("Initializing persistent storage...");
+  if (persistentStorage.begin()) {
+    Logger::info("Persistent storage initialized successfully");
+    persistentStorage.printStorageInfo();
+
+    // Load any existing calibration data
+    StoredCalibrationData storedCalib;
+    if (persistentStorage.loadCalibrationData(storedCalib)) {
+      Logger::info("Loaded existing calibration data from flash");
+      // Convert stored calibration to runtime format if needed
+      // This will be implemented when we integrate with the calibration system
+    } else {
+      Logger::info("No existing calibration data found in flash");
+    }
+  } else {
+    Logger::error("Failed to initialize persistent storage - captures and calibration won't be saved");
+  }
+
   // Load color database
   Logger::info("Loading color database...");
 
@@ -1934,6 +2383,10 @@ void setup() {
   // Connect to WiFi or start AP mode
   if (!connectToWiFiOrStartAP()) {
     Logger::error("Failed to establish network connectivity - system may not function properly");
+  } else {
+    // Display final WiFi status
+    delay(1000);  // Give WiFi a moment to stabilize
+    displayWiFiStatus();
   }
 
   // Serve static files
@@ -1957,6 +2410,25 @@ void setup() {
   server.on("/api/force-color-lookup", HTTP_GET, handleForceColorLookup);
   Logger::debug("Route registered: /api/force-color-lookup -> handleForceColorLookup (immediate "
                 "color name lookup)");
+
+  server.on("/api/capture-color", HTTP_POST, handleCaptureColor);
+  Logger::debug("Route registered: /api/capture-color -> handleCaptureColor (capture and store color)");
+
+  // Storage management API endpoints
+  server.on("/api/stored-captures", HTTP_GET, handleGetStoredCaptures);
+  Logger::debug("Route registered: /api/stored-captures -> handleGetStoredCaptures (get all stored captures)");
+
+  server.on("/api/clear-captures", HTTP_POST, handleClearStoredCaptures);
+  Logger::debug("Route registered: /api/clear-captures -> handleClearStoredCaptures (clear all stored captures)");
+
+  server.on("/api/storage-status", HTTP_GET, handleStorageStatus);
+  Logger::debug("Route registered: /api/storage-status -> handleStorageStatus (get storage information)");
+
+  server.on("/api/delete-capture", HTTP_DELETE, handleDeleteCapture);
+  Logger::debug("Route registered: /api/delete-capture -> handleDeleteCapture (delete specific capture)");
+
+  server.on("/api/export-captures", HTTP_GET, handleExportCaptures);
+  Logger::debug("Route registered: /api/export-captures -> handleExportCaptures (export all data)");
 
   // Battery monitoring API endpoint
   server.on("/api/battery", HTTP_GET, handleBatteryAPI);
@@ -3337,6 +3809,32 @@ void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
   settings.legacyCalibrationData.blackReferenceComplete = true;
   settings.legacyCalibrationData.isCalibrated = settings.legacyCalibrationData.blackReferenceComplete && settings.legacyCalibrationData.whiteReferenceComplete;
 
+  // Auto-save calibration data to persistent storage
+  if (persistentStorage.isInitialized()) {
+    StoredCalibrationData storedCalib;
+    // Load existing calibration data if any
+    persistentStorage.loadCalibrationData(storedCalib);
+
+    // Update black reference data
+    storedCalib.blackReference.x = X;
+    storedCalib.blackReference.y = Y;
+    storedCalib.blackReference.z = Z;
+    storedCalib.blackReference.ir1 = IR1;
+    storedCalib.blackReference.ir2 = IR2;
+    storedCalib.blackReference.timestamp = millis();
+    storedCalib.blackReference.quality = (totalSignal < 100) ? 0.95f : (totalSignal < 1000) ? 0.85f : 0.7f;
+    storedCalib.blackReference.isValid = true;
+    storedCalib.blackComplete = true;
+    storedCalib.isCalibrated = settings.legacyCalibrationData.isCalibrated;
+    storedCalib.calibrationTimestamp = millis();
+
+    if (persistentStorage.saveCalibrationData(storedCalib)) {
+      Logger::info("Black reference calibration saved to flash storage");
+    } else {
+      Logger::warn("Failed to save black reference calibration to flash storage");
+    }
+  }
+
   // Restore original LED brightness
   analogWrite(leDpin, ORIGINAL_BRIGHTNESS);
   Logger::info("LED restored to original brightness: " + String(ORIGINAL_BRIGHTNESS));
@@ -3481,6 +3979,33 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
   settings.legacyCalibrationData.whiteReferenceComplete = true;
   settings.legacyCalibrationData.isCalibrated = settings.legacyCalibrationData.blackReferenceComplete && settings.legacyCalibrationData.whiteReferenceComplete;
 
+  // Auto-save calibration data to persistent storage
+  if (persistentStorage.isInitialized()) {
+    StoredCalibrationData storedCalib;
+    // Load existing calibration data if any
+    persistentStorage.loadCalibrationData(storedCalib);
+
+    // Update white reference data
+    storedCalib.whiteReference.x = X;
+    storedCalib.whiteReference.y = Y;
+    storedCalib.whiteReference.z = Z;
+    storedCalib.whiteReference.ir1 = IR1;
+    storedCalib.whiteReference.ir2 = IR2;
+    storedCalib.whiteReference.timestamp = millis();
+    storedCalib.whiteReference.quality = (totalSignal > 40000) ? 0.95f : (totalSignal > 20000) ? 0.85f : 0.7f;
+    storedCalib.whiteReference.isValid = true;
+    storedCalib.whiteComplete = true;
+    storedCalib.isCalibrated = settings.legacyCalibrationData.isCalibrated;
+    storedCalib.ledBrightness = settings.ledBrightness;
+    storedCalib.calibrationTimestamp = millis();
+
+    if (persistentStorage.saveCalibrationData(storedCalib)) {
+      Logger::info("White reference calibration saved to flash storage");
+    } else {
+      Logger::warn("Failed to save white reference calibration to flash storage");
+    }
+  }
+
   Logger::info("✓ White reference captured successfully:");
   Logger::info("  X=" + String(X) + " Y=" + String(Y) + " Z=" + String(Z));
   Logger::info("  IR1=" + String(IR1) + " IR2=" + String(IR2));
@@ -3599,6 +4124,31 @@ void handleCalibrateBlueReference(AsyncWebServerRequest *request) {
   // Mark blue reference as complete
   settings.legacyCalibrationData.blueReferenceComplete = true;
 
+  // Auto-save calibration data to persistent storage
+  if (persistentStorage.isInitialized()) {
+    StoredCalibrationData storedCalib;
+    // Load existing calibration data if any
+    persistentStorage.loadCalibrationData(storedCalib);
+
+    // Update blue reference data
+    storedCalib.blueReference.x = avgX;
+    storedCalib.blueReference.y = avgY;
+    storedCalib.blueReference.z = avgZ;
+    storedCalib.blueReference.ir1 = avgIR1;
+    storedCalib.blueReference.ir2 = avgIR2;
+    storedCalib.blueReference.timestamp = millis();
+    storedCalib.blueReference.quality = (zRatio > 0.4f) ? 0.95f : (zRatio > 0.35f) ? 0.85f : 0.7f;
+    storedCalib.blueReference.isValid = true;
+    storedCalib.blueComplete = true;
+    storedCalib.calibrationTimestamp = millis();
+
+    if (persistentStorage.saveCalibrationData(storedCalib)) {
+      Logger::info("Blue reference calibration saved to flash storage");
+    } else {
+      Logger::warn("Failed to save blue reference calibration to flash storage");
+    }
+  }
+
   Logger::info("✓ Blue reference captured and stored successfully:");
   Logger::info("  X=" + String(avgX) + " Y=" + String(avgY) + " Z=" + String(avgZ));
   Logger::info("  IR1=" + String(avgIR1) + " IR2=" + String(avgIR2));
@@ -3703,6 +4253,31 @@ void handleCalibrateYellowReference(AsyncWebServerRequest *request) {
 
   // Mark yellow reference as complete
   settings.legacyCalibrationData.yellowReferenceComplete = true;
+
+  // Auto-save calibration data to persistent storage
+  if (persistentStorage.isInitialized()) {
+    StoredCalibrationData storedCalib;
+    // Load existing calibration data if any
+    persistentStorage.loadCalibrationData(storedCalib);
+
+    // Update yellow reference data
+    storedCalib.yellowReference.x = avgX;
+    storedCalib.yellowReference.y = avgY;
+    storedCalib.yellowReference.z = avgZ;
+    storedCalib.yellowReference.ir1 = avgIR1;
+    storedCalib.yellowReference.ir2 = avgIR2;
+    storedCalib.yellowReference.timestamp = millis();
+    storedCalib.yellowReference.quality = (xyRatio > 0.7f) ? 0.95f : (xyRatio > 0.6f) ? 0.85f : 0.7f;
+    storedCalib.yellowReference.isValid = true;
+    storedCalib.yellowComplete = true;
+    storedCalib.calibrationTimestamp = millis();
+
+    if (persistentStorage.saveCalibrationData(storedCalib)) {
+      Logger::info("Yellow reference calibration saved to flash storage");
+    } else {
+      Logger::warn("Failed to save yellow reference calibration to flash storage");
+    }
+  }
 
   Logger::info("✓ Yellow reference captured and stored successfully:");
   Logger::info("  X=" + String(avgX) + " Y=" + String(avgY) + " Z=" + String(avgZ));

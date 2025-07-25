@@ -56,9 +56,21 @@
                 </div>
             </div>
 
+            <!-- Professional Calibration Mode Toggle -->
+            <div class="calibration-mode-toggle">
+                <label class="toggle-switch" for="professionalModeToggle">
+                    <input type="checkbox" id="professionalModeToggle">
+                    <span class="slider"></span>
+                </label>
+                <label class="toggle-label" for="professionalModeToggle">
+                    <i class="fas fa-graduation-cap"></i> Professional 4-Point Calibration
+                    <small>(Industry-grade accuracy with tetrahedral interpolation)</small>
+                </label>
+            </div>
+
             <div class="calibration-steps">
-                <h3><i class="fas fa-list-ol"></i> 3-Step Calibration Process</h3>
-                <p class="calibration-help">Follow these steps in a dark room for best results:</p>
+                <h3 id="calibrationProcessTitle"><i class="fas fa-list-ol"></i> 3-Step Calibration Process</h3>
+                <p class="calibration-help" id="calibrationHelp">Follow these steps in a dark room for best results:</p>
 
                 <div class="calibration-step">
                     <div class="step-header">
@@ -84,9 +96,36 @@
                     <div class="step-status" id="whiteStatus">Not calibrated</div>
                 </div>
 
-                <div class="calibration-step">
+                <!-- Professional 4-Point Calibration Steps (Hidden by default) -->
+                <div class="calibration-step professional-step" id="blueCalibrationStep" style="display: none;">
                     <div class="step-header">
                         <span class="step-number">3</span>
+                        <h4>Blue Reference Calibration</h4>
+                        <span class="professional-badge">PRO</span>
+                    </div>
+                    <p>Place a BLUE object (blue paper/cloth) over the sensor</p>
+                    <button type="button" class="btn-calibration professional" id="calibrateBlueBtn">
+                        <i class="fas fa-square" style="color: #0066ff;"></i> Calibrate Blue Reference
+                    </button>
+                    <div class="step-status" id="blueStatus">Not calibrated</div>
+                </div>
+
+                <div class="calibration-step professional-step" id="yellowCalibrationStep" style="display: none;">
+                    <div class="step-header">
+                        <span class="step-number">4</span>
+                        <h4>Yellow Reference Calibration</h4>
+                        <span class="professional-badge">PRO</span>
+                    </div>
+                    <p>Place a YELLOW object (yellow paper/cloth) over the sensor</p>
+                    <button type="button" class="btn-calibration professional" id="calibrateYellowBtn">
+                        <i class="fas fa-square" style="color: #ffcc00;"></i> Calibrate Yellow Reference
+                    </button>
+                    <div class="step-status" id="yellowStatus">Not calibrated</div>
+                </div>
+
+                <div class="calibration-step">
+                    <div class="step-header">
+                        <span class="step-number" id="vividWhiteStepNumber">3</span>
                         <h4>Vivid White Target Calibration</h4>
                     </div>
                     <p>Place your VIVID WHITE sample over the sensor for RGB(247,248,244)</p>
@@ -123,6 +162,60 @@
             </div>
         </div>
 
+        <!-- Professional Color Accuracy Validation -->
+        <div class="card validation-panel" id="validationPanel">
+            <h2><i class="fas fa-microscope"></i> Professional Color Accuracy Validation</h2>
+            <div class="validation-info">
+                <p class="validation-help">
+                    <i class="fas fa-info-circle"></i>
+                    CIEDE2000 validation tests your calibration against professional color standards.
+                    Industry thresholds: ΔE &lt; 1.0 (Excellent), ΔE &lt; 2.0 (Professional), ΔE &lt; 3.0 (Acceptable)
+                </p>
+            </div>
+
+            <div class="validation-controls">
+                <button type="button" class="btn-validate" id="validateCIEDE2000Btn">
+                    <i class="fas fa-flask"></i> Run CIEDE2000 Validation
+                </button>
+                <div class="threshold-control">
+                    <label for="validationThreshold">Professional Threshold (ΔE):</label>
+                    <select id="validationThreshold">
+                        <option value="1.0">1.0 - Critical Color Matching</option>
+                        <option value="2.0" selected>2.0 - Professional Applications</option>
+                        <option value="3.0">3.0 - General Use</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="validation-results" id="validationResults" style="display: none;">
+                <h3>Validation Results</h3>
+                <div class="validation-summary">
+                    <div class="validation-status" id="validationStatus">
+                        <i class="fas fa-spinner fa-spin"></i> Running validation...
+                    </div>
+                    <div class="validation-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Average ΔE:</span>
+                            <span class="metric-value" id="averageDeltaE">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Max ΔE:</span>
+                            <span class="metric-value" id="maxDeltaE">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Test Colors:</span>
+                            <span class="metric-value" id="testColorCount">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Quality Level:</span>
+                            <span class="metric-value" id="qualityLevel">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="validation-recommendations" id="validationRecommendations"></div>
+            </div>
+        </div>
+
         <!-- Quick Settings -->
         <div class="card settings-panel">
             <h2><i class="fas fa-sliders-h"></i> Quick Settings</h2>
@@ -152,6 +245,63 @@
                             <i class="fas fa-stethoscope"></i> Diagnose Current Sample
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Management -->
+        <div class="card storage-panel">
+            <h2><i class="fas fa-database"></i> Storage Management</h2>
+
+            <!-- Storage Status -->
+            <div class="storage-status">
+                <h3><i class="fas fa-chart-pie"></i> Storage Status</h3>
+                <div class="storage-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Stored Captures:</span>
+                        <span class="stat-value" id="storedCapturesCount">--</span>
+                        <span class="stat-max">/ <span id="maxCaptures">30</span></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Storage Used:</span>
+                        <span class="stat-value" id="storageUsed">--%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Calibration Data:</span>
+                        <span class="stat-value" id="calibrationStored">--</span>
+                    </div>
+                </div>
+                <div class="storage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="storageProgressFill" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage Controls -->
+            <div class="storage-controls">
+                <h3><i class="fas fa-tools"></i> Storage Controls</h3>
+                <div class="control-buttons">
+                    <button type="button" class="btn-info" id="viewStoredCapturesBtn">
+                        <i class="fas fa-list"></i> View Stored Captures
+                    </button>
+                    <button type="button" class="btn-success" id="exportDataBtn">
+                        <i class="fas fa-download"></i> Export Data
+                    </button>
+                    <button type="button" class="btn-warning" id="clearCapturesBtn">
+                        <i class="fas fa-trash"></i> Clear All Captures
+                    </button>
+                    <button type="button" class="btn-secondary" id="refreshStorageBtn">
+                        <i class="fas fa-sync"></i> Refresh Status
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stored Captures List -->
+            <div class="stored-captures" id="storedCapturesContainer" style="display: none;">
+                <h3><i class="fas fa-history"></i> Stored Captures</h3>
+                <div class="captures-list" id="capturesList">
+                    <!-- Captures will be populated here -->
                 </div>
             </div>
         </div>
