@@ -2304,6 +2304,78 @@ uint32_t getCurrentTimestamp() {
   }
 }
 
+// Function to restore calibration data from persistent storage to runtime settings
+static bool restoreCalibrationFromStorage(const StoredCalibrationData& storedCalib) {
+  Logger::info("🔄 Restoring calibration data to runtime settings...");
+
+  // Validate that we have at least black and white calibration
+  if (!storedCalib.blackComplete || !storedCalib.whiteComplete) {
+    Logger::warn("❌ Incomplete calibration data - need both black and white references");
+    return false;
+  }
+
+  // Restore black reference
+  settings.legacyCalibrationData.minX = storedCalib.blackReference.x;
+  settings.legacyCalibrationData.minY = storedCalib.blackReference.y;
+  settings.legacyCalibrationData.minZ = storedCalib.blackReference.z;
+  settings.legacyCalibrationData.blackReferenceComplete = storedCalib.blackComplete;
+
+  // Restore white reference
+  settings.legacyCalibrationData.maxX = storedCalib.whiteReference.x;
+  settings.legacyCalibrationData.maxY = storedCalib.whiteReference.y;
+  settings.legacyCalibrationData.maxZ = storedCalib.whiteReference.z;
+  settings.legacyCalibrationData.whiteReferenceComplete = storedCalib.whiteComplete;
+
+  // Calculate range values for logging (not stored in struct)
+  uint16_t rangeX = settings.legacyCalibrationData.maxX - settings.legacyCalibrationData.minX;
+  uint16_t rangeY = settings.legacyCalibrationData.maxY - settings.legacyCalibrationData.minY;
+  uint16_t rangeZ = settings.legacyCalibrationData.maxZ - settings.legacyCalibrationData.minZ;
+
+  // Restore blue reference if available
+  if (storedCalib.blueComplete) {
+    settings.legacyCalibrationData.blueX = storedCalib.blueReference.x;
+    settings.legacyCalibrationData.blueY = storedCalib.blueReference.y;
+    settings.legacyCalibrationData.blueZ = storedCalib.blueReference.z;
+    settings.legacyCalibrationData.blueIR1 = storedCalib.blueReference.ir1;
+    settings.legacyCalibrationData.blueIR2 = storedCalib.blueReference.ir2;
+    settings.legacyCalibrationData.blueReferenceComplete = storedCalib.blueComplete;
+  }
+
+  // Restore yellow reference if available
+  if (storedCalib.yellowComplete) {
+    settings.legacyCalibrationData.yellowX = storedCalib.yellowReference.x;
+    settings.legacyCalibrationData.yellowY = storedCalib.yellowReference.y;
+    settings.legacyCalibrationData.yellowZ = storedCalib.yellowReference.z;
+    settings.legacyCalibrationData.yellowIR1 = storedCalib.yellowReference.ir1;
+    settings.legacyCalibrationData.yellowIR2 = storedCalib.yellowReference.ir2;
+    settings.legacyCalibrationData.yellowReferenceComplete = storedCalib.yellowComplete;
+  }
+
+  // Mark as calibrated
+  settings.legacyCalibrationData.isCalibrated = storedCalib.isCalibrated;
+
+  // Restore LED brightness if available
+  if (storedCalib.ledBrightness > 0) {
+    settings.ledBrightness = storedCalib.ledBrightness;
+    analogWrite(leDpin, settings.ledBrightness);
+    Logger::info("🔆 LED brightness restored to: " + String(settings.ledBrightness));
+  }
+
+  // Log restored calibration ranges
+  Logger::info("📊 Calibration ranges restored:");
+  Logger::info("  Black: X=" + String(settings.legacyCalibrationData.minX) +
+              " Y=" + String(settings.legacyCalibrationData.minY) +
+              " Z=" + String(settings.legacyCalibrationData.minZ));
+  Logger::info("  White: X=" + String(settings.legacyCalibrationData.maxX) +
+              " Y=" + String(settings.legacyCalibrationData.maxY) +
+              " Z=" + String(settings.legacyCalibrationData.maxZ));
+  Logger::info("  Range: X=" + String(rangeX) +
+              " Y=" + String(rangeY) +
+              " Z=" + String(rangeZ));
+
+  return true;
+}
+
 // Function to display current WiFi status
 static void displayWiFiStatus() {
   Logger::info("=== FINAL NETWORK STATUS ===");
@@ -2482,11 +2554,22 @@ void setup() {
     // Load any existing calibration data
     StoredCalibrationData storedCalib;
     if (persistentStorage.loadCalibrationData(storedCalib)) {
-      Logger::info("Loaded existing calibration data from flash");
-      // Convert stored calibration to runtime format if needed
-      // This will be implemented when we integrate with the calibration system
+      Logger::info("✅ Loaded existing calibration data from flash");
+
+      // Apply stored calibration to runtime settings
+      if (restoreCalibrationFromStorage(storedCalib)) {
+        Logger::info("🎯 Calibration restored successfully - device is calibrated!");
+        String calibStatus = "📊 Calibration Status: ";
+        calibStatus += "Black: " + String(storedCalib.blackComplete ? "✅" : "❌") + " ";
+        calibStatus += "White: " + String(storedCalib.whiteComplete ? "✅" : "❌") + " ";
+        calibStatus += "Blue: " + String(storedCalib.blueComplete ? "✅" : "❌") + " ";
+        calibStatus += "Yellow: " + String(storedCalib.yellowComplete ? "✅" : "❌");
+        Logger::info(calibStatus);
+      } else {
+        Logger::warn("⚠️ Failed to restore calibration - may need recalibration");
+      }
     } else {
-      Logger::info("No existing calibration data found in flash");
+      Logger::info("ℹ️ No existing calibration data found in flash - device needs calibration");
     }
   } else {
     Logger::error("Failed to initialize persistent storage - captures and calibration won't be saved");
