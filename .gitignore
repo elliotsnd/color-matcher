@@ -134,3 +134,9 @@ test_*.html
 firmware.bin
 bootloader.bin
 partitions.bin
+
+# GitHub MCP Server tokens and configuration
+github-token.txt
+github-mcp-server-config.json
+mcp-tokens.json
+*.token
