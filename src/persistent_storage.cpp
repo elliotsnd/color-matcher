@@ -1,5 +1,9 @@
 #include "persistent_storage.h"
 #include "sensor_settings.h"
+#include <time.h>
+
+// Forward declaration for timestamp function
+extern uint32_t getCurrentTimestamp();
 
 // Global storage instance
 PersistentStorage persistentStorage;
@@ -396,7 +400,7 @@ namespace StorageHelpers {
                                                float batteryVoltage,
                                                uint32_t searchDuration) {
         StoredColorCapture capture;
-        capture.timestamp = millis() / 1000; // Convert to seconds
+        capture.timestamp = getCurrentTimestamp(); // Use NTP-synchronized Melbourne time
         capture.x = x;
         capture.y = y;
         capture.z = z;

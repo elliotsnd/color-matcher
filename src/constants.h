@@ -70,7 +70,7 @@
 #define JSON_FIELD_STATUS "status"
 #define JSON_FIELD_MESSAGE "message"
 #define JSON_STATUS_SUCCESS "success"
-#define JSON_CONTENT_TYPE "application/json"
+// JSON_CONTENT_TYPE moved to main.cpp as constexpr (modern C++)
 
 // Timing Constants
 #define TIMING_WIFI_RETRY_DELAY_MS 500

@@ -13,14 +13,15 @@
  * @url  https://github.com/DFRobot/DFRobot_TCS3430
  */
 
-// ðŸŽ›ï¸ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
-#include <ArduinoJson.h>
+// 🎛️ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
+
 #include <ESPAsyncWebServer.h>
 #include <esp_heap_caps.h>
 
 #include <LittleFS.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <time.h>  // For NTP time synchronization
 
 #include "Arduino.h"
 #include "CIEDE2000.h"
@@ -39,16 +40,26 @@
 #include "esp32-hal-psram.h"
 #include "esp32-hal.h"
 #include "esp_system.h"
-#include "pgmspace.h"
-#include "sensor_settings.h"
-#include "constants.h"
-#include "psram_utils.h"
-#include "persistent_storage.h"
 
+#include "constants.h"
+#include "esp_wifi_types.h"
+#include "sensor_settings.h"
+
+#include "persistent_storage.h"
+#include "psram_utils.h"  // Required for PSRAMVector definition
+
+#include "ArduinoJson/Array/JsonArray.hpp"
+#include "ArduinoJson/Document/JsonDocument.hpp"
 #include "ArduinoJson/Memory/Allocator.hpp"
+#include "ArduinoJson/Object/JsonObject.hpp"
+#include <algorithm>
+#include <array>  // For std::array (clang-tidy fix)
 #include <cmath>
+#include <utility>  // For std::forward (clang-tidy fix)
+// cstdarg removed - not used directly (clang-tidy fix)
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 // Use lightweight KD-tree optimized for embedded systems
 #if ENABLE_KDTREE
@@ -56,12 +67,28 @@
 #else
   // Define ColorPoint and PSRAMColorVector when KD-tree is disabled
   struct ColorPoint {
-    uint8_t r, g, b;  // RGB values (3 bytes)
+  private:
+    uint8_t r;        // Red value
+    uint8_t g;        // Green value
+    uint8_t b;        // Blue value
     uint16_t index;   // Index in original database (2 bytes)
 
+  public:
     ColorPoint() : r(0), g(0), b(0), index(0) {}
     ColorPoint(uint8_t red, uint8_t green, uint8_t blue, uint16_t idx)
       : r(red), g(green), b(blue), index(idx) {}
+
+    // Accessor methods (clang-tidy fix for public member variables)
+    uint8_t getRed() const { return r; }
+    uint8_t getGreen() const { return g; }
+    uint8_t getBlue() const { return b; }
+    uint16_t getIndex() const { return index; }
+
+    // Setter methods
+    void setRed(uint8_t red) { r = red; }
+    void setGreen(uint8_t green) { g = green; }
+    void setBlue(uint8_t blue) { b = blue; }
+    void setIndex(uint16_t idx) { index = idx; }
   };
 
   // Use the same allocator type as psram_utils.h for consistency
@@ -69,7 +96,7 @@
 #endif
 #include <UMS3.h>
 
-// Constants for magic numbers
+// Constants for magic numbers and string literals (clang-tidy optimization)
 namespace {
 constexpr int HTTP_OK = 200;
 constexpr int HTTP_BAD_REQUEST = 400;
@@ -87,45 +114,57 @@ constexpr int MAX_SAMPLE_DELAY = 50;
 constexpr float MAX_IR_COMPENSATION = 2.0f;
 constexpr int LARGE_COLOR_DB_THRESHOLD = 1000;
 
+// Common string literals to reduce duplication
+constexpr const char* JSON_CONTENT_TYPE = "application/json";
+constexpr const char* TEXT_CONTENT_TYPE = "text/plain";
+constexpr const char* HTML_CONTENT_TYPE = "text/html";
+constexpr const char* CSS_CONTENT_TYPE = "text/css";
+constexpr const char* JS_CONTENT_TYPE = "application/javascript";
+constexpr const char* SUCCESS_STATUS = "success";
+constexpr const char* ERROR_STATUS = "error";
+constexpr const char* ROUTE_REGISTERED_PREFIX = "Route registered: ";
+constexpr const char* API_COLOR_ENDPOINT = "/api/color";
+constexpr const char* API_SETTINGS_ENDPOINT = "/api/settings";
+
 // String formatting helper functions to replace String concatenations
 // SonarQube fix: Avoid String() concatenations for better performance
-template<size_t N>
-void formatLogMessage(char (&buffer)[N], const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  vsnprintf(buffer, N, format, args);
-  va_end(args);
+// Modern C++ variadic template approach (clang-tidy modernization)
+template<size_t N, typename... Args>
+void formatLogMessage(std::array<char, N>& buffer, const char* format, Args&&... args) {
+  snprintf(buffer.data(), N, format, std::forward<Args>(args)...);
 }
 
 // Helper for RGB formatting
 template<size_t N>
-void formatRGB(char (&buffer)[N], uint8_t r, uint8_t g, uint8_t b) {
-  snprintf(buffer, N, "RGB(%d,%d,%d)", r, g, b);
+void formatRGB(std::array<char, N>& buffer, uint8_t red, uint8_t green, uint8_t blue) {
+  snprintf(buffer.data(), N, "RGB(%d,%d,%d)", red, green, blue);
 }
 
 // Helper for XYZ formatting
 template<size_t N>
-void formatXYZ(char (&buffer)[N], uint16_t x, uint16_t y, uint16_t z) {
-  snprintf(buffer, N, "XYZ(%d,%d,%d)", x, y, z);
+void formatXYZ(std::array<char, N>& buffer, uint16_t xCoord, uint16_t yCoord, uint16_t zCoord) {
+  snprintf(buffer.data(), N, "XYZ(%d,%d,%d)", xCoord, yCoord, zCoord);
 }
 
 // Helper for memory info formatting
 template<size_t N>
-void formatMemoryInfo(char (&buffer)[N], size_t heap, size_t psram) {
-  snprintf(buffer, N, "Heap=%zu KB, PSRAM=%zu KB", heap / BYTES_PER_KB, psram / BYTES_PER_KB);
+void formatMemoryInfo(std::array<char, N>& buffer, size_t heap, size_t psram) {
+  snprintf(buffer.data(), N, "Heap=%zu KB, PSRAM=%zu KB", heap / BYTES_PER_KB, psram / BYTES_PER_KB);
 }
 
 // JSON response builder to replace String concatenations
 class JsonResponseBuilder {
 private:
-  String response;
+  String response = "{";  // In-class initializer (clang-tidy fix)
   bool firstField = true;
 
 public:
-  JsonResponseBuilder() : response("{") {}
+  JsonResponseBuilder() = default;
 
   void addField(const char* key, int value) {
-    if (!firstField) response += ",";
+    if (!firstField) {
+      response += ",";
+    }
     response += "\"";
     response += key;
     response += "\":";
@@ -134,7 +173,9 @@ public:
   }
 
   void addField(const char* key, float value, int decimals = 2) {
-    if (!firstField) response += ",";
+    if (!firstField) {
+      response += ",";
+    }
     response += "\"";
     response += key;
     response += "\":";
@@ -143,7 +184,9 @@ public:
   }
 
   void addField(const char* key, const char* value) {
-    if (!firstField) response += ",";
+    if (!firstField) {
+      response += ",";
+    }
     response += "\"";
     response += key;
     response += "\":\"";
@@ -157,7 +200,9 @@ public:
   }
 
   void addRawField(const char* key, const char* rawValue) {
-    if (!firstField) response += ",";
+    if (!firstField) {
+      response += ",";
+    }
     response += "\"";
     response += key;
     response += "\":";
@@ -178,12 +223,18 @@ public:
 
 // Holds raw sensor data after averaging
 struct SensorData {
-  uint16_t x, y, z, ir1, ir2;
+  uint16_t x;
+  uint16_t y;
+  uint16_t z;
+  uint16_t ir1;
+  uint16_t ir2;
 };
 
 // Holds the final calculated RGB color
 struct ColorRGB {
-  uint8_t r, g, b;
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
 };
 
 // Color lookup state is now managed by the global colorLookup structure
@@ -212,30 +263,49 @@ struct PerformanceState {
 };
 
 // =============================================================================
-// FORWARD DECLARATIONS FOR REFACTORED LOOP FUNCTIONS
+// ANONYMOUS NAMESPACE FOR INTERNAL FUNCTIONS (clang-tidy modernization)
 // =============================================================================
 
-void handlePeriodicChecks(TimingState& timers);
-SensorData readAveragedSensorData();
-void performIntegrationTimeAdjustment(const SensorData& data, HysteresisState& state);
-void checkForWarnings(const SensorData& data, TimingState& timers);
-ColorRGB smoothColor(uint8_t r, uint8_t g, uint8_t b);
-void updateFastApiData(const SensorData& data, const ColorRGB& color);
-void handleColorNameLookup(const ColorRGB& color);
-void logPeriodicStatus(const SensorData& data, const ColorRGB& color, TimingState& timers);
-void monitorPerformance(PerformanceState& state, TimingState& timers);
-
-// Color conversion function declarations
-void convertXYZtoRGB_Professional(uint16_t xValue, uint16_t yValue, uint16_t zValue, uint16_t infraredOne, uint16_t infraredTwo,
-                                  uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut);
+// =============================================================================
+// GLOBAL VARIABLES AND OBJECTS
+// =============================================================================
 
 // Battery monitoring for ProS3 - using official UMS3 library
 // ProS3 has built-in battery monitoring circuit and I2C fuel gauge
 UMS3 ums3;
 
+namespace {
+  // Global variables moved to anonymous namespace for internal linkage (clang-tidy fix)
+  IPAddress localIp;
+  IPAddress gateway;
+  IPAddress subnet;
+  AsyncWebServer server(HTTP_SERVER_PORT);
 
+  // Internal helper function
+  void initializeIPAddresses() {
+    localIp.fromString(STATIC_IP);
+    gateway.fromString(GATEWAY_IP);
+    subnet.fromString(SUBNET_MASK);
+  }
 
+} // anonymous namespace
 
+// =============================================================================
+// FORWARD DECLARATIONS FOR REFACTORED LOOP FUNCTIONS
+// =============================================================================
+
+void handlePeriodicChecks(TimingState &timers);
+SensorData readAveragedSensorData();
+void performIntegrationTimeAdjustment(const SensorData &data, HysteresisState &state);
+void checkForWarnings(const SensorData &data, TimingState &timers);
+ColorRGB smoothColor(uint8_t red, uint8_t green, uint8_t blue);
+void updateFastApiData(const SensorData &data, const ColorRGB &color);
+void handleColorNameLookup(const ColorRGB &color);
+void logPeriodicStatus(const SensorData &data, const ColorRGB &color, TimingState &timers);
+void monitorPerformance(PerformanceState &state, TimingState &timers);
+void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                                uint16_t infraredOne, uint16_t infraredTwo, uint8_t &redOut,
+                                uint8_t &greenOut, uint8_t &blueOut);
 
 // Custom PSRAM allocator for ArduinoJson v7 (must use void* due to interface requirements)
 class PsramAllocator : public ArduinoJson::Allocator {
@@ -243,7 +313,13 @@ class PsramAllocator : public ArduinoJson::Allocator {
   // Type alias for memory pointer to document the intent
   using MemoryPtr = void*;
 
+  // Rule of Five implementation (clang-tidy fix for special member functions)
+  PsramAllocator() = default;
   virtual ~PsramAllocator() = default;
+  PsramAllocator(const PsramAllocator&) = delete;
+  PsramAllocator& operator=(const PsramAllocator&) = delete;
+  PsramAllocator(PsramAllocator&&) = delete;
+  PsramAllocator& operator=(PsramAllocator&&) = delete;
 
   MemoryPtr allocate(size_t size) override {
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -259,7 +335,7 @@ class PsramAllocator : public ArduinoJson::Allocator {
 };
 
 // Logging system
-enum class LogLevel { LOG_ERROR = 0, LOG_WARN = 1, LOG_INFO = 2, LOG_DEBUG = 3 };
+enum class LogLevel : std::uint8_t { LOG_ERROR = 0, LOG_WARN = 1, LOG_INFO = 2, LOG_DEBUG = 3 };  // clang-tidy: optimized enum size
 
 class Logger {
  private:
@@ -328,63 +404,49 @@ void Logger::debug(const String &prefix, int value) {
 LogLevel Logger::currentLevel = LogLevel::LOG_INFO;  // Configurable default log level
 
 // WiFi credentials
-static const char * const ssid = WIFI_SSID;
-static const char * const password = WIFI_PASSWORD;
+static const char *const SSID = WIFI_SSID;
+static const char *const PASSWORD = WIFI_PASSWORD;
 
 // AP mode credentials
 static const char * const apSsid = AP_SSID;
 static const char * const apPassword = AP_PASSWORD;
 
 // Static IP configuration
-static IPAddress localIp;
-static IPAddress gateway;
-static IPAddress subnet;
-static void initializeIPAddresses() {
-  localIp.fromString(STATIC_IP);
-  gateway.fromString(GATEWAY_IP);
-  subnet.fromString(SUBNET_MASK);
-}
-
-// Web server on port 80
-static AsyncWebServer server(HTTP_SERVER_PORT);
+// Variables moved to anonymous namespace above
 
 // Function forward declarations
-void handleGetSettings(AsyncWebServerRequest *request);
-void handleSetLedBrightness(AsyncWebServerRequest *request);
-void handleSetIntegrationTime(AsyncWebServerRequest *request);
-void handleSetIRCompensation(AsyncWebServerRequest *request);
-void handleSetColorSamples(AsyncWebServerRequest *request);
-void handleSetSampleDelay(AsyncWebServerRequest *request);
-void handleSetDebugSettings(AsyncWebServerRequest *request);
-void handleAdvancedSensorSettings(AsyncWebServerRequest *request);
-void handleSaveSettings(AsyncWebServerRequest *request);
-void handleDebugVividColors(AsyncWebServerRequest *request);
-void handleFixBlueChannel(AsyncWebServerRequest *request);
-void handleFixVividColors(AsyncWebServerRequest *request);
-void handleAutoOptimizeSensor(AsyncWebServerRequest *request);
-void handleSensorStatus(AsyncWebServerRequest *request);
-void handleFixBlackReadings(AsyncWebServerRequest *request);
-void handleCalibrateBlackReference(AsyncWebServerRequest *request);
-void handleCalibrateWhiteReference(AsyncWebServerRequest *request);
-void handleCalibrateBlueReference(AsyncWebServerRequest *request);
-void handleCalibrateYellowReference(AsyncWebServerRequest *request);
-void handleCalibrateVividWhite(AsyncWebServerRequest *request);
-void handleOptimizeLEDForYellow(AsyncWebServerRequest *request);
-void handleOptimizeSensorForYellow(AsyncWebServerRequest *request);
-void handleTuneBlack(AsyncWebServerRequest *request);
-void handleGetCalibrationData(AsyncWebServerRequest *request);
-void handleResetCalibration(AsyncWebServerRequest *request);
-void handleDiagnoseCalibration(AsyncWebServerRequest *request);
-void handleOptimizeAccuracy(AsyncWebServerRequest *request);
-void handleTestAllImprovements(AsyncWebServerRequest *request);
-void handleTestCalibrationFixes(AsyncWebServerRequest *request);
-void optimizeSensorForCurrentLight();
+static void handleGetSettings(AsyncWebServerRequest *request);
+static void handleSetLedBrightness(AsyncWebServerRequest *request);
+static void handleSetIntegrationTime(AsyncWebServerRequest *request);
+static void handleSetIRCompensation(AsyncWebServerRequest *request);
+static void handleSetColorSamples(AsyncWebServerRequest *request);
+static void handleSetSampleDelay(AsyncWebServerRequest *request);
+static void handleSetDebugSettings(AsyncWebServerRequest *request);
+static void handleAdvancedSensorSettings(AsyncWebServerRequest *request);
+static void handleSaveSettings(AsyncWebServerRequest *request);
+static void handleDebugVividColors(AsyncWebServerRequest *request);
+static void handleFixBlueChannel(AsyncWebServerRequest *request);
+static void handleFixVividColors(AsyncWebServerRequest *request);
+static void handleAutoOptimizeSensor(AsyncWebServerRequest *request);
+static void handleSensorStatus(AsyncWebServerRequest *request);
+static void handleFixBlackReadings(AsyncWebServerRequest *request);
+static void handleCalibrateBlackReference(AsyncWebServerRequest *request);
+static void handleCalibrateWhiteReference(AsyncWebServerRequest *request);
+static void handleCalibrateBlueReference(AsyncWebServerRequest *request);
+static void handleCalibrateYellowReference(AsyncWebServerRequest *request);
+static void handleCalibrateVividWhite(AsyncWebServerRequest *request);
+static void handleOptimizeLEDForYellow(AsyncWebServerRequest *request);
+static void handleOptimizeSensorForYellow(AsyncWebServerRequest *request);
+static void handleTuneBlack(AsyncWebServerRequest *request);
+static void handleGetCalibrationData(AsyncWebServerRequest *request);
+static void handleResetCalibration(AsyncWebServerRequest *request);
+static void handleDiagnoseCalibration(AsyncWebServerRequest *request);
+static void handleOptimizeAccuracy(AsyncWebServerRequest *request);
+static void handleTestAllImprovements(AsyncWebServerRequest *request);
+static void handleTestCalibrationFixes(AsyncWebServerRequest *request);
+static void optimizeSensorForCurrentLight();
 
-// Anonymous namespace for internal helper functions
-namespace {
-  // Anonymous namespace is used for better encapsulation of internal functions
-  // Function implementations will be placed here gradually
-} // namespace
+// Anonymous namespace removed - empty namespace not needed (clang-tidy fix)
 
 static TCS3430AutoGain colorSensor;  // Using new auto-gain library with corrected register mapping
 
@@ -402,9 +464,9 @@ constexpr int SCL_PIN = 4;
 static int leDpin = LED_PIN;
 
 // LED brightness control function for calibration
-void setLedBrightnessForCalibration(uint8_t brightness) {
-    // 'leDpin' is the global variable for your LED pin
-    analogWrite(leDpin, brightness);
+static void setLedBrightnessForCalibration(uint8_t brightness) {
+  // 'leDpin' is the global variable for your LED pin
+  analogWrite(leDpin, brightness);
 }
 
 // === START OF FINAL, DEFINITIVE CALIBRATION PARAMETERS ===
@@ -569,7 +631,7 @@ using PSRAMColorMatchVector = PSRAMVector<ColorMatch>;
 // Color database will use only dulux.bin - no fallback database
 
 // Load color database from binary file with optimized memory usage
-bool loadColorDatabase() {
+static bool loadColorDatabase() {
   Logger::info(String("=== Starting binary color database load process ==="));
   unsigned long const START_TIME = millis();  // Track load time
 
@@ -624,7 +686,7 @@ bool loadColorDatabase() {
 
     if (shouldUseKdtree && COLOR_COUNT <= LARGE_COLOR_DB_THRESHOLD) {
       char smallDbMsg[64];
-      sprintf(smallDbMsg, "Small database detected (%zu colors ≤ 1000)", COLOR_COUNT);
+      sprintf(smallDbMsg, "Small database detected (%zu colors = 1000)", COLOR_COUNT);
       Logger::info(smallDbMsg);
       Logger::info("KD-tree overhead not justified - using direct binary search for optimal performance");
       shouldUseKdtree = false;
@@ -761,17 +823,17 @@ bool loadColorDatabase() {
           unsigned long const KD_LOAD_TIME = millis() - KD_START_TIME;
           size_t const MEMORY_USAGE = kdTreeColorDB.getMemoryUsage();
 
-          Logger::info("ðŸŽ¯ KD-tree built successfully in " + String(KD_LOAD_TIME) + "ms");
-          Logger::info("ðŸ“Š KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " +
+          Logger::info("🎯 KD-tree built successfully in " + String(KD_LOAD_TIME) + "ms");
+          Logger::info("📊 KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " +
                        String(MEMORY_USAGE) + " bytes");
-          Logger::info("ðŸš€ Search performance: O(log " + String(loadedCount) + ") vs O(" +
+          Logger::info("🚀 Search performance: O(log " + String(loadedCount) + ") vs O(" +
                        String(loadedCount) + ") linear");
-          Logger::info("ðŸ’¾ PSRAM after KD-tree: " + String(ESP.getFreePsram() / BYTES_PER_KB) +
+          Logger::info("💾 PSRAM after KD-tree: " + String(ESP.getFreePsram() / BYTES_PER_KB) +
                        " KB free");
 
           // Performance validation: Estimate search speed improvement
           float speedupFactor = static_cast<float>(loadedCount) / static_cast<float>(log2(loadedCount));
-          Logger::info("âš¡ Estimated search speedup: " + String(speedupFactor, 1) +
+          Logger::info("⚡ Estimated search speedup: " + String(speedupFactor, 1) +
                        "x faster than linear search");
 
         } else {
@@ -813,21 +875,23 @@ float calculateColorDistance(uint8_t red1, uint8_t green1, uint8_t blue1, uint8_
 }
 
 // Find the closest Dulux color match using KD-tree (optimized)
-String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
+static String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
   // Always log color search for troubleshooting
-  static uint8_t lastR = 255, lastG = 255, lastB = 255;
+  static uint8_t lastR = 255;
+  static uint8_t lastG = 255;
+  static uint8_t lastB = 255;
   static String lastColorName = "";
 
   // TEMPORARY DEBUG: Always log the input RGB values to see what we're searching for
   char debugMsg[64];
-  sprintf(debugMsg, "🔍 Color search input: RGB(%d,%d,%d)", red, green, blue);
+  sprintf(debugMsg, "?? Color search input: RGB(%d,%d,%d)", red, green, blue);
   Logger::info(debugMsg);
 
   if (settings.debugColorMatching) {
-    char debugMsg2[64];
+    std::array<char, 64> debugMsg2;
     formatRGB(debugMsg2, red, green, blue);
     char fullMsg[128];
-    sprintf(fullMsg, "Finding closest color for %s", debugMsg2);
+    sprintf(fullMsg, "Finding closest color for %s", debugMsg2.data());
     Logger::debug(fullMsg);
   }
 
@@ -839,20 +903,20 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
   // Try KD-tree search first (fastest - O(log n) average case) if enabled and built
   if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
     searchMethod = "KD-Tree";
-    Logger::info("🌳 Using KD-tree search for RGB(" + String(red) + "," + String(green) + "," + String(blue) + ")");
+    Logger::info("?? Using KD-tree search for RGB(" + String(red) + "," + String(green) + "," + String(blue) + ")");
     ColorPoint const CLOSEST = kdTreeColorDB.findNearest(red, green, blue);
-    Logger::info("🌳 KD-tree returned index: " + String(CLOSEST.index) + " RGB(" + String(CLOSEST.r) + "," + String(CLOSEST.g) + "," + String(CLOSEST.b) + ")");
-    if (CLOSEST.index > 0) {
+    Logger::info("?? KD-tree returned index: " + String(CLOSEST.getIndex()) + " RGB(" + String(CLOSEST.getRed()) + "," + String(CLOSEST.getGreen()) + "," + String(CLOSEST.getBlue()) + ")");
+    if (CLOSEST.getIndex() > 0) {
       // Get the full color data using the index
       SimpleColor color{};
-      if (simpleColorDB.getColorByIndex(CLOSEST.index, color)) {
+      if (simpleColorDB.getColorByIndex(CLOSEST.getIndex(), color)) {
         result = String(color.name) + " (" + String(color.code) + ")";
-        Logger::info("🌳 KD-tree final result: " + result);
+        Logger::info("?? KD-tree final result: " + result);
 
         if (settings.debugColorMatching) {
           unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
           Logger::debug("KD-tree search completed in " + String(SEARCH_TIME) +
-                        "Î¼s. Best match: " + result);
+                        "μs. Best match: " + result);
         }
         return result;
       }
@@ -861,12 +925,12 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
   } else if (settings.enableKdtree && !kdTreeColorDB.isBuilt()) {
     Logger::warn("KD-tree enabled but not built - check initialization");
   } else {
-    Logger::info("📊 KD-tree disabled, using binary database search");
+    Logger::info("?? KD-tree disabled, using binary database search");
   }
 #endif
 
   // Fallback to simple binary database with optimized search (O(n) but optimized)
-  Logger::info("📊 Starting binary database search for RGB(" + String(red) + "," + String(green) + "," + String(blue) + ")");
+  Logger::info("?? Starting binary database search for RGB(" + String(red) + "," + String(green) + "," + String(blue) + ")");
   SimpleColor closestColor{};
   if (simpleColorDB.findClosestColor(red, green, blue, closestColor)) {
     searchMethod = "Binary DB";
@@ -874,7 +938,7 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
 
     // TEMPORARY DEBUG: Always log the result to see what color is being returned
     char resultMsg[128];
-    sprintf(resultMsg, "✅ Binary DB found match: %s for RGB(%d,%d,%d)", result.c_str(), red, green, blue);
+    sprintf(resultMsg, "? Binary DB found match: %s for RGB(%d,%d,%d)", result.c_str(), red, green, blue);
     Logger::info(resultMsg);
 
     // ADDITIONAL DEBUG: Show what RGB the matched color actually has
@@ -886,15 +950,14 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
     if (settings.debugColorMatching) {
       unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
       Logger::debug("Binary search completed in " + String(SEARCH_TIME) +
-                    "Î¼s. Best match: " + result);
+                    "μs. Best match: " + result);
     }
     return result;
-  } else {
-    Logger::error("❌ Binary database search failed!");
   }
+  Logger::error("? Binary database search failed!");
 
   // No color database available - this should not happen if dulux.bin loads properly
-  Logger::error("❌ Color database not available! This indicates a serious problem:");
+  Logger::error("? Color database not available! This indicates a serious problem:");
   Logger::error("  1. dulux.bin file may not be uploaded to device filesystem");
   Logger::error("  2. File may be corrupted or in wrong format");
   Logger::error("  3. Device may be out of memory");
@@ -919,12 +982,12 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
 
   if (settings.debugColorMatching) {
     unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
-    Logger::debug(searchMethod + " completed in " + String(SEARCH_TIME) + "Î¼s. Result: " + result);
+    Logger::debug(searchMethod + " completed in " + String(SEARCH_TIME) + "μs. Result: " + result);
   }
 
   // Track color matching issues - log when RGB changes but color name doesn't
-  bool rgbChanged = (abs(red - lastR) > 5 || abs(green - lastG) > 5 || abs(blue - lastB) > 5);
-  bool colorNameSame = (result == lastColorName);
+  bool const rgbChanged = (abs(red - lastR) > 5 || abs(green - lastG) > 5 || abs(blue - lastB) > 5);
+  bool const colorNameSame = (result == lastColorName);
 
   if (rgbChanged && colorNameSame && !lastColorName.isEmpty()) {
     Logger::info("[COLOR_ISSUE] RGB changed significantly but color name stayed same:");
@@ -944,7 +1007,7 @@ String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 // Performance monitoring and optimization analysis
-void analyzeSystemPerformance() {
+static void analyzeSystemPerformance() {
   Logger::info("=== SYSTEM PERFORMANCE ANALYSIS ===");
 
   // Memory analysis
@@ -953,7 +1016,7 @@ void analyzeSystemPerformance() {
   size_t const TOTAL_PSRAM = psramFound() ? ESP.getPsramSize() : 0;
   size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0;
 
-  Logger::info("ðŸ’¾ Memory Status:");
+  Logger::info("💾 Memory Status:");
   Logger::info("  Heap: " + String(FREE_HEAP / BYTES_PER_KB) + " KB free / " +
                String(TOTAL_HEAP / BYTES_PER_KB) + " KB total (" +
                String((FREE_HEAP * PERCENTAGE_SCALE) / TOTAL_HEAP) + "% free)");
@@ -966,7 +1029,7 @@ void analyzeSystemPerformance() {
   }
 
   // Color database analysis
-  Logger::info("ðŸŽ¨ Color Database Performance:");
+  Logger::info("🎨 Color Database Performance:");
   size_t const COLOR_COUNT = simpleColorDB.isOpen() ? simpleColorDB.getColorCount() : 0;
   Logger::info("  Colors loaded: " + String(COLOR_COUNT));
 
@@ -978,7 +1041,7 @@ void analyzeSystemPerformance() {
   if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
     activeMethod = "KD-Tree Search";
     float logN = static_cast<float>(log2(COLOR_COUNT));
-    performanceNote = "O(log " + String(COLOR_COUNT) + ") â‰ˆ " + String(logN, 1) + " operations";
+    performanceNote = "O(log " + String(COLOR_COUNT) + ") ≈ " + String(logN, 1) + " operations";
   } else
 #endif
       if (simpleColorDB.isOpen()) {
@@ -993,27 +1056,27 @@ void analyzeSystemPerformance() {
   Logger::info("  Performance complexity: " + performanceNote);
 
   // Performance optimization recommendations
-  Logger::info("ðŸš€ Performance Recommendations:");
+  Logger::info("🚀 Performance Recommendations:");
 
   if (COLOR_COUNT <= LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
-    Logger::info("  âœ… Small database - KD-tree overhead avoided (optimal)");
+    Logger::info("  ✅ Small database - KD-tree overhead avoided (optimal)");
   } else if (COLOR_COUNT > LARGE_COLOR_DB_THRESHOLD && !settings.enableKdtree) {
-    Logger::warn("  âš ï¸ Large database without KD-tree - consider enabling for " +
+    Logger::warn("  ⚠️ Large database without KD-tree - consider enabling for " +
                  String((float)COLOR_COUNT / log2(COLOR_COUNT), 1) + "x speedup");
   } else if (COLOR_COUNT > LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
-    Logger::info("  âœ… Large database with KD-tree - optimal performance achieved");
+    Logger::info("  ✅ Large database with KD-tree - optimal performance achieved");
   }
 
   if (FREE_PSRAM < (PSRAM_SAFETY_MARGIN_KB * BYTES_PER_KB)) {
-    Logger::warn("  âš ï¸ Low PSRAM - increase safety margin or reduce database size");
+    Logger::warn("  ⚠️ Low PSRAM - increase safety margin or reduce database size");
   } else {
-    Logger::info("  âœ… PSRAM adequate for current configuration");
+    Logger::info("  ✅ PSRAM adequate for current configuration");
   }
 
   if (FREE_HEAP < 100000) {
-    Logger::warn("  âš ï¸ Low heap memory - monitor for stability issues");
+    Logger::warn("  ⚠️ Low heap memory - monitor for stability issues");
   } else {
-    Logger::info("  âœ… Heap memory sufficient");
+    Logger::info("  ✅ Heap memory sufficient");
   }
 
   Logger::info("=====================================");
@@ -1054,7 +1117,7 @@ static struct ColorNameLookup {
 } colorLookup;
 
 // Handle root path - serve index.html
-void handleRoot(AsyncWebServerRequest *request) {
+static void handleRoot(AsyncWebServerRequest *request) {
   Logger::debug("Handling root path request");
   File file = LittleFS.open("/index.html", "r");
   if (!file) {
@@ -1064,7 +1127,7 @@ void handleRoot(AsyncWebServerRequest *request) {
   }
   Logger::debug("Serving index.html");
   String content = "";
-  while (file.available()) {
+  while (file.available() != 0) {
     content += (char)file.read();
   }
   file.close();
@@ -1073,7 +1136,7 @@ void handleRoot(AsyncWebServerRequest *request) {
 }
 
 // Handle CSS file
-void handleCSS(AsyncWebServerRequest *request) {
+static void handleCSS(AsyncWebServerRequest *request) {
   Logger::debug("Handling CSS file request");
   File file = LittleFS.open("/index.css", "r");
   if (!file) {
@@ -1083,7 +1146,7 @@ void handleCSS(AsyncWebServerRequest *request) {
   }
   Logger::debug("Serving index.css");
   String content = "";
-  while (file.available()) {
+  while (file.available() != 0) {
     content += (char)file.read();
   }
   file.close();
@@ -1092,7 +1155,7 @@ void handleCSS(AsyncWebServerRequest *request) {
 }
 
 // Handle JavaScript/TypeScript file
-void handleJS(AsyncWebServerRequest *request) {
+static void handleJS(AsyncWebServerRequest *request) {
   Logger::debug("Handling JavaScript file request");
   File file = LittleFS.open("/index.js", "r");
   if (!file) {
@@ -1102,7 +1165,7 @@ void handleJS(AsyncWebServerRequest *request) {
   }
   Logger::debug("Serving index.js");
   String content = "";
-  while (file.available()) {
+  while (file.available() != 0) {
     content += (char)file.read();
   }
   file.close();
@@ -1111,9 +1174,9 @@ void handleJS(AsyncWebServerRequest *request) {
 }
 
 // Handle color API endpoint
-void handleColorAPI(AsyncWebServerRequest *request) {
+static void handleColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling color API request");
-  // Create JSON response - should be const as it's not modified after initialization
+  // Create JSON response - removed const to allow modification
   JsonDocument doc;  // ArduinoJson v7 syntax
   doc["r"] = currentColorData.fast.red;
   doc["g"] = currentColorData.fast.green;
@@ -1127,7 +1190,7 @@ void handleColorAPI(AsyncWebServerRequest *request) {
   doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
   doc["timestamp"] = currentColorData.fast.timestamp;
 
-  String response;
+  String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
   Logger::debug("JSON response size: " + String(response.length()));
 
@@ -1140,7 +1203,7 @@ void handleColorAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle fast color API endpoint (no color name lookup - optimized for speed)
-void handleFastColorAPI(AsyncWebServerRequest *request) {
+static void handleFastColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling fast color API request");
   // Create JSON response with only fast sensor data
   JsonDocument doc;
@@ -1155,7 +1218,7 @@ void handleFastColorAPI(AsyncWebServerRequest *request) {
   doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
   doc["timestamp"] = currentColorData.fast.timestamp;
 
-  String response;
+  String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
 
   // Add CORS headers
@@ -1167,7 +1230,7 @@ void handleFastColorAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle color name API endpoint (color name lookup only)
-void handleColorNameAPI(AsyncWebServerRequest *request) {
+static void handleColorNameAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling color name API request");
   // Create JSON response with color name information
   JsonDocument doc;
@@ -1183,7 +1246,7 @@ void handleColorNameAPI(AsyncWebServerRequest *request) {
   doc["colorNameBasedOnG"] = colorLookup.lastG;
   doc["colorNameBasedOnB"] = colorLookup.lastB;
 
-  String response;
+  String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
 
   // Add CORS headers
@@ -1195,7 +1258,7 @@ void handleColorNameAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle force color lookup API endpoint (triggers immediate color name lookup)
-void handleForceColorLookup(AsyncWebServerRequest *request) {
+static void handleForceColorLookup(AsyncWebServerRequest *request) {
   Logger::debug("Handling force color lookup request");
 
   // Check if a lookup is already in progress
@@ -1240,7 +1303,7 @@ void handleForceColorLookup(AsyncWebServerRequest *request) {
   doc["timestamp"] = CURRENT_TIME;
   doc["forced"] = true;
 
-  String response;
+  String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
 
   // Add CORS headers
@@ -1251,11 +1314,11 @@ void handleForceColorLookup(AsyncWebServerRequest *request) {
 
   Logger::info("Forced color lookup: RGB(" + String(CURRENT_R) + "," + String(CURRENT_G) + "," +
                String(CURRENT_B) + ") -> " + COLOR_NAME +
-               " | Duration: " + String(LOOKUP_DURATION) + "Î¼s");
+               " | Duration: " + String(LOOKUP_DURATION) + "μs");
 }
 
 // Handle color capture and storage API endpoint
-void handleCaptureColor(AsyncWebServerRequest *request) {
+static void handleCaptureColor(AsyncWebServerRequest *request) {
   Logger::debug("Handling color capture request");
 
   // Check if a lookup is already in progress
@@ -1278,29 +1341,27 @@ void handleCaptureColor(AsyncWebServerRequest *request) {
   uint16_t const CURRENT_IR2 = currentColorData.fast.ir2;
 
   // Force immediate color lookup if needed
-  String COLOR_NAME = currentColorData.colorName;
-  unsigned long LOOKUP_DURATION = currentColorData.colorSearchDuration;
+  String colorName = currentColorData.colorName;
+  unsigned long lookupDuration = currentColorData.colorSearchDuration;
 
-  if (COLOR_NAME.isEmpty() || (millis() - currentColorData.colorNameTimestamp) > 5000) {
+  if (colorName.isEmpty() || (millis() - currentColorData.colorNameTimestamp) > 5000) {
     colorLookup.inProgress = true;
     unsigned long const LOOKUP_START = micros();
-    COLOR_NAME = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
-    LOOKUP_DURATION = micros() - LOOKUP_START;
+    colorName = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
+    lookupDuration = micros() - LOOKUP_START;
 
     // Update color name data
     unsigned long const CURRENT_TIME = millis();
-    currentColorData.colorName = COLOR_NAME;
+    currentColorData.colorName = colorName;
     currentColorData.colorNameTimestamp = CURRENT_TIME;
-    currentColorData.colorSearchDuration = LOOKUP_DURATION;
+    currentColorData.colorSearchDuration = lookupDuration;
     colorLookup.inProgress = false;
   }
 
   // Create capture data
-  StoredColorCapture capture = StorageHelpers::createCaptureFromCurrent(
-    CURRENT_X, CURRENT_Y, CURRENT_Z, CURRENT_IR1, CURRENT_IR2,
-    CURRENT_R, CURRENT_G, CURRENT_B, COLOR_NAME,
-    currentColorData.fast.batteryVoltage, LOOKUP_DURATION
-  );
+  StoredColorCapture const capture = StorageHelpers::createCaptureFromCurrent(
+      CURRENT_X, CURRENT_Y, CURRENT_Z, CURRENT_IR1, CURRENT_IR2, CURRENT_R, CURRENT_G, CURRENT_B,
+      colorName, currentColorData.fast.batteryVoltage, lookupDuration);
 
   // Save to persistent storage
   bool saveSuccess = false;
@@ -1321,8 +1382,8 @@ void handleCaptureColor(AsyncWebServerRequest *request) {
   JsonDocument doc;
   doc["status"] = saveSuccess ? "success" : "partial";
   doc["message"] = statusMessage;
-  doc["colorName"] = COLOR_NAME;
-  doc["searchDuration"] = LOOKUP_DURATION;
+  doc["colorName"] = colorName;
+  doc["searchDuration"] = lookupDuration;
   doc["rgb"]["r"] = CURRENT_R;
   doc["rgb"]["g"] = CURRENT_G;
   doc["rgb"]["b"] = CURRENT_B;
@@ -1341,7 +1402,7 @@ void handleCaptureColor(AsyncWebServerRequest *request) {
     doc["storageFull"] = persistentStorage.isStorageFull();
   }
 
-  String response;
+  String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
 
   // Add CORS headers
@@ -1350,18 +1411,19 @@ void handleCaptureColor(AsyncWebServerRequest *request) {
   apiResponse->addHeader("Access-Control-Allow-Origin", "*");
   request->send(apiResponse);
 
-  Logger::info("Color captured and " + String(saveSuccess ? "saved" : "not saved") +
-               ": RGB(" + String(CURRENT_R) + "," + String(CURRENT_G) + "," +
-               String(CURRENT_B) + ") -> " + COLOR_NAME);
+  Logger::info("Color captured and " + String(saveSuccess ? "saved" : "not saved") + ": RGB(" +
+               String(CURRENT_R) + "," + String(CURRENT_G) + "," + String(CURRENT_B) + ") -> " +
+               colorName);
 }
 
 // Handle get stored captures API endpoint
-void handleGetStoredCaptures(AsyncWebServerRequest *request) {
+static void handleGetStoredCaptures(AsyncWebServerRequest *request) {
   Logger::debug("Handling get stored captures request");
 
   if (!persistentStorage.isInitialized()) {
-    request->send(503, "application/json",
-                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    request->send(
+        503, "application/json",
+        R"({"error":"Storage not available","message":"Persistent storage not initialized"})");
     return;
   }
 
@@ -1370,8 +1432,9 @@ void handleGetStoredCaptures(AsyncWebServerRequest *request) {
   uint8_t count = 0;
 
   if (!persistentStorage.getAllCaptures(captures, count)) {
-    request->send(500, "application/json",
-                  "{\"error\":\"Failed to load captures\",\"message\":\"Could not retrieve stored captures\"}");
+    request->send(
+        500, "application/json",
+        R"({"error":"Failed to load captures","message":"Could not retrieve stored captures"})");
     return;
   }
 
@@ -1426,16 +1489,17 @@ void handleGetStoredCaptures(AsyncWebServerRequest *request) {
 }
 
 // Handle clear stored captures API endpoint
-void handleClearStoredCaptures(AsyncWebServerRequest *request) {
+static void handleClearStoredCaptures(AsyncWebServerRequest *request) {
   Logger::debug("Handling clear stored captures request");
 
   if (!persistentStorage.isInitialized()) {
-    request->send(503, "application/json",
-                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    request->send(
+        503, "application/json",
+        R"({"error":"Storage not available","message":"Persistent storage not initialized"})");
     return;
   }
 
-  bool success = persistentStorage.clearAllCaptures();
+  bool const success = persistentStorage.clearAllCaptures();
 
   JsonDocument doc;
   doc["status"] = success ? "success" : "error";
@@ -1454,7 +1518,7 @@ void handleClearStoredCaptures(AsyncWebServerRequest *request) {
 }
 
 // Handle storage status API endpoint
-void handleStorageStatus(AsyncWebServerRequest *request) {
+static void handleStorageStatus(AsyncWebServerRequest *request) {
   Logger::debug("Handling storage status request");
 
   JsonDocument doc;
@@ -1464,8 +1528,8 @@ void handleStorageStatus(AsyncWebServerRequest *request) {
     doc["message"] = "Persistent storage not initialized";
     doc["initialized"] = false;
   } else {
-    PersistentStorage::StorageStats stats;
-    bool statsSuccess = persistentStorage.getStorageStats(stats);
+    PersistentStorage::StorageStats stats{};
+    bool const statsSuccess = persistentStorage.getStorageStats(stats);
 
     doc["status"] = "available";
     doc["initialized"] = true;
@@ -1486,8 +1550,10 @@ void handleStorageStatus(AsyncWebServerRequest *request) {
       doc["storage"]["freeBytes"] = stats.freeBytes;
       doc["storage"]["totalBytes"] = stats.usedBytes + stats.freeBytes;
 
-      float usagePercent = (stats.usedBytes + stats.freeBytes > 0) ?
-                          (float)stats.usedBytes / (stats.usedBytes + stats.freeBytes) * 100.0f : 0.0f;
+      float const usagePercent =
+          (stats.usedBytes + stats.freeBytes > 0)
+              ? (float)stats.usedBytes / (stats.usedBytes + stats.freeBytes) * 100.0f
+              : 0.0f;
       doc["storage"]["usagePercent"] = usagePercent;
     } else {
       doc["error"] = "Failed to get storage statistics";
@@ -1506,31 +1572,33 @@ void handleStorageStatus(AsyncWebServerRequest *request) {
 }
 
 // Handle delete specific capture API endpoint
-void handleDeleteCapture(AsyncWebServerRequest *request) {
+static void handleDeleteCapture(AsyncWebServerRequest *request) {
   Logger::debug("Handling delete capture request");
 
   if (!persistentStorage.isInitialized()) {
-    request->send(503, "application/json",
-                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    request->send(
+        503, "application/json",
+        R"({"error":"Storage not available","message":"Persistent storage not initialized"})");
     return;
   }
 
   // Get index parameter
   if (!request->hasParam("index")) {
     request->send(HTTP_BAD_REQUEST, "application/json",
-                  "{\"error\":\"Missing parameter\",\"message\":\"Index parameter required\"}");
+                  R"({"error":"Missing parameter","message":"Index parameter required"})");
     return;
   }
 
-  int index = request->getParam("index")->value().toInt();
+  int const index = request->getParam("index")->value().toInt();
 
   if (index < 0 || index >= MAX_COLOR_CAPTURES) {
     request->send(HTTP_BAD_REQUEST, "application/json",
-                  "{\"error\":\"Invalid index\",\"message\":\"Index must be between 0 and " + String(MAX_COLOR_CAPTURES-1) + "\"}");
+                  R"({"error":"Invalid index","message":"Index must be between 0 and )" +
+                      String(MAX_COLOR_CAPTURES - 1) + "\"}");
     return;
   }
 
-  bool success = persistentStorage.deleteColorCapture(index);
+  bool const success = persistentStorage.deleteColorCapture(index);
 
   JsonDocument doc;
   doc["status"] = success ? "success" : "error";
@@ -1550,12 +1618,13 @@ void handleDeleteCapture(AsyncWebServerRequest *request) {
 }
 
 // Handle export captures API endpoint
-void handleExportCaptures(AsyncWebServerRequest *request) {
+static void handleExportCaptures(AsyncWebServerRequest *request) {
   Logger::debug("Handling export captures request");
 
   if (!persistentStorage.isInitialized()) {
-    request->send(503, "application/json",
-                  "{\"error\":\"Storage not available\",\"message\":\"Persistent storage not initialized\"}");
+    request->send(
+        503, "application/json",
+        R"({"error":"Storage not available","message":"Persistent storage not initialized"})");
     return;
   }
 
@@ -1564,8 +1633,9 @@ void handleExportCaptures(AsyncWebServerRequest *request) {
   uint8_t count = 0;
 
   if (!persistentStorage.getAllCaptures(captures, count)) {
-    request->send(500, "application/json",
-                  "{\"error\":\"Failed to load captures\",\"message\":\"Could not retrieve stored captures for export\"}");
+    request->send(
+        500, "application/json",
+        R"({"error":"Failed to load captures","message":"Could not retrieve stored captures for export"})");
     return;
   }
 
@@ -1578,7 +1648,7 @@ void handleExportCaptures(AsyncWebServerRequest *request) {
 
   // Add calibration status
   StoredCalibrationData calibData;
-  bool hasCalibration = persistentStorage.loadCalibrationData(calibData);
+  bool const hasCalibration = persistentStorage.loadCalibrationData(calibData);
   doc["exportInfo"]["hasCalibration"] = hasCalibration;
 
   if (hasCalibration) {
@@ -1756,9 +1826,9 @@ void handleSetIRCompensation(AsyncWebServerRequest *request) {
 
 // TCS3430 PROPER CALIBRATION SYSTEM
 // Uses white/black reference calibration with mapping (Arduino Forum methodology)
-void convertXyZtoRgbVividWhite(uint16_t xValue, uint16_t yValue, uint16_t zValue, uint16_t infraredOne, uint16_t infraredTwo,
-                               uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
-
+static void convertXyZtoRgbVividWhite(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                                      uint16_t infraredOne, uint16_t infraredTwo, uint8_t &redOut,
+                                      uint8_t &greenOut, uint8_t &blueOut) {
   // Always log input values for debugging fluctuations
   Logger::debug("[COLOR_CONVERT] Input: X=" + String(xValue) + " Y=" + String(yValue) +
                 " Z=" + String(zValue) + " IR1=" + String(infraredOne) + " IR2=" + String(infraredTwo));
@@ -1838,15 +1908,16 @@ void convertXyZtoRgbVividWhite(uint16_t xValue, uint16_t yValue, uint16_t zValue
 }
 
 // Placeholder function for backward compatibility
-void convertXyZtoRgbPlaceholder(uint16_t xValue, uint16_t yValue, uint16_t zValue, uint16_t infraredOne, uint16_t infraredTwo,
-                                uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
+static void convertXyZtoRgbPlaceholder(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                                       uint16_t infraredOne, uint16_t infraredTwo, uint8_t &redOut,
+                                       uint8_t &greenOut, uint8_t &blueOut) {
   convertXyZtoRgbVividWhite(xValue, yValue, zValue, infraredOne, infraredTwo, redOut, greenOut, blueOut);
 }
 
 // Professional matrix-based color conversion function
-void convertXYZtoRGB_Professional(uint16_t xValue, uint16_t yValue, uint16_t zValue, uint16_t infraredOne, uint16_t infraredTwo,
-                                  uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
-
+void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                                 uint16_t /*infraredOne*/, uint16_t /*infraredTwo*/,
+                                 uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
   Logger::debug("[COLOR_CONVERT] Professional conversion - X=" + String(xValue) + " Y=" + String(yValue) + " Z=" + String(zValue));
 
   // Step 1: Apply black subtraction (ambient compensation)
@@ -1860,44 +1931,50 @@ void convertXYZtoRGB_Professional(uint16_t xValue, uint16_t yValue, uint16_t zVa
   zCompensated = max(0.0f, zCompensated);
 
   // Step 2: Normalize to white point (0-1 range) ensuring white calibration target maps to RGB(255,255,255)
-  float whiteX = static_cast<float>(settings.legacyCalibrationData.maxX - settings.legacyCalibrationData.minX);
-  float whiteY = static_cast<float>(settings.legacyCalibrationData.maxY - settings.legacyCalibrationData.minY);
-  float whiteZ = static_cast<float>(settings.legacyCalibrationData.maxZ - settings.legacyCalibrationData.minZ);
+  auto whiteX =
+      static_cast<float>(settings.legacyCalibrationData.maxX - settings.legacyCalibrationData.minX);
+  auto whiteY =
+      static_cast<float>(settings.legacyCalibrationData.maxY - settings.legacyCalibrationData.minY);
+  auto whiteZ =
+      static_cast<float>(settings.legacyCalibrationData.maxZ - settings.legacyCalibrationData.minZ);
 
   // Avoid division by zero
-  if (whiteX < 1.0f) whiteX = 1.0f;
-  if (whiteY < 1.0f) whiteY = 1.0f;
-  if (whiteZ < 1.0f) whiteZ = 1.0f;
+  whiteX = std::max(whiteX, 1.0f);
+  whiteY = std::max(whiteY, 1.0f);
+  whiteZ = std::max(whiteZ, 1.0f);
 
   // Normalize to 0-1 range where white calibration sample = 1.0
-  float xNorm = xCompensated / whiteX;
-  float yNorm = yCompensated / whiteY;
-  float zNorm = zCompensated / whiteZ;
+  float const xNorm = xCompensated / whiteX;
+  float const yNorm = yCompensated / whiteY;
+  float const zNorm = zCompensated / whiteZ;
 
   Logger::debug("[COLOR_CONVERT] Normalized XYZ: X=" + String(xNorm, 3) + " Y=" + String(yNorm, 3) + " Z=" + String(zNorm, 3));
 
   // Step 3: Apply sRGB conversion matrix (XYZ to linear RGB)
   // Standard sRGB matrix for D65 illuminant
-  float rLinear = 3.2406f * xNorm - 1.5372f * yNorm - 0.4986f * zNorm;
-  float gLinear = -0.9689f * xNorm + 1.8758f * yNorm + 0.0415f * zNorm;
-  float bLinear = 0.0557f * xNorm - 0.2040f * yNorm + 1.0570f * zNorm;
+  float rLinear = (3.2406f * xNorm) - (1.5372f * yNorm) - (0.4986f * zNorm);
+  float gLinear = (-0.9689f * xNorm) + (1.8758f * yNorm) + (0.0415f * zNorm);
+  float bLinear = (0.0557f * xNorm) - (0.2040f * yNorm) + (1.0570f * zNorm);
 
   Logger::debug("[COLOR_CONVERT] Linear RGB: R=" + String(rLinear, 3) + " G=" + String(gLinear, 3) + " B=" + String(bLinear, 3));
 
   // Step 4: Apply white point scaling to ensure white calibration sample maps to RGB(255,255,255)
   // Calculate what the white calibration sample would produce
-  float whiteXNorm = 1.0f;  // White sample normalized values
-  float whiteYNorm = 1.0f;
-  float whiteZNorm = 1.0f;
+  float const whiteXNorm = 1.0f;  // White sample normalized values
+  float const whiteYNorm = 1.0f;
+  float const whiteZNorm = 1.0f;
 
-  float whiteRLinear = 3.2406f * whiteXNorm - 1.5372f * whiteYNorm - 0.4986f * whiteZNorm;
-  float whiteGLinear = -0.9689f * whiteXNorm + 1.8758f * whiteYNorm + 0.0415f * whiteZNorm;
-  float whiteBLinear = 0.0557f * whiteXNorm - 0.2040f * whiteYNorm + 1.0570f * whiteZNorm;
+  float const whiteRLinear =
+      (3.2406f * whiteXNorm) - (1.5372f * whiteYNorm) - (0.4986f * whiteZNorm);
+  float const whiteGLinear =
+      (-0.9689f * whiteXNorm) + (1.8758f * whiteYNorm) + (0.0415f * whiteZNorm);
+  float const whiteBLinear =
+      (0.0557f * whiteXNorm) - (0.2040f * whiteYNorm) + (1.0570f * whiteZNorm);
 
   // Calculate scaling factors to make white sample = 1.0 in linear RGB
-  float rScale = (whiteRLinear > 0.001f) ? 1.0f / whiteRLinear : 1.0f;
-  float gScale = (whiteGLinear > 0.001f) ? 1.0f / whiteGLinear : 1.0f;
-  float bScale = (whiteBLinear > 0.001f) ? 1.0f / whiteBLinear : 1.0f;
+  float const rScale = (whiteRLinear > 0.001f) ? 1.0f / whiteRLinear : 1.0f;
+  float const gScale = (whiteGLinear > 0.001f) ? 1.0f / whiteGLinear : 1.0f;
+  float const bScale = (whiteBLinear > 0.001f) ? 1.0f / whiteBLinear : 1.0f;
 
   // Apply scaling to ensure white calibration sample maps to RGB(255,255,255)
   rLinear *= rScale;
@@ -1913,14 +1990,14 @@ void convertXYZtoRGB_Professional(uint16_t xValue, uint16_t yValue, uint16_t zVa
   auto applySRGBGamma = [](float linear) {
     if (linear <= 0.0031308f) {
       return 12.92f * linear;
-    } else {
-      return 1.055f * pow(linear, 1.0f / 2.4f) - 0.055f;
     }
+    return 1.055f * pow(linear, 1.0f / 2.4f) - 0.055f;
+   
   };
 
-  float rGamma = applySRGBGamma(rLinear);
-  float gGamma = applySRGBGamma(gLinear);
-  float bGamma = applySRGBGamma(bLinear);
+  float const rGamma = applySRGBGamma(rLinear);
+  float const gGamma = applySRGBGamma(gLinear);
+  float const bGamma = applySRGBGamma(bLinear);
 
   Logger::debug("[COLOR_CONVERT] Gamma RGB: R=" + String(rGamma, 3) + " G=" + String(gGamma, 3) + " B=" + String(bGamma, 3));
 
@@ -1946,7 +2023,7 @@ void convertXYZtoRGB_Professional(uint16_t xValue, uint16_t yValue, uint16_t zVa
 
 // Battery voltage monitoring function for ProS3
 // Get the battery voltage in volts
-float getBatteryVoltage() {
+static float getBatteryVoltage() {
   // Use official UMS3 library for accurate battery voltage reading
   // The library handles voltage dividers and ADC configuration automatically
   float const BATTERY_VOLTAGE = ums3.getBatteryVoltage();
@@ -1955,7 +2032,7 @@ float getBatteryVoltage() {
 }
 
 // Detect if VBUS (USB power) is present
-bool getVbusPresent() {
+static bool getVbusPresent() {
   // Use official UMS3 library for VBUS detection
   // The library handles the hardware-specific implementation
   bool const VBUS_PRESENT = ums3.getVbusPresent();
@@ -1964,7 +2041,7 @@ bool getVbusPresent() {
 }
 
 // Battery API handler
-void handleBatteryAPI(AsyncWebServerRequest *request) {
+static void handleBatteryAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling battery API request");
 
   float const BATTERY_VOLTAGE = getBatteryVoltage();
@@ -2016,7 +2093,7 @@ void handleBatteryAPI(AsyncWebServerRequest *request) {
 }
 
 // Handle IR compensation fine-tuning API
-void handleIRCompensationAPI(AsyncWebServerRequest *request) {
+static void handleIRCompensationAPI(AsyncWebServerRequest *request) {
   if (!request->hasParam("baseCompensation", true) ||
       !request->hasParam("brightnessResponse", true) ||
       !request->hasParam("xLeakage", true) ||
@@ -2075,9 +2152,9 @@ void handleIRCompensationAPI(AsyncWebServerRequest *request) {
 }
 
 // Function to setup dual mode (STA + AP) - AP mode ALWAYS starts
-bool connectToWiFiOrStartAP() {
+static bool connectToWiFiOrStartAP() {
   Logger::info("=== WiFi Setup: Dual Mode Configuration ===");
-  Logger::info("Target SSID: '" + String(ssid) + "'");
+  Logger::info("Target SSID: '" + String(SSID) + "'");
   Logger::info("AP SSID: '" + String(apSsid) + "'");
   Logger::info("AP IP: " + String(AP_IP));
   Logger::info("Strategy: AP mode ALWAYS starts, WiFi connection attempted if available");
@@ -2088,14 +2165,14 @@ bool connectToWiFiOrStartAP() {
 
   // STEP 1: ALWAYS START AP MODE FIRST
   Logger::info("=== STEP 1: Starting Access Point Mode ===");
-  WiFi.mode(WIFI_AP);
+  WiFiClass::mode(WIFI_AP);
   delay(500);
 
   // Configure AP with custom IP
   IPAddress apIP;
   apIP.fromString(AP_IP);
-  IPAddress apGateway = apIP;
-  IPAddress apSubnet(255, 255, 255, 0);
+  IPAddress const apGateway = apIP;
+  IPAddress const apSubnet(255, 255, 255, 0);
 
   WiFi.softAPConfig(apIP, apGateway, apSubnet);
   bool const AP_STARTED = WiFi.softAP(apSsid, apPassword);
@@ -2103,12 +2180,12 @@ bool connectToWiFiOrStartAP() {
   if (AP_STARTED) {
     delay(1000);  // Give AP time to start
     IPAddress const ACTUAL_AP_IP = WiFi.softAPIP();
-    Logger::info("✅ Access Point started successfully!");
+    Logger::info("? Access Point started successfully!");
     Logger::info("AP SSID: " + String(apSsid));
     Logger::info("AP Password: " + String(apPassword));
     Logger::info("AP IP address: " + ACTUAL_AP_IP.toString());
   } else {
-    Logger::error("❌ Failed to start Access Point mode!");
+    Logger::error("? Failed to start Access Point mode!");
     return false;  // If AP fails, we can't continue
   }
 
@@ -2126,9 +2203,9 @@ bool connectToWiFiOrStartAP() {
       Logger::info("  " + String(i + 1) + ": " + FOUND_SSID + " (Signal: " + String(WiFi.RSSI(i)) +
                    " dBm)");
 
-      if (FOUND_SSID == String(ssid)) {
+      if (FOUND_SSID == String(SSID)) {
         targetFound = true;
-        Logger::info("✅ Target SSID '" + String(ssid) + "' found!");
+        Logger::info("? Target SSID '" + String(SSID) + "' found!");
       }
     }
   }
@@ -2139,7 +2216,7 @@ bool connectToWiFiOrStartAP() {
     Logger::info("Switching to dual mode (AP + STA)...");
 
     // Switch to dual mode
-    WiFi.mode(WIFI_AP_STA);
+    WiFiClass::mode(WIFI_AP_STA);
     delay(1000);
 
     // Configure static IP for station mode
@@ -2149,8 +2226,8 @@ bool connectToWiFiOrStartAP() {
       Logger::debug("Static IP configuration successful");
     }
 
-    WiFi.begin(ssid, password);
-    Logger::info("Connecting to WiFi network: " + String(ssid));
+    WiFi.begin(SSID, PASSWORD);
+    Logger::info("Connecting to WiFi network: " + String(SSID));
 
     unsigned long const WIFI_START_TIME = millis();
     const unsigned long WIFI_TIMEOUT = WIFI_TIMEOUT_MS;
@@ -2162,67 +2239,112 @@ bool connectToWiFiOrStartAP() {
 
     if (WiFiClass::status() == WL_CONNECTED) {
       Serial.println();
-      Logger::info("✅ WiFi connected successfully!");
+      Logger::info("? WiFi connected successfully!");
       Logger::info("Station IP: " + WiFi.localIP().toString());
       Logger::info("Connection time: " + String((millis() - WIFI_START_TIME) / 1000) + " seconds");
-      Logger::info("🎉 DUAL MODE ACTIVE: Both AP and WiFi connected!");
+      Logger::info("?? DUAL MODE ACTIVE: Both AP and WiFi connected!");
     } else {
       Serial.println();
-      Logger::warn("❌ WiFi connection failed - continuing with AP mode only");
-      WiFi.mode(WIFI_AP);  // Switch back to AP only
+      Logger::warn("? WiFi connection failed - continuing with AP mode only");
+      WiFiClass::mode(WIFI_AP);  // Switch back to AP only
     }
   } else {
     Logger::info("=== STEP 3: WiFi Connection Skipped ===");
     Logger::info("Target SSID not found - continuing with AP mode only");
   }
 
-  Logger::info("✅ Network setup complete - AP mode guaranteed active");
+  Logger::info("? Network setup complete - AP mode guaranteed active");
   return true;
+}
 
+// Function to initialize NTP time synchronization for Melbourne, Australia
+static void initializeNTPTime() {
+  Logger::info("=== Initializing NTP Time (Melbourne, Australia) ===");
 
+  // Configure NTP with Melbourne timezone (UTC+11)
+  configTime(NTP_TIMEZONE_OFFSET, NTP_DAYLIGHT_OFFSET, NTP_SERVER);
+
+  // Wait for time synchronization (up to 10 seconds)
+  int retryCount = 0;
+  const int maxRetries = 20; // 10 seconds with 500ms delays
+
+  while (retryCount < maxRetries) {
+    time_t now = time(nullptr);
+    if (now > 1000000000) { // Valid timestamp (after year 2001)
+      struct tm timeinfo;
+      localtime_r(&now, &timeinfo);
+
+      char timeStr[64];
+      strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+
+      Logger::info("✅ NTP time synchronized successfully");
+      Logger::info("📅 Current Melbourne time: " + String(timeStr));
+      return;
+    }
+
+    delay(500);
+    retryCount++;
+    if (retryCount % 4 == 0) { // Log every 2 seconds
+      Logger::info("⏳ Waiting for NTP sync... (" + String(retryCount/2) + "s)");
+    }
+  }
+
+  Logger::warn("⚠️ NTP synchronization timeout - using system time");
+  Logger::warn("📅 Timestamps may be incorrect until next sync");
+}
+
+// Function to get current timestamp in Melbourne time
+uint32_t getCurrentTimestamp() {
+  time_t now = time(nullptr);
+  if (now > 1000000000) { // Valid NTP time
+    return static_cast<uint32_t>(now);
+  } else {
+    // Fallback to millis-based timestamp if NTP not available
+    return static_cast<uint32_t>(millis() / 1000);
+  }
 }
 
 // Function to display current WiFi status
-void displayWiFiStatus() {
+static void displayWiFiStatus() {
   Logger::info("=== FINAL NETWORK STATUS ===");
 
-  wifi_mode_t mode = WiFi.getMode();
+  wifi_mode_t const mode = WiFiClass::getMode();
   switch (mode) {
     case WIFI_MODE_STA:
-      Logger::info("🔗 Mode: Station (STA) only");
+      Logger::info("?? Mode: Station (STA) only");
       break;
     case WIFI_MODE_AP:
-      Logger::info("📡 Mode: Access Point (AP) only");
+      Logger::info("?? Mode: Access Point (AP) only");
       break;
     case WIFI_MODE_APSTA:
-      Logger::info("🌐 Mode: Dual (STA + AP) - BEST SETUP!");
+      Logger::info("?? Mode: Dual (STA + AP) - BEST SETUP!");
       break;
     default:
-      Logger::info("❌ Mode: Off or Unknown");
+      Logger::info("? Mode: Off or Unknown");
       break;
   }
 
   // Station status
-  if (WiFi.status() == WL_CONNECTED) {
-    Logger::info("✅ Station Status: Connected to " + WiFi.SSID());
-    Logger::info("🏠 Station IP: " + WiFi.localIP().toString());
-    Logger::info("📶 Signal Strength: " + String(WiFi.RSSI()) + " dBm");
-    Logger::info("🌍 Internet Access: Available");
+  if (WiFiClass::status() == WL_CONNECTED) {
+    Logger::info("? Station Status: Connected to " + WiFi.SSID());
+    Logger::info("?? Station IP: " + WiFi.localIP().toString());
+    Logger::info("?? Signal Strength: " + String(WiFi.RSSI()) + " dBm");
+    Logger::info("?? Internet Access: Available");
   } else {
-    Logger::info("❌ Station Status: Disconnected");
-    Logger::info("🌍 Internet Access: Not available");
+    Logger::info("? Station Status: Disconnected");
+    Logger::info("?? Internet Access: Not available");
   }
 
   // AP status
   if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
-    Logger::info("✅ AP Status: Active and Broadcasting");
-    Logger::info("📡 AP SSID: '" + String(apSsid) + "'");
-    Logger::info("🔐 AP Password: '" + String(apPassword) + "'");
-    Logger::info("🏠 AP IP: " + WiFi.softAPIP().toString());
-    Logger::info("👥 Connected Clients: " + String(WiFi.softAPgetStationNum()));
-    Logger::info("🔗 Direct Access: http://" + WiFi.softAPIP().toString());
+    Logger::info("? AP Status: Active and Broadcasting");
+    Logger::info("?? AP SSID: '" + String(apSsid) + "'");
+    Logger::info("?? AP Password: '" + String(apPassword) + "'");
+    Logger::info("?? AP IP: " + WiFi.softAPIP().toString());
+    Logger::info("?? Connected Clients: " + String(WiFi.softAPgetStationNum()));
+    Logger::info("?? Direct Access: http://" + WiFi.softAPIP().toString());
   } else {
-    Logger::info("❌ AP Status: Not active");
+    Logger::info("? AP Status: Not active");
   }
 
   Logger::info("============================");
@@ -2393,6 +2515,13 @@ void setup() {
     // Display final WiFi status
     delay(1000);  // Give WiFi a moment to stabilize
     displayWiFiStatus();
+
+    // Initialize NTP time synchronization (only if WiFi connected)
+    if (WiFi.status() == WL_CONNECTED) {
+      initializeNTPTime();
+    } else {
+      Logger::info("⏰ NTP sync skipped - no WiFi connection (using system time)");
+    }
   }
 
   // Serve static files
@@ -2518,7 +2647,7 @@ void setup() {
 
     if (success) {
         // Get the new calibration data to return to the user
-        ColorScience::CalibrationData calibData = colorSensor.getCalibrationData();
+        ColorScience::CalibrationData const calibData = colorSensor.getCalibrationData();
 
         JsonResponseBuilder builder;
         builder.addField("status", "success");
@@ -2530,9 +2659,10 @@ void setup() {
         Logger::info("LED IR calibration successful.");
 
     } else {
-        request->send(HTTP_STATUS_INTERNAL_SERVER_ERROR, JSON_CONTENT_TYPE,
-            "{\"status\":\"error\",\"message\":\"LED IR calibration failed. Check sensor connection.\"}");
-        Logger::error("LED IR calibration failed.");
+      request->send(
+          HTTP_STATUS_INTERNAL_SERVER_ERROR, JSON_CONTENT_TYPE,
+          R"({"status":"error","message":"LED IR calibration failed. Check sensor connection."})");
+      Logger::error("LED IR calibration failed.");
     }
   });
   Logger::debug("Route registered: /api/calibrate-led-ir (POST) -> LED IR Response Calibration");
@@ -2574,9 +2704,9 @@ void setup() {
     // Return JSON error for API endpoints, HTML for web pages
     if (request->url().startsWith("/api/")) {
       AsyncWebServerResponse *response = request->beginResponse(
-        HTTP_NOT_FOUND, "application/json", 
-        "{\"error\":\"Not found\",\"message\":\"The requested API endpoint does not exist\",\"path\":\"" + request->url() + "\"}"
-      );
+          HTTP_NOT_FOUND, "application/json",
+          R"({"error":"Not found","message":"The requested API endpoint does not exist","path":")" +
+              request->url() + "\"}");
       response->addHeader("Access-Control-Allow-Origin", "*");
       request->send(response);
     } else {
@@ -2619,30 +2749,33 @@ void loop() {
   handlePeriodicChecks(timers);
 
   // Read averaged sensor data
-  SensorData const sensorData = readAveragedSensorData();
+  SensorData const SENSOR_DATA = readAveragedSensorData();
 
   // Perform integration time adjustment using hysteresis
-  performIntegrationTimeAdjustment(sensorData, hysteresis);
+  performIntegrationTimeAdjustment(SENSOR_DATA, hysteresis);
 
   // Check for sensor warnings (saturation, IR)
-  checkForWarnings(sensorData, timers);
+  checkForWarnings(SENSOR_DATA, timers);
 
   // Convert sensor data to RGB
-  uint8_t r, g, b;
-  convertXYZtoRGB_Professional(sensorData.x, sensorData.y, sensorData.z, sensorData.ir1, sensorData.ir2, r, g, b);
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  convertXyZtoRgbProfessional(SENSOR_DATA.x, SENSOR_DATA.y, SENSOR_DATA.z, SENSOR_DATA.ir1,
+                              SENSOR_DATA.ir2, r, g, b);
 
   // Apply smoothing to the color
-  ColorRGB const finalColor = smoothColor(r, g, b);
+  ColorRGB const FINAL_COLOR = smoothColor(r, g, b);
 
   // Update the fast API data for the web server
-  updateFastApiData(sensorData, finalColor);
+  updateFastApiData(SENSOR_DATA, FINAL_COLOR);
 
   // DISABLED: Automatic color name lookup to improve performance
   // Color matching now only happens when user clicks "Capture Color" button
   // handleColorNameLookup(finalColor);
 
   // Log periodic status updates
-  logPeriodicStatus(sensorData, finalColor, timers);
+  logPeriodicStatus(SENSOR_DATA, FINAL_COLOR, timers);
 
   // Monitor system performance
   monitorPerformance(performance, timers);
@@ -2661,7 +2794,7 @@ void handleSetColorSamples(AsyncWebServerRequest *request) {
       JsonResponseBuilder builder;
       builder.addField("status", "success");
       builder.addField("colorSamples", SAMPLES);
-      String response = builder.build();
+      String const response = builder.build();
       request->send(HTTP_OK, "application/json", response);
     } else {
       request->send(HTTP_BAD_REQUEST, "application/json",
@@ -2685,7 +2818,7 @@ void handleSetSampleDelay(AsyncWebServerRequest *request) {
       JsonResponseBuilder builder;
       builder.addField("status", "success");
       builder.addField("sampleDelay", DELAY);
-      String response = builder.build();
+      String const response = builder.build();
       request->send(HTTP_OK, "application/json", response);
     } else {
       request->send(HTTP_BAD_REQUEST, "application/json",
@@ -2717,7 +2850,7 @@ void handleSetDebugSettings(AsyncWebServerRequest *request) {
   }
 
   if (updated) {
-    String response = builder.build();
+    String const response = builder.build();
     // Send success response for debug settings
     request->send(HTTP_OK, "application/json", response);
     // Log updated settings immediately
@@ -2834,12 +2967,15 @@ void handleAdvancedSensorSettings(AsyncWebServerRequest *request) {
 
   // Channel 0 Thresholds
   if (request->hasParam("ch0ThreshLow") && request->hasParam("ch0ThreshHigh")) {
-    int const lowThresh = request->getParam("ch0ThreshLow")->value().toInt();
-    int const highThresh = request->getParam("ch0ThreshHigh")->value().toInt();
-    if (lowThresh >= 0 && lowThresh <= 65535 && highThresh >= 0 && highThresh <= 65535 && lowThresh < highThresh) {
-      colorSensor.setInterruptThresholds(lowThresh, highThresh);
-      response += ",\"ch0ThreshLow\":" + String(lowThresh) + ",\"ch0ThreshHigh\":" + String(highThresh);
-      Logger::info("Channel 0 thresholds set to: " + String(lowThresh) + " - " + String(highThresh));
+    int const LOW_THRESH = request->getParam("ch0ThreshLow")->value().toInt();
+    int const HIGH_THRESH = request->getParam("ch0ThreshHigh")->value().toInt();
+    if (LOW_THRESH >= 0 && LOW_THRESH <= 65535 && HIGH_THRESH >= 0 && HIGH_THRESH <= 65535 &&
+        LOW_THRESH < HIGH_THRESH) {
+      colorSensor.setInterruptThresholds(LOW_THRESH, HIGH_THRESH);
+      response +=
+          ",\"ch0ThreshLow\":" + String(LOW_THRESH) + ",\"ch0ThreshHigh\":" + String(HIGH_THRESH);
+      Logger::info("Channel 0 thresholds set to: " + String(LOW_THRESH) + " - " +
+                   String(HIGH_THRESH));
       updated = true;
     }
   }
@@ -2868,7 +3004,7 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
 }
 
 // Fix white calibration by switching to DFRobot calibration
-void handleFixWhiteCalibration(AsyncWebServerRequest *request) {
+static void handleFixWhiteCalibration(AsyncWebServerRequest *request) {
   Logger::info("Fixing white calibration - switching to DFRobot library calibration");
 
   // Switch to DFRobot calibration which is more reliable for white colors
@@ -2923,11 +3059,11 @@ void handleDebugVividColors(AsyncWebServerRequest *request) {
     delay(50);
   }
 
-  uint16_t const X = static_cast<uint16_t>(sumX / SAMPLES);
-  uint16_t const Y = static_cast<uint16_t>(sumY / SAMPLES);
-  uint16_t const Z = static_cast<uint16_t>(sumZ / SAMPLES);
-  uint16_t const IR1 = static_cast<uint16_t>(sumIR1 / SAMPLES);
-  uint16_t const IR2 = static_cast<uint16_t>(sumIR2 / SAMPLES);
+  auto const X = static_cast<uint16_t>(sumX / SAMPLES);
+  auto const Y = static_cast<uint16_t>(sumY / SAMPLES);
+  auto const Z = static_cast<uint16_t>(sumZ / SAMPLES);
+  auto const IR1 = static_cast<uint16_t>(sumIR1 / SAMPLES);
+  auto const IR2 = static_cast<uint16_t>(sumIR2 / SAMPLES);
 
   // Test multiple calibration methods
   uint8_t r1 = 0;
@@ -3043,19 +3179,19 @@ void handleFixBlueChannel(AsyncWebServerRequest *request) {
 
   // Add test reading
   char testReadingJson[64];
-  sprintf(testReadingJson, "{\"x\":%d,\"y\":%d,\"z\":%d}", X, Y, Z);
+  sprintf(testReadingJson, R"({"x":%d,"y":%d,"z":%d})", X, Y, Z);
   builder.addRawField("testReading", testReadingJson);
 
   // Add test RGB
   char testRgbJson[64];
-  sprintf(testRgbJson, "{\"r\":%d,\"g\":%d,\"b\":%d}", r, g, b);
+  sprintf(testRgbJson, R"({"r":%d,"g":%d,"b":%d})", r, g, b);
   builder.addRawField("testRGB", testRgbJson);
 
   // Add blue channel health
   const char* healthStatus = (b > 10) ? "improved" : "still low - may need physical adjustment";
   builder.addField("blueChannelHealth", healthStatus);
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, JSON_CONTENT_TYPE, response);
   Logger::info("Blue channel fixes applied - gain: 64x, integration: 150ms, DFRobot calibration");
 }
@@ -3124,15 +3260,15 @@ void handleFixVividColors(AsyncWebServerRequest *request) {
 
   // Add test reading
   char testReadingJson[64];
-  sprintf(testReadingJson, "{\"r\":%d,\"g\":%d,\"b\":%d}", r, g, b);
+  sprintf(testReadingJson, R"({"r":%d,"g":%d,"b":%d})", r, g, b);
   builder.addRawField("testReading", testReadingJson);
 
   // Add raw sensor data
   char rawSensorJson[64];
-  sprintf(rawSensorJson, "{\"x\":%d,\"y\":%d,\"z\":%d}", X, Y, Z);
+  sprintf(rawSensorJson, R"({"x":%d,"y":%d,"z":%d})", X, Y, Z);
   builder.addRawField("rawSensor", rawSensorJson);
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, JSON_CONTENT_TYPE, response);
 
   char logMsg[128];
@@ -3150,14 +3286,14 @@ void handleFixVividColors(AsyncWebServerRequest *request) {
  * @brief Handles all non-blocking, time-based checks like sensor optimization.
  */
 void handlePeriodicChecks(TimingState& timers) {
-  unsigned long now = millis();
+  unsigned long const now = millis();
 
   // DISABLED: Periodic optimization was causing instability and fighting with integration time auto-adjustment
   // The integration time auto-adjustment system is working correctly and provides stable readings
   // Periodic optimization was resetting sensor settings and causing fluctuations
   if (now - timers.optimization > 300000) {  // Changed from 15s to 5 minutes to effectively disable
     Logger::debug("[PERIODIC_CHECK] Periodic optimization disabled - was causing sensor instability");
-    // optimizeSensorForCurrentLight();  // Commented out to prevent interference
+    // Optimization disabled to prevent sensor instability
     timers.optimization = now;
   }
 
@@ -3176,11 +3312,15 @@ void handlePeriodicChecks(TimingState& timers) {
  */
 SensorData readAveragedSensorData() {
   const int NUM_SAMPLES = max(1, min(settings.colorReadingSamples, SENSOR_MAX_SAMPLES));
-  uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
+  uint32_t sumX = 0;
+  uint32_t sumY = 0;
+  uint32_t sumZ = 0;
+  uint32_t sumIR1 = 0;
+  uint32_t sumIR2 = 0;
 
   // Log sensor configuration before reading
-  TCS3430Gain currentGain = colorSensor.getGain();
-  float currentIntTime = colorSensor.getIntegrationTime();
+  TCS3430Gain const currentGain = colorSensor.getGain();
+  float const currentIntTime = colorSensor.getIntegrationTime();
   Logger::debug("[SENSOR_READ] Starting averaged read - Samples:" + String(NUM_SAMPLES) +
                 " Gain:" + String(static_cast<int>(currentGain)) +
                 " IntTime:" + String(currentIntTime, 1) + "ms");
@@ -3223,13 +3363,15 @@ SensorData readAveragedSensorData() {
  * @brief Implements the hysteresis logic to auto-adjust sensor integration time.
  */
 void performIntegrationTimeAdjustment(const SensorData& data, HysteresisState& state) {
-  if (!settings.enableAutoAdjust) return;
+  if (!settings.enableAutoAdjust) {
+    return;
+  }
 
   uint16_t maxChannel = max({data.x, data.y, data.z});
-  float const satLevel = (float)maxChannel / settings.sensorSaturationThreshold;
+  float const SAT_LEVEL = (float)maxChannel / settings.sensorSaturationThreshold;
 
   // Update moving average
-  state.history[state.index] = satLevel;
+  state.history[state.index] = SAT_LEVEL;
   state.index = (state.index + 1) % 5;
 
   float avgSat = 0.0f;
@@ -3240,8 +3382,8 @@ void performIntegrationTimeAdjustment(const SensorData& data, HysteresisState& s
     state.lowCount = 0;
     state.highCount++;
     if (state.highCount >= 3 && settings.sensorIntegrationTime > settings.minIntegrationTime) {
-      int const newTime = (int)settings.sensorIntegrationTime - (int)settings.integrationStep;
-      settings.sensorIntegrationTime = (uint8_t)max((int)settings.minIntegrationTime, newTime);
+      int const NEW_TIME = (int)settings.sensorIntegrationTime - (int)settings.integrationStep;
+      settings.sensorIntegrationTime = (uint8_t)max((int)settings.minIntegrationTime, NEW_TIME);
       colorSensor.integrationTime(settings.sensorIntegrationTime);
       if (settings.debugSensorReadings) {
         Serial.println("[AUTO] Decreased integration to " + String(settings.sensorIntegrationTime));
@@ -3252,8 +3394,8 @@ void performIntegrationTimeAdjustment(const SensorData& data, HysteresisState& s
     state.highCount = 0;
     state.lowCount++;
     if (state.lowCount >= 3 && settings.sensorIntegrationTime < settings.maxIntegrationTime) {
-      int const newTime = (int)settings.sensorIntegrationTime + (int)settings.integrationStep;
-      settings.sensorIntegrationTime = (uint8_t)min((int)settings.maxIntegrationTime, newTime);
+      int const NEW_TIME = (int)settings.sensorIntegrationTime + (int)settings.integrationStep;
+      settings.sensorIntegrationTime = (uint8_t)min((int)settings.maxIntegrationTime, NEW_TIME);
       colorSensor.integrationTime(settings.sensorIntegrationTime);
       if (settings.debugSensorReadings) {
         Serial.println("[AUTO] Increased integration to " + String(settings.sensorIntegrationTime));
@@ -3270,11 +3412,13 @@ void performIntegrationTimeAdjustment(const SensorData& data, HysteresisState& s
  * @brief Checks for suboptimal sensor conditions and logs warnings periodically.
  */
 void checkForWarnings(const SensorData& data, TimingState& timers) {
-  unsigned long now = millis();
-  if (now - timers.warnings < TIMING_OPTIMIZATION_INTERVAL_MS) return;
+  unsigned long const now = millis();
+  if (now - timers.warnings < TIMING_OPTIMIZATION_INTERVAL_MS) {
+    return;
+  }
 
   uint16_t maxChannel = max({data.x, data.y, data.z});
-  uint16_t totalIR = data.ir1 + data.ir2;
+  uint16_t const totalIR = data.ir1 + data.ir2;
 
   if (maxChannel > 50000) {
     Logger::warn("High sensor readings - consider increasing distance. Max: " + String(maxChannel));
@@ -3295,19 +3439,19 @@ void checkForWarnings(const SensorData& data, TimingState& timers) {
  * @param b Blue component (0-255)
  * @return ColorRGB struct containing smoothed RGB values
  */
-ColorRGB smoothColor(uint8_t r, uint8_t g, uint8_t b) {
+ColorRGB smoothColor(uint8_t red, uint8_t green, uint8_t blue) {
   // Input validation - clamp values to valid RGB range
-  r = min(r, static_cast<uint8_t>(COLOR_RGB_MAX));
-  g = min(g, static_cast<uint8_t>(COLOR_RGB_MAX));
-  b = min(b, static_cast<uint8_t>(COLOR_RGB_MAX));
-  static float smoothedR = r;
-  static float smoothedG = g;
-  static float smoothedB = b;
+  red = min(red, static_cast<uint8_t>(COLOR_RGB_MAX));
+  green = min(green, static_cast<uint8_t>(COLOR_RGB_MAX));
+  blue = min(blue, static_cast<uint8_t>(COLOR_RGB_MAX));
+  static float smoothedR = red;
+  static float smoothedG = green;
+  static float smoothedB = blue;
   const float SMOOTHING_FACTOR = 0.05f;
 
-  smoothedR = smoothedR * SMOOTHING_FACTOR + r * (1.0f - SMOOTHING_FACTOR);
-  smoothedG = smoothedG * SMOOTHING_FACTOR + g * (1.0f - SMOOTHING_FACTOR);
-  smoothedB = smoothedB * SMOOTHING_FACTOR + b * (1.0f - SMOOTHING_FACTOR);
+  smoothedR = smoothedR * SMOOTHING_FACTOR + red * (1.0f - SMOOTHING_FACTOR);
+  smoothedG = smoothedG * SMOOTHING_FACTOR + green * (1.0f - SMOOTHING_FACTOR);
+  smoothedB = smoothedB * SMOOTHING_FACTOR + blue * (1.0f - SMOOTHING_FACTOR);
 
   return {
     (uint8_t)round(smoothedR),
@@ -3340,36 +3484,38 @@ void handleColorNameLookup(const ColorRGB& color) {
         return;
     }
 
-    unsigned long now = millis();
+    unsigned long const now = millis();
     if (colorLookup.inProgress || (now - colorLookup.lastLookupTime < colorLookup.lookupInterval)) {
         return;
     }
 
-    int const rgbDiff = abs(color.r - colorLookup.lastR) + abs(color.g - colorLookup.lastG) + abs(color.b - colorLookup.lastB);
+    int const RGB_DIFF = abs(color.r - colorLookup.lastR) + abs(color.g - colorLookup.lastG) +
+                         abs(color.b - colorLookup.lastB);
 
-    if (colorLookup.needsUpdate || rgbDiff > 0) {  // Changed from 1 to 0 - update on ANY RGB change
-        colorLookup.inProgress = true;
-        colorLookup.lastLookupTime = now;
-        colorLookup.lastR = color.r;
-        colorLookup.lastG = color.g;
-        colorLookup.lastB = color.b;
+    if (colorLookup.needsUpdate ||
+        RGB_DIFF > 0) {  // Changed from 1 to 0 - update on ANY RGB change
+      colorLookup.inProgress = true;
+      colorLookup.lastLookupTime = now;
+      colorLookup.lastR = color.r;
+      colorLookup.lastG = color.g;
+      colorLookup.lastB = color.b;
 
-        unsigned long searchStart = micros();
-        String colorName = findClosestDuluxColor(color.r, color.g, color.b);
-        unsigned long searchTime = micros() - searchStart;
+      unsigned long const searchStart = micros();
+      String const colorName = findClosestDuluxColor(color.r, color.g, color.b);
+      unsigned long const searchTime = micros() - searchStart;
 
-        // Update global data structures
-        currentColorData.colorName = colorName;
-        currentColorData.colorNameTimestamp = now;
-        currentColorData.colorSearchDuration = searchTime;
-        colorLookup.currentColorName = colorName;
-        colorLookup.needsUpdate = false;
-        colorLookup.inProgress = false;
+      // Update global data structures
+      currentColorData.colorName = colorName;
+      currentColorData.colorNameTimestamp = now;
+      currentColorData.colorSearchDuration = searchTime;
+      colorLookup.currentColorName = colorName;
+      colorLookup.needsUpdate = false;
+      colorLookup.inProgress = false;
 
-        // Conditional Debug Logging
-        if (settings.debugColorMatching) {
-          Logger::debug("Color lookup: " + colorName + " | Search: " + String(searchTime) + "us");
-        }
+      // Conditional Debug Logging
+      if (settings.debugColorMatching) {
+        Logger::debug("Color lookup: " + colorName + " | Search: " + String(searchTime) + "us");
+      }
     }
 }
 
@@ -3377,11 +3523,13 @@ void handleColorNameLookup(const ColorRGB& color) {
  * @brief Logs the current system status to the console periodically.
  */
 void logPeriodicStatus(const SensorData& data, const ColorRGB& color, TimingState& timers) {
-    unsigned long now = millis();
-    if (now - timers.logging < TIMING_STATUS_LOG_INTERVAL_MS) return;
+  unsigned long const now = millis();
+  if (now - timers.logging < TIMING_STATUS_LOG_INTERVAL_MS) {
+    return;
+  }
 
     char statusMsg[256];
-    sprintf(statusMsg, "XYZ: %d,%d,%d | RGB: %d,%d,%d | Color: %s | Last search: %luμs",
+    sprintf(statusMsg, "XYZ: %d,%d,%d | RGB: %d,%d,%d | Color: %s | Last search: %lu�s",
             data.x, data.y, data.z, color.r, color.g, color.b,
             colorLookup.currentColorName.c_str(), currentColorData.colorSearchDuration);
     Logger::info(statusMsg);
@@ -3392,21 +3540,23 @@ void logPeriodicStatus(const SensorData& data, const ColorRGB& color, TimingStat
 * @brief Monitors heap and PSRAM for potential leaks.
 */
 void monitorPerformance(PerformanceState& state, TimingState& timers) {
-    unsigned long now = millis();
-    if (now - timers.performance < TIMING_OPTIMIZATION_INTERVAL_MS) return;
+  unsigned long const now = millis();
+  if (now - timers.performance < TIMING_OPTIMIZATION_INTERVAL_MS) {
+    return;
+  }
 
-    size_t freeHeap = ESP.getFreeHeap();
-    size_t freePsram = psramFound() ? ESP.getFreePsram() : 0;
+  size_t const freeHeap = ESP.getFreeHeap();
+  size_t const freePsram = psramFound() ? ESP.getFreePsram() : 0;
 
-    if (settings.debugMemoryUsage) {
-        char memMsg[128];
-        sprintf(memMsg, "Perf Mon: Heap=%dKB, PSRAM=%dKB",
-                (int)(freeHeap / MEMORY_BYTES_PER_KB), (int)(freePsram / MEMORY_BYTES_PER_KB));
-        Logger::debug(memMsg);
+  if (settings.debugMemoryUsage) {
+    char memMsg[128];
+    sprintf(memMsg, "Perf Mon: Heap=%dKB, PSRAM=%dKB", (int)(freeHeap / MEMORY_BYTES_PER_KB),
+            (int)(freePsram / MEMORY_BYTES_PER_KB));
+    Logger::debug(memMsg);
 
-        if (state.lastFreeHeap > 0 && freeHeap < state.lastFreeHeap - 10000) {
-            Logger::warn("Heap memory decrease detected!");
-        }
+    if (state.lastFreeHeap > 0 && freeHeap < state.lastFreeHeap - 10000) {
+      Logger::warn("Heap memory decrease detected!");
+    }
     }
 
     // Auto-disable KD-tree if PSRAM is critically low
@@ -3439,8 +3589,8 @@ void optimizeSensorForCurrentLight() {
   }
 
   // Log current sensor state before optimization
-  TCS3430Gain currentGain = colorSensor.getGain();
-  float currentIntTime = colorSensor.getIntegrationTime();
+  TCS3430Gain const currentGain = colorSensor.getGain();
+  float const currentIntTime = colorSensor.getIntegrationTime();
 
   Logger::debug("[AUTO_OPTIMIZE] Starting optimization - Current: Y=" + String(colorSensor.getY()) +
                 " Gain=" + String(static_cast<int>(currentGain)) +
@@ -3550,7 +3700,7 @@ void handleAutoOptimizeSensor(AsyncWebServerRequest *request) {
   TCS3430AutoGain::OldGain startGain = TCS3430AutoGain::OldGain::GAIN_16X;
 
   if (request->hasParam("target")) {
-    long targetValue = request->getParam("target")->value().toInt();
+    long const targetValue = request->getParam("target")->value().toInt();
     targetY = static_cast<uint16_t>(constrain(targetValue, 0, 65535));
   }
   if (request->hasParam("maxtime")) {
@@ -3655,33 +3805,37 @@ void handleSensorStatus(AsyncWebServerRequest *request) {
 
   // Add sensor data object
   char sensorDataJson[128];
-  sprintf(sensorDataJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}", x, y, z, ir1, ir2);
+  sprintf(sensorDataJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})", x, y, z, ir1, ir2);
   builder.addRawField("sensorData", sensorDataJson);
 
   // Add configuration object
   char configJson[256];
-  sprintf(configJson, "{\"gain\":%d,\"integrationTime\":%.1f,\"waitTime\":%.1f,\"waitEnabled\":%s,\"waitLong\":%s,\"autoZeroMode\":%d,\"autoZeroNth\":%d}",
-          static_cast<int>(CURRENT_GAIN), INTEGRATION_TIME, WAIT_TIME,
-          WAIT_ENABLED ? "true" : "false", WAIT_LONG ? "true" : "false", AUTO_ZERO_MODE, AUTO_ZERO_NTH);
+  sprintf(
+      configJson,
+      R"({"gain":%d,"integrationTime":%.1f,"waitTime":%.1f,"waitEnabled":%s,"waitLong":%s,"autoZeroMode":%d,"autoZeroNth":%d})",
+      static_cast<int>(CURRENT_GAIN), INTEGRATION_TIME, WAIT_TIME, WAIT_ENABLED ? "true" : "false",
+      WAIT_LONG ? "true" : "false", AUTO_ZERO_MODE, AUTO_ZERO_NTH);
   builder.addRawField("configuration", configJson);
 
   // Add status object
   char statusJson[128];
-  sprintf(statusJson, "{\"dataReady\":%s,\"saturated\":%s,\"interruptStatus\":%s,\"maxCount\":%d}",
+  sprintf(statusJson, R"({"dataReady":%s,"saturated":%s,"interruptStatus":%s,"maxCount":%d})",
           DATA_READY ? "true" : "false", saturated ? "true" : "false",
           INTERRUPT_STATUS ? "true" : "false", MAX_COUNT);
   builder.addRawField("status", statusJson);
 
   // Add utilization object
   char utilizationJson[64];
-  sprintf(utilizationJson, "{\"X\":%.1f,\"Y\":%.1f,\"Z\":%.1f}", X_UTIL, Y_UTIL, Z_UTIL);
+  sprintf(utilizationJson, R"({"X":%.1f,"Y":%.1f,"Z":%.1f})", X_UTIL, Y_UTIL, Z_UTIL);
   builder.addRawField("utilization", utilizationJson);
 
   // Add recommendation and library features
   builder.addField("recommendation", recommendation.c_str());
-  builder.addRawField("libraryFeatures", "{\"autoGainAvailable\":true,\"saturationDetection\":true,\"efficientReadAll\":true,\"autoZeroSupport\":true}");
+  builder.addRawField(
+      "libraryFeatures",
+      R"({"autoGainAvailable":true,"saturationDetection":true,"efficientReadAll":true,"autoZeroSupport":true})");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   char logMsg[128];
@@ -3785,8 +3939,8 @@ void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
   Logger::info("Taking " + String(CALIBRATION_SAMPLES) + " samples for black reference...");
 
   // Log current sensor configuration
-  TCS3430Gain currentGain = colorSensor.getGain();
-  float currentIntTime = colorSensor.getIntegrationTime();
+  TCS3430Gain const currentGain = colorSensor.getGain();
+  float const currentIntTime = colorSensor.getIntegrationTime();
   Logger::info("[BLACK_CALIB] Sensor config: Gain=" + String(static_cast<int>(currentGain)) +
                " IntTime=" + String(currentIntTime, 1) + "ms LED=OFF");
 
@@ -3819,7 +3973,7 @@ void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
   auto const IR2 = static_cast<uint16_t>(sumIR2 / CALIBRATION_SAMPLES);
 
   // Validate black reference quality (should be low values for true darkness)
-  uint16_t totalSignal = X + Y + Z;
+  uint16_t const totalSignal = X + Y + Z;
   Logger::info("Black reference validation - Total signal: " + String(totalSignal));
 
   if (totalSignal > 5000) {
@@ -3873,7 +4027,7 @@ void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
   analogWrite(leDpin, ORIGINAL_BRIGHTNESS);
   Logger::info("LED restored to original brightness: " + String(ORIGINAL_BRIGHTNESS));
 
-  Logger::info("✓ Black reference captured successfully:");
+  Logger::info("? Black reference captured successfully:");
   Logger::info("  X=" + String(X) + " Y=" + String(Y) + " Z=" + String(Z));
   Logger::info("  IR1=" + String(IR1) + " IR2=" + String(IR2));
   Logger::info("  Total signal=" + String(totalSignal) + " (lower is better for black)");
@@ -3915,8 +4069,8 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
   uint32_t sumIR2 = 0;
 
   // Log current sensor configuration and LED status
-  TCS3430Gain currentGain = colorSensor.getGain();
-  float currentIntTime = colorSensor.getIntegrationTime();
+  TCS3430Gain const currentGain = colorSensor.getGain();
+  float const currentIntTime = colorSensor.getIntegrationTime();
   Logger::info("[WHITE_CALIB] Sensor config: Gain=" + String(static_cast<int>(currentGain)) +
                " IntTime=" + String(currentIntTime, 1) + "ms LED=" + String(settings.ledBrightness));
 
@@ -3950,7 +4104,7 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
   auto const IR2 = static_cast<uint16_t>(sumIR2 / CALIBRATION_SAMPLES);
 
   // Validate white reference quality (should be high values for bright illumination)
-  uint16_t totalSignal = X + Y + Z;
+  uint16_t const totalSignal = X + Y + Z;
   Logger::info("White reference validation - Total signal: " + String(totalSignal));
 
   if (totalSignal < 10000) {
@@ -4004,7 +4158,7 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
     builder.addField("troubleshooting", "1. For black: Turn off all lights, press black object against sensor. 2. For white: Use bright LED, place white object 5-10mm from sensor.");
     builder.addField("nextStep", "Restart calibration with /api/calibrate-black in proper lighting conditions");
 
-    String response = builder.build();
+    String const response = builder.build();
     request->send(HTTP_BAD_REQUEST, "application/json", response);
     return; // Stop execution to prevent storing invalid calibration
   }
@@ -4040,16 +4194,16 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
     }
   }
 
-  Logger::info("✓ White reference captured successfully:");
+  Logger::info("? White reference captured successfully:");
   Logger::info("  X=" + String(X) + " Y=" + String(Y) + " Z=" + String(Z));
   Logger::info("  IR1=" + String(IR1) + " IR2=" + String(IR2));
   Logger::info("  Total signal=" + String(totalSignal) + " (higher is better for white)");
   Logger::info("");
-  Logger::info("🎉 BASIC CALIBRATION COMPLETE! 🎉");
+  Logger::info("?? BASIC CALIBRATION COMPLETE! ??");
   Logger::info("Calibration ranges established:");
-  Logger::info("  X: [" + String(settings.legacyCalibrationData.minX) + " → " + String(settings.legacyCalibrationData.maxX) + "] (range: " + String(settings.legacyCalibrationData.maxX - settings.legacyCalibrationData.minX) + ")");
-  Logger::info("  Y: [" + String(settings.legacyCalibrationData.minY) + " → " + String(settings.legacyCalibrationData.maxY) + "] (range: " + String(settings.legacyCalibrationData.maxY - settings.legacyCalibrationData.minY) + ")");
-  Logger::info("  Z: [" + String(settings.legacyCalibrationData.minZ) + " → " + String(settings.legacyCalibrationData.maxZ) + "] (range: " + String(settings.legacyCalibrationData.maxZ - settings.legacyCalibrationData.minZ) + ")");
+  Logger::info("  X: [" + String(settings.legacyCalibrationData.minX) + " ? " + String(settings.legacyCalibrationData.maxX) + "] (range: " + String(settings.legacyCalibrationData.maxX - settings.legacyCalibrationData.minX) + ")");
+  Logger::info("  Y: [" + String(settings.legacyCalibrationData.minY) + " ? " + String(settings.legacyCalibrationData.maxY) + "] (range: " + String(settings.legacyCalibrationData.maxY - settings.legacyCalibrationData.minY) + ")");
+  Logger::info("  Z: [" + String(settings.legacyCalibrationData.minZ) + " ? " + String(settings.legacyCalibrationData.maxZ) + "] (range: " + String(settings.legacyCalibrationData.maxZ - settings.legacyCalibrationData.minZ) + ")");
   Logger::info("System is now ready for color matching!");
 
   JsonResponseBuilder builder;
@@ -4058,12 +4212,12 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
 
   // Add white reference data
   char whiteRefJson[128];
-  sprintf(whiteRefJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}", X, Y, Z, IR1, IR2);
+  sprintf(whiteRefJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})", X, Y, Z, IR1, IR2);
   builder.addRawField("whiteReference", whiteRefJson);
 
   // Add calibration ranges
   char rangesJson[256];
-  sprintf(rangesJson, "{\"X\":[%d,%d],\"Y\":[%d,%d],\"Z\":[%d,%d]}",
+  sprintf(rangesJson, R"({"X":[%d,%d],"Y":[%d,%d],"Z":[%d,%d]})",
           settings.legacyCalibrationData.minX, settings.legacyCalibrationData.maxX,
           settings.legacyCalibrationData.minY, settings.legacyCalibrationData.maxY,
           settings.legacyCalibrationData.minZ, settings.legacyCalibrationData.maxZ);
@@ -4071,7 +4225,7 @@ void handleCalibrateWhiteReference(AsyncWebServerRequest *request) {
 
   builder.addField("nextStep", "Place VIVID WHITE sample and call /api/calibrate-vivid-white");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 }
 
@@ -4088,10 +4242,18 @@ void handleCalibrateBlueReference(AsyncWebServerRequest *request) {
   }
 
   // Take multiple readings for stable calibration
-  uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
+  uint32_t sumX = 0;
+  uint32_t sumY = 0;
+  uint32_t sumZ = 0;
+  uint32_t sumIR1 = 0;
+  uint32_t sumIR2 = 0;
 
   for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
-    uint16_t x, y, z, ir1, ir2;
+    uint16_t x;
+    uint16_t y;
+    uint16_t z;
+    uint16_t ir1;
+    uint16_t ir2;
     // Read sensor data using available methods
     x = colorSensor.getX();
     y = colorSensor.getY();
@@ -4116,15 +4278,15 @@ void handleCalibrateBlueReference(AsyncWebServerRequest *request) {
   }
 
   // Calculate averages
-  uint16_t avgX = sumX / CALIBRATION_SAMPLES;
-  uint16_t avgY = sumY / CALIBRATION_SAMPLES;
-  uint16_t avgZ = sumZ / CALIBRATION_SAMPLES;
-  uint16_t avgIR1 = sumIR1 / CALIBRATION_SAMPLES;
-  uint16_t avgIR2 = sumIR2 / CALIBRATION_SAMPLES;
+  uint16_t const avgX = sumX / CALIBRATION_SAMPLES;
+  uint16_t const avgY = sumY / CALIBRATION_SAMPLES;
+  uint16_t const avgZ = sumZ / CALIBRATION_SAMPLES;
+  uint16_t const avgIR1 = sumIR1 / CALIBRATION_SAMPLES;
+  uint16_t const avgIR2 = sumIR2 / CALIBRATION_SAMPLES;
 
   // Validate blue characteristics: Z channel should be dominant
-  float totalXYZ = avgX + avgY + avgZ;
-  float zRatio = avgZ / totalXYZ;
+  float const totalXYZ = avgX + avgY + avgZ;
+  float const zRatio = avgZ / totalXYZ;
 
   // Enhanced blue validation with detailed logging
   Logger::debug("[BLUE_CALIB] Z ratio validation: " + String(zRatio, 3) + " (X=" + String(avgX) +
@@ -4132,16 +4294,16 @@ void handleCalibrateBlueReference(AsyncWebServerRequest *request) {
 
   if (zRatio < 0.35f) { // Adjusted threshold from 0.4 to 0.35 for better compatibility
     Logger::warn("Blue validation failed - insufficient Z channel dominance");
-    Logger::warn("Z ratio: " + String(zRatio, 3) + " (required: ≥0.35, recommended: ≥0.40)");
+    Logger::warn("Z ratio: " + String(zRatio, 3) + " (required: =0.35, recommended: =0.40)");
 
     JsonResponseBuilder builder;
     builder.addField("status", "error");
     builder.addField("message", "Object does not appear to be blue - insufficient Z channel dominance");
-    builder.addField("measured", String(zRatio, 3));
-    builder.addField("required", "≥0.35");
+    builder.addField("measured", String(zRatio, 3) != nullptr);
+    builder.addField("required", "=0.35");
     builder.addField("recommendation", "Use a more saturated blue object or ensure proper lighting");
 
-    String response = builder.build();
+    String const response = builder.build();
     request->send(HTTP_BAD_REQUEST, "application/json", response);
     return;
   }
@@ -4183,7 +4345,7 @@ void handleCalibrateBlueReference(AsyncWebServerRequest *request) {
     }
   }
 
-  Logger::info("✓ Blue reference captured and stored successfully:");
+  Logger::info("? Blue reference captured and stored successfully:");
   Logger::info("  X=" + String(avgX) + " Y=" + String(avgY) + " Z=" + String(avgZ));
   Logger::info("  IR1=" + String(avgIR1) + " IR2=" + String(avgIR2));
   Logger::info("  Z ratio=" + String(zRatio, 3) + " (validation passed)");
@@ -4215,28 +4377,42 @@ void handleCalibrateYellowReference(AsyncWebServerRequest *request) {
       !settings.legacyCalibrationData.blueReferenceComplete) {
 
     Logger::warn("Yellow calibration rejected - previous references not complete");
-    Logger::warn("Status: Black=" + String(settings.legacyCalibrationData.blackReferenceComplete ? "✓" : "✗") +
-                 " White=" + String(settings.legacyCalibrationData.whiteReferenceComplete ? "✓" : "✗") +
-                 " Blue=" + String(settings.legacyCalibrationData.blueReferenceComplete ? "✓" : "✗"));
+    Logger::warn("Status: Black=" + String(settings.legacyCalibrationData.blackReferenceComplete ? "?" : "?") +
+                 " White=" + String(settings.legacyCalibrationData.whiteReferenceComplete ? "?" : "?") +
+                 " Blue=" + String(settings.legacyCalibrationData.blueReferenceComplete ? "?" : "?"));
 
     JsonResponseBuilder builder;
     builder.addField("status", "error");
     builder.addField("message", "Must calibrate black, white, and blue references first");
-    builder.addField("blackComplete", String(settings.legacyCalibrationData.blackReferenceComplete ? "true" : "false"));
-    builder.addField("whiteComplete", String(settings.legacyCalibrationData.whiteReferenceComplete ? "true" : "false"));
-    builder.addField("blueComplete", String(settings.legacyCalibrationData.blueReferenceComplete ? "true" : "false"));
+    builder.addField("blackComplete", String(settings.legacyCalibrationData.blackReferenceComplete
+                                                 ? "true"
+                                                 : "false") != nullptr);
+    builder.addField("whiteComplete", String(settings.legacyCalibrationData.whiteReferenceComplete
+                                                 ? "true"
+                                                 : "false") != nullptr);
+    builder.addField(
+        "blueComplete",
+        String(settings.legacyCalibrationData.blueReferenceComplete ? "true" : "false") != nullptr);
     builder.addField("nextStep", settings.legacyCalibrationData.blueReferenceComplete ? "All prerequisites met" : "Complete blue calibration first");
 
-    String response = builder.build();
+    String const response = builder.build();
     request->send(HTTP_BAD_REQUEST, "application/json", response);
     return;
   }
 
   // Take multiple readings for stable calibration
-  uint32_t sumX = 0, sumY = 0, sumZ = 0, sumIR1 = 0, sumIR2 = 0;
+  uint32_t sumX = 0;
+  uint32_t sumY = 0;
+  uint32_t sumZ = 0;
+  uint32_t sumIR1 = 0;
+  uint32_t sumIR2 = 0;
 
   for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
-    uint16_t x, y, z, ir1, ir2;
+    uint16_t x;
+    uint16_t y;
+    uint16_t z;
+    uint16_t ir1;
+    uint16_t ir2;
     // Read sensor data using available methods
     x = colorSensor.getX();
     y = colorSensor.getY();
@@ -4261,15 +4437,15 @@ void handleCalibrateYellowReference(AsyncWebServerRequest *request) {
   }
 
   // Calculate averages
-  uint16_t avgX = sumX / CALIBRATION_SAMPLES;
-  uint16_t avgY = sumY / CALIBRATION_SAMPLES;
-  uint16_t avgZ = sumZ / CALIBRATION_SAMPLES;
-  uint16_t avgIR1 = sumIR1 / CALIBRATION_SAMPLES;
-  uint16_t avgIR2 = sumIR2 / CALIBRATION_SAMPLES;
+  uint16_t const avgX = sumX / CALIBRATION_SAMPLES;
+  uint16_t const avgY = sumY / CALIBRATION_SAMPLES;
+  uint16_t const avgZ = sumZ / CALIBRATION_SAMPLES;
+  uint16_t const avgIR1 = sumIR1 / CALIBRATION_SAMPLES;
+  uint16_t const avgIR2 = sumIR2 / CALIBRATION_SAMPLES;
 
   // Validate yellow characteristics: X+Y channels should be dominant
-  float totalXYZ = avgX + avgY + avgZ;
-  float xyRatio = (avgX + avgY) / totalXYZ;
+  float const totalXYZ = avgX + avgY + avgZ;
+  float const xyRatio = (avgX + avgY) / totalXYZ;
 
   if (xyRatio < 0.6f) { // Yellow should have strong X+Y components
     Logger::warn("Yellow validation failed - insufficient X+Y channel dominance");
@@ -4313,16 +4489,14 @@ void handleCalibrateYellowReference(AsyncWebServerRequest *request) {
     }
   }
 
-  Logger::info("✓ Yellow reference captured and stored successfully:");
+  Logger::info("? Yellow reference captured and stored successfully:");
   Logger::info("  X=" + String(avgX) + " Y=" + String(avgY) + " Z=" + String(avgZ));
   Logger::info("  IR1=" + String(avgIR1) + " IR2=" + String(avgIR2));
   Logger::info("  XY ratio=" + String(xyRatio, 3) + " (validation passed)");
 
   // Check if 4-point calibration is now complete
-  if (settings.legacyCalibrationData.blackReferenceComplete &&
-      settings.legacyCalibrationData.whiteReferenceComplete &&
-      false && // 4-point calibration ignored in legacy mode
-      false) { // 4-point calibration ignored in legacy mode
+  if (false &&  // 4-point calibration ignored in legacy mode
+      false) {  // 4-point calibration ignored in legacy mode
     // 4-point calibration is complete - enable tetrahedral interpolation
     Logger::info("4-point calibration complete! Tetrahedral interpolation enabled.");
   }
@@ -4373,16 +4547,16 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
   uint8_t currentR = 0;
   uint8_t currentG = 0;
   uint8_t currentB = 0;
-  convertXYZtoRGB_Professional(x, y, z, ir1, ir2, currentR, currentG, currentB);
+  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, currentR, currentG, currentB);
 
   Logger::info("Current vivid white sample produces RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
   Logger::info("Target vivid white should be RGB(" + String(settings.vividWhiteTargetR) + "," + String(settings.vividWhiteTargetG) + "," + String(settings.vividWhiteTargetB) + ")");
 
   // For professional conversion, we need to add vivid white scaling factors
   // Calculate what scaling factors would make this sample produce the target RGB
-  float rScale = (currentR > 0) ? (float)settings.vividWhiteTargetR / (float)currentR : 1.0f;
-  float gScale = (currentG > 0) ? (float)settings.vividWhiteTargetG / (float)currentG : 1.0f;
-  float bScale = (currentB > 0) ? (float)settings.vividWhiteTargetB / (float)currentB : 1.0f;
+  float const rScale = (currentR > 0) ? (float)settings.vividWhiteTargetR / (float)currentR : 1.0f;
+  float const gScale = (currentG > 0) ? (float)settings.vividWhiteTargetG / (float)currentG : 1.0f;
+  float const bScale = (currentB > 0) ? (float)settings.vividWhiteTargetB / (float)currentB : 1.0f;
 
   // Store vivid white scaling factors for use in professional conversion
   settings.vividWhiteScaleR = rScale;
@@ -4395,7 +4569,7 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
   uint8_t testR = 0;
   uint8_t testG = 0;
   uint8_t testB = 0;
-  convertXYZtoRGB_Professional(x, y, z, ir1, ir2, testR, testG, testB);
+  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, testR, testG, testB);
 
   Logger::info("Vivid white calibration complete!");
   Logger::info("Before adjustment: RGB(" + String(currentR) + "," + String(currentG) + "," +
@@ -4443,14 +4617,14 @@ void handleOptimizeLEDForYellow(AsyncWebServerRequest *request) {
   const uint16_t MIN_SIGNAL_STRENGTH = 3000;  // Minimum Y value for good signal
   const uint16_t MAX_SIGNAL_STRENGTH = 50000; // Maximum to avoid saturation
 
-  uint8_t originalBrightness = settings.ledBrightness;
+  uint8_t const originalBrightness = settings.ledBrightness;
   uint8_t bestBrightness = originalBrightness;
   float bestScore = 0.0f;
 
   JsonResponseBuilder builder;
   builder.addField("status", "success");
   builder.addField("message", "LED brightness optimized for yellow detection");
-  builder.addField("originalBrightness", String(originalBrightness));
+  builder.addField("originalBrightness", String(originalBrightness) != nullptr);
 
   Logger::info("Testing LED brightness range 50-255 for optimal yellow detection...");
 
@@ -4461,23 +4635,29 @@ void handleOptimizeLEDForYellow(AsyncWebServerRequest *request) {
     delay(100); // Allow LED to stabilize
 
     // Read sensor data
-    uint16_t x, y, z, ir1, ir2;
+    uint16_t x;
+    uint16_t y;
+    uint16_t z;
+    uint16_t ir1;
+    uint16_t ir2;
     colorSensor.readAll(x, y, z, ir1, ir2);
 
     // Calculate ratios
-    float total = static_cast<float>(x + y + z);
-    if (total < 100) continue; // Skip if signal too weak
+    auto const total = static_cast<float>(x + y + z);
+    if (total < 100) {
+      continue;  // Skip if signal too weak
+    }
 
-    float xRatio = static_cast<float>(x) / total;
-    float yRatio = static_cast<float>(y) / total;
-    float zRatio = static_cast<float>(z) / total;
-    float xyRatio = (static_cast<float>(x + y)) / total;
+    float const xRatio = static_cast<float>(x) / total;
+    float const yRatio = static_cast<float>(y) / total;
+    float const zRatio = static_cast<float>(z) / total;
+    float const xyRatio = (static_cast<float>(x + y)) / total;
 
     // Calculate score based on how close to ideal yellow characteristics
-    float xyScore = 1.0f - abs(xyRatio - TARGET_XY_RATIO) / TARGET_XY_RATIO;
-    float xScore = 1.0f - abs(xRatio - TARGET_X_RATIO) / TARGET_X_RATIO;
-    float yScore = 1.0f - abs(yRatio - TARGET_Y_RATIO) / TARGET_Y_RATIO;
-    float zScore = 1.0f - abs(zRatio - TARGET_Z_RATIO) / TARGET_Z_RATIO;
+    float const xyScore = 1.0f - (abs(xyRatio - TARGET_XY_RATIO) / TARGET_XY_RATIO);
+    float const xScore = 1.0f - (abs(xRatio - TARGET_X_RATIO) / TARGET_X_RATIO);
+    float const yScore = 1.0f - (abs(yRatio - TARGET_Y_RATIO) / TARGET_Y_RATIO);
+    float const zScore = 1.0f - (abs(zRatio - TARGET_Z_RATIO) / TARGET_Z_RATIO);
 
     // Signal strength score (prefer strong signal without saturation)
     float signalScore = 1.0f;
@@ -4488,7 +4668,8 @@ void handleOptimizeLEDForYellow(AsyncWebServerRequest *request) {
     }
 
     // Combined score (weighted)
-    float totalScore = (xyScore * 0.3f + xScore * 0.2f + yScore * 0.2f + zScore * 0.2f + signalScore * 0.1f);
+    float const totalScore = ((xyScore * 0.3f) + (xScore * 0.2f) + (yScore * 0.2f) +
+                              (zScore * 0.2f) + (signalScore * 0.1f));
 
     Logger::debug("Brightness " + String(brightness) + ": XY=" + String(xyRatio, 3) +
                   " X=" + String(xRatio, 3) + " Y=" + String(yRatio, 3) + " Z=" + String(zRatio, 3) +
@@ -4506,45 +4687,50 @@ void handleOptimizeLEDForYellow(AsyncWebServerRequest *request) {
   delay(200); // Allow LED to stabilize
 
   // Read final optimized values
-  uint16_t finalX, finalY, finalZ, finalIR1, finalIR2;
+  uint16_t finalX;
+  uint16_t finalY;
+  uint16_t finalZ;
+  uint16_t finalIR1;
+  uint16_t finalIR2;
   colorSensor.readAll(finalX, finalY, finalZ, finalIR1, finalIR2);
 
   // Calculate final RGB with professional conversion
-  uint8_t finalR, finalG, finalB;
-  convertXYZtoRGB_Professional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
+  uint8_t finalR;
+  uint8_t finalG;
+  uint8_t finalB;
+  convertXyZtoRgbProfessional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
 
-  float finalTotal = static_cast<float>(finalX + finalY + finalZ);
-  float finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
+  auto const finalTotal = static_cast<float>(finalX + finalY + finalZ);
+  float const finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
 
-  builder.addField("optimizedBrightness", String(bestBrightness));
-  builder.addField("improvementScore", String(bestScore, 3));
-  builder.addField("brightnessChange", String(static_cast<int>(bestBrightness) - static_cast<int>(originalBrightness)));
+  builder.addField("optimizedBrightness", String(bestBrightness) != nullptr);
+  builder.addField("improvementScore", String(bestScore, 3) != nullptr);
+  builder.addField("brightnessChange", String(static_cast<int>(bestBrightness) -
+                                              static_cast<int>(originalBrightness)) != nullptr);
 
   // Add final sensor readings
   char sensorJson[128];
-  sprintf(sensorJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}",
-          finalX, finalY, finalZ, finalIR1, finalIR2);
+  sprintf(sensorJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})", finalX, finalY, finalZ,
+          finalIR1, finalIR2);
   builder.addRawField("optimizedSensorData", sensorJson);
 
   // Add final RGB
   char rgbJson[64];
-  sprintf(rgbJson, "{\"R\":%d,\"G\":%d,\"B\":%d}", finalR, finalG, finalB);
+  sprintf(rgbJson, R"({"R":%d,"G":%d,"B":%d})", finalR, finalG, finalB);
   builder.addRawField("optimizedRGB", rgbJson);
 
   // Add color characteristics
   char characteristicsJson[128];
-  sprintf(characteristicsJson, "{\"xyRatio\":%.3f,\"xRatio\":%.3f,\"yRatio\":%.3f,\"zRatio\":%.3f}",
-          finalXYRatio,
-          static_cast<float>(finalX) / finalTotal,
-          static_cast<float>(finalY) / finalTotal,
-          static_cast<float>(finalZ) / finalTotal);
+  sprintf(characteristicsJson, R"({"xyRatio":%.3f,"xRatio":%.3f,"yRatio":%.3f,"zRatio":%.3f})",
+          finalXYRatio, static_cast<float>(finalX) / finalTotal,
+          static_cast<float>(finalY) / finalTotal, static_cast<float>(finalZ) / finalTotal);
   builder.addRawField("yellowCharacteristics", characteristicsJson);
 
   builder.addField("recommendation",
     (bestScore > 0.8f) ? "excellent_yellow_detection" :
     (bestScore > 0.6f) ? "good_yellow_detection" : "consider_different_yellow_sample");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   Logger::info("LED brightness optimization complete!");
@@ -4567,13 +4753,13 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   // Target yellow characteristics for optimal detection
   const float TARGET_XY_RATIO = 0.92f;        // X+Y should be 92% of total (strong yellow)
   const float TARGET_SIGNAL_STRENGTH = 8000.0f; // Target Y value for good signal
-  const float SIGNAL_TOLERANCE = 0.3f;        // ±30% tolerance for signal strength
+  const float SIGNAL_TOLERANCE = 0.3f;        // �30% tolerance for signal strength
   const uint16_t MIN_SIGNAL = 2000;           // Minimum acceptable signal
   const uint16_t MAX_SIGNAL = 45000;          // Maximum to avoid saturation
 
   // Store original settings
-  float originalGainValue = colorSensor.gain();
-  float originalIntegrationTime = colorSensor.integrationTime();
+  float const originalGainValue = colorSensor.gain();
+  float const originalIntegrationTime = colorSensor.integrationTime();
 
   TCS3430AutoGain::Gain bestGain = TCS3430AutoGain::Gain::GAIN_16X; // Default to current
   float bestIntegrationTime = originalIntegrationTime;
@@ -4582,45 +4768,50 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   JsonResponseBuilder builder;
   builder.addField("status", "success");
   builder.addField("message", "Sensor optimized for yellow detection");
-  builder.addField("originalGain", String(originalGainValue, 1));
-  builder.addField("originalIntegrationTime", String(originalIntegrationTime, 1));
+  builder.addField("originalGain", String(originalGainValue, 1) != nullptr);
+  builder.addField("originalIntegrationTime", String(originalIntegrationTime, 1) != nullptr);
 
   Logger::info("Testing gain levels 1x-64x with integration time adjustments...");
 
-  // Test different gain levels using proper enum values
-  TCS3430AutoGain::Gain gainLevels[] = {
-    TCS3430AutoGain::Gain::GAIN_1X,
-    TCS3430AutoGain::Gain::GAIN_4X,
-    TCS3430AutoGain::Gain::GAIN_16X,
-    TCS3430AutoGain::Gain::GAIN_64X
-  };
+  // Test different gain levels using proper enum values (clang-tidy: use std::array)
+  std::array<TCS3430AutoGain::Gain, 4> const gainLevels = {
+      TCS3430AutoGain::Gain::GAIN_1X, TCS3430AutoGain::Gain::GAIN_4X,
+      TCS3430AutoGain::Gain::GAIN_16X, TCS3430AutoGain::Gain::GAIN_64X};
 
-  for (int gainIndex = 0; gainIndex < 4; gainIndex++) {
-    TCS3430AutoGain::Gain testGain = gainLevels[gainIndex];
-    String gainName = (gainIndex == 0) ? "1x" : (gainIndex == 1) ? "4x" : (gainIndex == 2) ? "16x" : "64x";
+  for (size_t gainIndex = 0; gainIndex < gainLevels.size(); gainIndex++) {
+    TCS3430AutoGain::Gain const testGain = gainLevels[gainIndex];
+    String const gainName = (gainIndex == 0)   ? "1x"
+                            : (gainIndex == 1) ? "4x"
+                            : (gainIndex == 2) ? "16x"
+                                               : "64x";
     Logger::debug("Testing gain level " + gainName + "...");
 
     // Set test gain
     colorSensor.gain(testGain);
     delay(50); // Allow sensor to stabilize
 
-    // Test different integration times for this gain
-    float integrationTimes[] = {50.0f, 100.0f, 150.0f, 200.0f, 250.0f};
-    int numIntegrationTimes = sizeof(integrationTimes) / sizeof(integrationTimes[0]);
+    // Test different integration times for this gain (clang-tidy: use std::array)
+    std::array<float, 5> const integrationTimes = {50.0f, 100.0f, 150.0f, 200.0f, 250.0f};
 
-    for (int i = 0; i < numIntegrationTimes; i++) {
-      float testIntegrationTime = integrationTimes[i];
+    for (size_t i = 0; i < integrationTimes.size(); i++) {
+      float const testIntegrationTime = integrationTimes[i];
 
       // Set test integration time
       colorSensor.integrationTime(testIntegrationTime);
       delay(100); // Allow sensor to stabilize
 
       // Read sensor data multiple times for stability
-      uint32_t sumX = 0, sumY = 0, sumZ = 0;
+      uint32_t sumX = 0;
+      uint32_t sumY = 0;
+      uint32_t sumZ = 0;
       int validReadings = 0;
 
       for (int reading = 0; reading < 3; reading++) {
-        uint16_t x, y, z, ir1, ir2;
+        uint16_t x;
+        uint16_t y;
+        uint16_t z;
+        uint16_t ir1;
+        uint16_t ir2;
         colorSensor.readAll(x, y, z, ir1, ir2);
 
         // Skip saturated readings
@@ -4633,24 +4824,29 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
         delay(20);
       }
 
-      if (validReadings == 0) continue; // Skip if all readings saturated
+      if (validReadings == 0) {
+        continue;  // Skip if all readings saturated
+      }
 
       // Calculate average values
-      float avgX = static_cast<float>(sumX) / validReadings;
-      float avgY = static_cast<float>(sumY) / validReadings;
-      float avgZ = static_cast<float>(sumZ) / validReadings;
-      float total = avgX + avgY + avgZ;
+      float const avgX = static_cast<float>(sumX) / validReadings;
+      float const avgY = static_cast<float>(sumY) / validReadings;
+      float const avgZ = static_cast<float>(sumZ) / validReadings;
+      float const total = avgX + avgY + avgZ;
 
-      if (total < 100) continue; // Skip if signal too weak
+      if (total < 100) {
+        continue;  // Skip if signal too weak
+      }
 
       // Calculate yellow characteristics
-      float xyRatio = (avgX + avgY) / total;
-      float xRatio = avgX / total;
-      float yRatio = avgY / total;
-      float zRatio = avgZ / total;
+      float const xyRatio = (avgX + avgY) / total;
+      // Note: Individual ratios calculated but not used in current scoring algorithm
+      // float xRatio = avgX / total;  // Removed: unused variable (clang-tidy fix)
+      // float yRatio = avgY / total;  // Removed: unused variable (clang-tidy fix)
+      // float zRatio = avgZ / total;  // Removed: unused variable (clang-tidy fix)
 
       // Calculate scores
-      float xyScore = 1.0f - abs(xyRatio - TARGET_XY_RATIO) / TARGET_XY_RATIO;
+      float const xyScore = 1.0f - (abs(xyRatio - TARGET_XY_RATIO) / TARGET_XY_RATIO);
 
       // Signal strength score (prefer target signal strength)
       float signalScore = 1.0f;
@@ -4668,9 +4864,12 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
       }
 
       // Combined score
-      float totalScore = (xyScore * 0.6f + signalScore * 0.4f);
+      float const totalScore = ((xyScore * 0.6f) + (signalScore * 0.4f));
 
-      String gainName = (gainIndex == 0) ? "1x" : (gainIndex == 1) ? "4x" : (gainIndex == 2) ? "16x" : "64x";
+      String const gainName = (gainIndex == 0)   ? "1x"
+                              : (gainIndex == 1) ? "4x"
+                              : (gainIndex == 2) ? "16x"
+                                                 : "64x";
       Logger::debug("Gain=" + gainName + " IntTime=" + String(testIntegrationTime, 1) +
                     " Y=" + String(static_cast<int>(avgY)) + " XY=" + String(xyRatio, 3) +
                     " Score=" + String(totalScore, 3));
@@ -4689,54 +4888,63 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   delay(200); // Allow sensor to stabilize
 
   // Read final optimized values
-  uint16_t finalX, finalY, finalZ, finalIR1, finalIR2;
+  uint16_t finalX;
+  uint16_t finalY;
+  uint16_t finalZ;
+  uint16_t finalIR1;
+  uint16_t finalIR2;
   colorSensor.readAll(finalX, finalY, finalZ, finalIR1, finalIR2);
 
   // Calculate final RGB with professional conversion
-  uint8_t finalR, finalG, finalB;
-  convertXYZtoRGB_Professional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
+  uint8_t finalR;
+  uint8_t finalG;
+  uint8_t finalB;
+  convertXyZtoRgbProfessional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
 
-  float finalTotal = static_cast<float>(finalX + finalY + finalZ);
-  float finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
+  auto const finalTotal = static_cast<float>(finalX + finalY + finalZ);
+  float const finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
 
   // Convert best gain to string for response
   // Convert gain enum to string using static_cast to avoid enum access issues
-  int gainValue = static_cast<int>(bestGain);
-  String bestGainStr = (gainValue == 0) ? "1x" :
-                       (gainValue == 1) ? "4x" :
-                       (gainValue == 2) ? "16x" : "64x";
+  int const gainValue = static_cast<int>(bestGain);
+  String const bestGainStr = (gainValue == 0)   ? "1x"
+                             : (gainValue == 1) ? "4x"
+                             : (gainValue == 2) ? "16x"
+                                                : "64x";
 
-  builder.addField("optimizedGain", bestGainStr);
-  builder.addField("optimizedIntegrationTime", String(bestIntegrationTime, 1));
-  builder.addField("improvementScore", String(bestScore, 3));
+  builder.addField("optimizedGain", bestGainStr != nullptr);
+  builder.addField("optimizedIntegrationTime", String(bestIntegrationTime, 1) != nullptr);
+  builder.addField("improvementScore", String(bestScore, 3) != nullptr);
   builder.addField("gainChange", "optimized");
-  builder.addField("integrationTimeChange", String(bestIntegrationTime - originalIntegrationTime, 1));
+  builder.addField("integrationTimeChange",
+                   String(bestIntegrationTime - originalIntegrationTime, 1) != nullptr);
 
   // Add final sensor readings
   char sensorJson[128];
-  sprintf(sensorJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}",
-          finalX, finalY, finalZ, finalIR1, finalIR2);
+  sprintf(sensorJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})", finalX, finalY, finalZ,
+          finalIR1, finalIR2);
   builder.addRawField("optimizedSensorData", sensorJson);
 
   // Add final RGB
   char rgbJson[64];
-  sprintf(rgbJson, "{\"R\":%d,\"G\":%d,\"B\":%d}", finalR, finalG, finalB);
+  sprintf(rgbJson, R"({"R":%d,"G":%d,"B":%d})", finalR, finalG, finalB);
   builder.addRawField("optimizedRGB", rgbJson);
 
   // Add color characteristics
   char characteristicsJson[128];
-  sprintf(characteristicsJson, "{\"xyRatio\":%.3f,\"signalStrength\":%d,\"gainMultiplier\":\"%s\"}",
+  sprintf(characteristicsJson, R"({"xyRatio":%.3f,"signalStrength":%d,"gainMultiplier":"%s"})",
           finalXYRatio, finalY,
-          (bestGain == TCS3430AutoGain::Gain::GAIN_1X) ? "1x" :
-          (bestGain == TCS3430AutoGain::Gain::GAIN_4X) ? "4x" :
-          (bestGain == TCS3430AutoGain::Gain::GAIN_16X) ? "16x" : "64x");
+          (bestGain == TCS3430AutoGain::Gain::GAIN_1X)    ? "1x"
+          : (bestGain == TCS3430AutoGain::Gain::GAIN_4X)  ? "4x"
+          : (bestGain == TCS3430AutoGain::Gain::GAIN_16X) ? "16x"
+                                                          : "64x");
   builder.addRawField("yellowCharacteristics", characteristicsJson);
 
   builder.addField("recommendation",
     (bestScore > 0.8f) ? "excellent_yellow_optimization" :
     (bestScore > 0.6f) ? "good_yellow_optimization" : "consider_different_yellow_sample");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   Logger::info("Sensor optimization complete!");
@@ -4807,18 +5015,21 @@ void handleTuneBlack(AsyncWebServerRequest *request) {
   uint8_t testB = 0;
   convertXyZtoRgbVividWhite(X, Y, Z, IR1, IR2, testR, testG, testB);
 
-  // Success criteria: RGB values should be ≤ 5 for black calibration
+  // Success criteria: RGB values should be = 5 for black calibration
   int const MAX_RGB = max({testR, testG, testB});
   bool const SUCCESS = MAX_RGB <= 5;
 
   Logger::info("Black calibration captured - X:" + String(X) + " Y:" + String(Y) + " Z:" + String(Z) +
                " IR1:" + String(IR1) + " IR2:" + String(IR2));
   Logger::info("Black calibration test RGB: (" + String(testR) + "," + String(testG) + "," + String(testB) + ")");
-  Logger::info("Success criteria (RGB ≤ 5): " + String(SUCCESS ? "PASSED" : "FAILED"));
+  Logger::info("Success criteria (RGB = 5): " + String(SUCCESS ? "PASSED" : "FAILED"));
 
   String response = "{";
-  response += "\"status\":\"" + String(SUCCESS ? "success" : "warning") + "\",";
-  response += "\"message\":\"Black calibration " + String(SUCCESS ? "completed successfully" : "completed but RGB values are higher than expected") + "\",";
+  response += R"("status":")" + String(SUCCESS ? "success" : "warning") + "\",";
+  response += R"("message":"Black calibration )" +
+              String(SUCCESS ? "completed successfully"
+                             : "completed but RGB values are higher than expected") +
+              "\",";
   response += "\"blackReference\":{";
   response += "\"X\":" + String(X) + ",";
   response += "\"Y\":" + String(Y) + ",";
@@ -4832,11 +5043,12 @@ void handleTuneBlack(AsyncWebServerRequest *request) {
   response += "\"B\":" + String(testB);
   response += "},";
   response += "\"successCriteria\":{";
-  response += "\"target\":\"RGB ≤ 5\",";
+  response += "\"target\":\"RGB = 5\",";
   response += "\"maxRGB\":" + String(MAX_RGB) + ",";
   response += "\"passed\":" + String(SUCCESS ? "true" : "false");
   response += "},";
-  response += "\"step\":\"Black calibration complete - this will be the reference for all other calibrations\"";
+  response +=
+      R"("step":"Black calibration complete - this will be the reference for all other calibrations")";
   response += "}";
 
   request->send(HTTP_OK, "application/json", response);
@@ -4855,7 +5067,7 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
 
   // Add black reference data
   char blackRefJson[128];
-  sprintf(blackRefJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":0,\"IR2\":0}",
+  sprintf(blackRefJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":0,"IR2":0})",
           static_cast<int>(settings.legacyCalibrationData.minX),
           static_cast<int>(settings.legacyCalibrationData.minY),
           static_cast<int>(settings.legacyCalibrationData.minZ));
@@ -4863,7 +5075,7 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
 
   // Add white reference data
   char whiteRefJson[128];
-  sprintf(whiteRefJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":0,\"IR2\":0}",
+  sprintf(whiteRefJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":0,"IR2":0})",
           static_cast<int>(settings.legacyCalibrationData.maxX),
           static_cast<int>(settings.legacyCalibrationData.maxY),
           static_cast<int>(settings.legacyCalibrationData.maxZ));
@@ -4872,7 +5084,7 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
   // Add blue reference data (if available)
   if (settings.legacyCalibrationData.blueReferenceComplete) {
     char blueRefJson[128];
-    sprintf(blueRefJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}",
+    sprintf(blueRefJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})",
             static_cast<int>(settings.legacyCalibrationData.blueX),
             static_cast<int>(settings.legacyCalibrationData.blueY),
             static_cast<int>(settings.legacyCalibrationData.blueZ),
@@ -4884,7 +5096,7 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
   // Add yellow reference data (if available)
   if (settings.legacyCalibrationData.yellowReferenceComplete) {
     char yellowRefJson[128];
-    sprintf(yellowRefJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}",
+    sprintf(yellowRefJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})",
             static_cast<int>(settings.legacyCalibrationData.yellowX),
             static_cast<int>(settings.legacyCalibrationData.yellowY),
             static_cast<int>(settings.legacyCalibrationData.yellowZ),
@@ -4895,11 +5107,11 @@ void handleGetCalibrationData(AsyncWebServerRequest *request) {
 
   // Add vivid white target
   char vividWhiteJson[64];
-  sprintf(vividWhiteJson, "{\"R\":%d,\"G\":%d,\"B\":%d}",
-          settings.vividWhiteTargetR, settings.vividWhiteTargetG, settings.vividWhiteTargetB);
+  sprintf(vividWhiteJson, R"({"R":%d,"G":%d,"B":%d})", settings.vividWhiteTargetR,
+          settings.vividWhiteTargetG, settings.vividWhiteTargetB);
   builder.addRawField("vividWhiteTarget", vividWhiteJson);
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
   Logger::debug("Calibration data sent to client");
 }
@@ -4930,7 +5142,7 @@ void handleResetCalibration(AsyncWebServerRequest *request) {
   builder.addField("message", "Calibration reset to defaults");
   builder.addField("nextStep", "Start calibration with /api/calibrate-black");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
   Logger::info("Calibration reset to defaults");
 }
@@ -4959,39 +5171,42 @@ void handleDiagnoseCalibration(AsyncWebServerRequest *request) {
 
   // Add current sensor readings
   char sensorReadingsJson[128];
-  sprintf(sensorReadingsJson, "{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d}", x, y, z, ir1, ir2);
+  sprintf(sensorReadingsJson, R"({"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d})", x, y, z, ir1, ir2);
   builder.addRawField("currentSensorReadings", sensorReadingsJson);
 
   // Add current RGB
   char currentRgbJson[64];
-  sprintf(currentRgbJson, "{\"R\":%d,\"G\":%d,\"B\":%d}", currentR, currentG, currentB);
+  sprintf(currentRgbJson, R"({"R":%d,"G":%d,"B":%d})", currentR, currentG, currentB);
   builder.addRawField("currentRGB", currentRgbJson);
 
   // Add target RGB
   char targetRgbJson[64];
-  sprintf(targetRgbJson, "{\"R\":%d,\"G\":%d,\"B\":%d}",
-          settings.vividWhiteTargetR, settings.vividWhiteTargetG, settings.vividWhiteTargetB);
+  sprintf(targetRgbJson, R"({"R":%d,"G":%d,"B":%d})", settings.vividWhiteTargetR,
+          settings.vividWhiteTargetG, settings.vividWhiteTargetB);
   builder.addRawField("targetRGB", targetRgbJson);
 
   if (settings.legacyCalibrationData.isCalibrated) {
     // Add calibration ranges
     char rangesJson[256];
-    sprintf(rangesJson, "{\"X\":[%d,%d],\"Y\":[%d,%d],\"Z\":[%d,%d]}",
-            static_cast<int>(settings.legacyCalibrationData.minX), static_cast<int>(settings.legacyCalibrationData.maxX),
-            static_cast<int>(settings.legacyCalibrationData.minY), static_cast<int>(settings.legacyCalibrationData.maxY),
-            static_cast<int>(settings.legacyCalibrationData.minZ), static_cast<int>(settings.legacyCalibrationData.maxZ));
+    sprintf(rangesJson, R"({"X":[%d,%d],"Y":[%d,%d],"Z":[%d,%d]})",
+            static_cast<int>(settings.legacyCalibrationData.minX),
+            static_cast<int>(settings.legacyCalibrationData.maxX),
+            static_cast<int>(settings.legacyCalibrationData.minY),
+            static_cast<int>(settings.legacyCalibrationData.maxY),
+            static_cast<int>(settings.legacyCalibrationData.minZ),
+            static_cast<int>(settings.legacyCalibrationData.maxZ));
     builder.addRawField("calibrationRanges", rangesJson);
 
     // Determine recommendation
-    bool needsRecalibration = (abs(currentR - settings.vividWhiteTargetR) > 10 ||
-                              abs(currentG - settings.vividWhiteTargetG) > 10 ||
-                              abs(currentB - settings.vividWhiteTargetB) > 10);
+    bool const needsRecalibration = (abs(currentR - settings.vividWhiteTargetR) > 10 ||
+                                     abs(currentG - settings.vividWhiteTargetG) > 10 ||
+                                     abs(currentB - settings.vividWhiteTargetB) > 10);
     builder.addField("recommendation", needsRecalibration ? "recalibrate_vivid_white" : "calibration_good");
   } else {
     builder.addField("recommendation", "start_calibration_with_black_reference");
   }
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   char logMsg[128];
@@ -5036,15 +5251,18 @@ void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
 
   // Add improvements object
   char improvementsJson[256];
-  sprintf(improvementsJson, "{\"sampleCount\":{\"old\":%d,\"new\":%d},\"sampleDelay\":{\"old\":%d,\"new\":%d},\"autoGain\":%s}",
+  sprintf(improvementsJson,
+          R"({"sampleCount":{"old":%d,"new":%d},"sampleDelay":{"old":%d,"new":%d},"autoGain":%s})",
           OLD_SAMPLES, settings.colorReadingSamples, OLD_DELAY, settings.sensorSampleDelay,
           AUTO_GAIN_SUCCESS ? "true" : "false");
   builder.addRawField("improvements", improvementsJson);
 
   // Add test reading object
   char testReadingJson[256];
-  sprintf(testReadingJson, "{\"sensorValues\":{\"X\":%d,\"Y\":%d,\"Z\":%d,\"IR1\":%d,\"IR2\":%d},\"RGB\":{\"R\":%d,\"G\":%d,\"B\":%d}}",
-          x, y, z, ir1, ir2, testR, testG, testB);
+  sprintf(
+      testReadingJson,
+      R"({"sensorValues":{"X":%d,"Y":%d,"Z":%d,"IR1":%d,"IR2":%d},"RGB":{"R":%d,"G":%d,"B":%d}})",
+      x, y, z, ir1, ir2, testR, testG, testB);
   builder.addRawField("testReading", testReadingJson);
 
   // Add expected benefits array
@@ -5054,7 +5272,7 @@ void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
 
   builder.addField("nextSteps", "Test with your color samples and compare accuracy");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   char logMsg[128];
@@ -5087,9 +5305,9 @@ void handleTestAllImprovements(AsyncWebServerRequest *request) {
     delay(10);
   }
 
-  uint16_t avgX = static_cast<uint16_t>(sumX / TEST_SAMPLES);
-  uint16_t avgY = static_cast<uint16_t>(sumY / TEST_SAMPLES);
-  uint16_t avgZ = static_cast<uint16_t>(sumZ / TEST_SAMPLES);
+  auto avgX = static_cast<uint16_t>(sumX / TEST_SAMPLES);
+  auto avgY = static_cast<uint16_t>(sumY / TEST_SAMPLES);
+  auto avgZ = static_cast<uint16_t>(sumZ / TEST_SAMPLES);
 
   // Test 2: Auto-gain functionality
   Logger::info("Test 2: Auto-gain functionality...");
@@ -5223,7 +5441,7 @@ void handleTestAllImprovements(AsyncWebServerRequest *request) {
     "\"Proper color space mapping\",\"Real-time optimization warnings\",\"Easy accuracy tuning\","
     "\"Complete system validation\"]}");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   char logMsg[64];
@@ -5244,15 +5462,15 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
   Logger::info("Test 1: Calibration sanity check validation...");
 
   // Save current calibration state
-  float originalMinX = settings.legacyCalibrationData.minX;
-  float originalMinY = settings.legacyCalibrationData.minY;
-  float originalMinZ = settings.legacyCalibrationData.minZ;
-  float originalMaxX = settings.legacyCalibrationData.maxX;
-  float originalMaxY = settings.legacyCalibrationData.maxY;
-  float originalMaxZ = settings.legacyCalibrationData.maxZ;
-  bool originalBlackComplete = settings.legacyCalibrationData.blackReferenceComplete;
-  bool originalWhiteComplete = settings.legacyCalibrationData.whiteReferenceComplete;
-  bool originalCalibrated = settings.legacyCalibrationData.isCalibrated;
+  float const originalMinX = settings.legacyCalibrationData.minX;
+  float const originalMinY = settings.legacyCalibrationData.minY;
+  float const originalMinZ = settings.legacyCalibrationData.minZ;
+  float const originalMaxX = settings.legacyCalibrationData.maxX;
+  float const originalMaxY = settings.legacyCalibrationData.maxY;
+  float const originalMaxZ = settings.legacyCalibrationData.maxZ;
+  bool const originalBlackComplete = settings.legacyCalibrationData.blackReferenceComplete;
+  bool const originalWhiteComplete = settings.legacyCalibrationData.whiteReferenceComplete;
+  bool const originalCalibrated = settings.legacyCalibrationData.isCalibrated;
 
   // Simulate inverted calibration (black > white)
   settings.legacyCalibrationData.minX = 1000;  // High black reading
@@ -5268,19 +5486,19 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
   if (settings.legacyCalibrationData.minX >= settings.legacyCalibrationData.maxX ||
       settings.legacyCalibrationData.minY >= settings.legacyCalibrationData.maxY ||
       settings.legacyCalibrationData.minZ >= settings.legacyCalibrationData.maxZ) {
-    Logger::info("✓ Sanity check correctly detected inverted calibration");
+    Logger::info("? Sanity check correctly detected inverted calibration");
     sanityCheckPassed = true;
   } else {
-    Logger::error("✗ Sanity check failed to detect inverted calibration");
+    Logger::error("? Sanity check failed to detect inverted calibration");
   }
 
   // Test 2: Auto-optimization for low-light conditions
   Logger::info("Test 2: Auto-optimization low-light handling...");
 
   // Get current sensor state
-  uint16_t currentY = colorSensor.getY();
-  TCS3430Gain currentGain = colorSensor.getGain();
-  float currentIntTime = colorSensor.getIntegrationTime();
+  uint16_t const currentY = colorSensor.getY();
+  TCS3430Gain const currentGain = colorSensor.getGain();
+  float const currentIntTime = colorSensor.getIntegrationTime();
 
   Logger::info("Current sensor state: Y=" + String(currentY) +
                ", Gain=" + String(static_cast<int>(currentGain)) +
@@ -5294,10 +5512,10 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
 
     // Check if we have the enhanced logic for low readings
     if (currentY < 100) {
-      Logger::info("✓ Extremely low Y reading detected - enhanced logic should apply minimal target (Y=50)");
+      Logger::info("? Extremely low Y reading detected - enhanced logic should apply minimal target (Y=50)");
       lowLightOptimizationWorks = true;
     } else {
-      Logger::info("✓ Low Y reading detected - enhanced logic should apply low target (Y=200)");
+      Logger::info("? Low Y reading detected - enhanced logic should apply low target (Y=200)");
       lowLightOptimizationWorks = true;
     }
   } else {
@@ -5309,22 +5527,22 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
   Logger::info("Test 3: Manual high-sensitivity fallback...");
 
   // Test if we can manually set high sensitivity settings
-  TCS3430Gain originalGainForTest = colorSensor.getGain();
-  float originalIntTimeForTest = colorSensor.getIntegrationTime();
+  TCS3430Gain const originalGainForTest = colorSensor.getGain();
+  float const originalIntTimeForTest = colorSensor.getIntegrationTime();
 
   colorSensor.setGain(TCS3430Gain::GAIN_64X);
   colorSensor.setIntegrationTime(400.0f);
   delay(100);  // Brief stabilization
 
-  TCS3430Gain testGain = colorSensor.getGain();
-  float testIntTime = colorSensor.getIntegrationTime();
+  TCS3430Gain const testGain = colorSensor.getGain();
+  float const testIntTime = colorSensor.getIntegrationTime();
 
-  bool manualOptimizationWorks = (testGain == TCS3430Gain::GAIN_64X && testIntTime >= 390.0f);
+  bool const manualOptimizationWorks = (testGain == TCS3430Gain::GAIN_64X && testIntTime >= 390.0f);
 
   if (manualOptimizationWorks) {
-    Logger::info("✓ Manual high-sensitivity configuration successful");
+    Logger::info("? Manual high-sensitivity configuration successful");
   } else {
-    Logger::error("✗ Manual high-sensitivity configuration failed");
+    Logger::error("? Manual high-sensitivity configuration failed");
   }
 
   // Restore original sensor settings
@@ -5344,39 +5562,43 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
 
   // Calculate overall test results
   int testsPassedCount = 0;
-  if (sanityCheckPassed) testsPassedCount++;
-  if (lowLightOptimizationWorks) testsPassedCount++;
-  if (manualOptimizationWorks) testsPassedCount++;
+  if (sanityCheckPassed) {
+    testsPassedCount++;
+  }
+  if (lowLightOptimizationWorks) {
+    testsPassedCount++;
+  }
+  if (manualOptimizationWorks) {
+    testsPassedCount++;
+  }
 
-  String overallResult = (testsPassedCount == 3) ? "ALL_TESTS_PASSED" : "SOME_TESTS_FAILED";
+  String const overallResult = (testsPassedCount == 3) ? "ALL_TESTS_PASSED" : "SOME_TESTS_FAILED";
 
   // Build response
-  builder.addField("overallResult", overallResult);
+  builder.addField("overallResult", overallResult != nullptr);
   builder.addField("testsTotal", "3");
-  builder.addField("testsPassed", String(testsPassedCount));
+  builder.addField("testsPassed", String(testsPassedCount) != nullptr);
 
   // Add test details
   char testResultsJson[512];
   sprintf(testResultsJson,
-    "{\"calibrationSanityCheck\":%s,\"lowLightOptimization\":%s,\"manualHighSensitivity\":%s}",
-    sanityCheckPassed ? "true" : "false",
-    lowLightOptimizationWorks ? "true" : "false",
-    manualOptimizationWorks ? "true" : "false");
+          R"({"calibrationSanityCheck":%s,"lowLightOptimization":%s,"manualHighSensitivity":%s})",
+          sanityCheckPassed ? "true" : "false", lowLightOptimizationWorks ? "true" : "false",
+          manualOptimizationWorks ? "true" : "false");
   builder.addRawField("testResults", testResultsJson);
 
   // Add current sensor status
   char sensorStatusJson[256];
   sprintf(sensorStatusJson,
-    "{\"currentY\":%d,\"currentGain\":%d,\"currentIntTime\":%.1f,\"isLowLight\":%s}",
-    currentY, static_cast<int>(currentGain), currentIntTime,
-    currentY < 500 ? "true" : "false");
+          R"({"currentY":%d,"currentGain":%d,"currentIntTime":%.1f,"isLowLight":%s})", currentY,
+          static_cast<int>(currentGain), currentIntTime, currentY < 500 ? "true" : "false");
   builder.addRawField("sensorStatus", sensorStatusJson);
 
   builder.addField("summary", testsPassedCount == 3 ?
     "All calibration fixes are working correctly" :
     "Some calibration fixes may need attention");
 
-  String response = builder.build();
+  String const response = builder.build();
   request->send(HTTP_OK, "application/json", response);
 
   Logger::info("=== CALIBRATION FIXES TEST COMPLETE ===");

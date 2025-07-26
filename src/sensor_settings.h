@@ -39,12 +39,17 @@
 
 // Access Point Mode (when WiFi not available)
 #define AP_SSID "color matcher"         // 📡 AP network name (default: "color matcher")
-#define AP_PASSWORD "yourpasswordhere"  // 🔐 AP password (default: "Scrofani1985")
+#define AP_PASSWORD "Scrofani1985"  // 🔐 AP password (default: "Scrofani1985")
 
 // Static IP Configuration
 #define STATIC_IP "192.168.0.152"    // 🌐 Static IP address (default: 192.168.0.152)
 #define GATEWAY_IP "192.168.0.1"     // 🚪 Gateway address (default: 192.168.0.1)
 #define SUBNET_MASK "255.255.255.0"  // 🔗 Subnet mask (default: 255.255.255.0)
+
+// NTP Time Configuration (Melbourne, Australia)
+#define NTP_SERVER "pool.ntp.org"           // 🕐 NTP server (default: "pool.ntp.org")
+#define NTP_TIMEZONE_OFFSET 39600           // 🌏 Melbourne UTC+11 offset in seconds (39600 = 11*3600)
+#define NTP_DAYLIGHT_OFFSET 0               // 🌞 Daylight saving offset (0 = no DST adjustment)
 
 // =============================================================================
 // 🎨 COLOR DETECTION SETTINGS
