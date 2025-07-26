@@ -2,8 +2,9 @@
 #include "sensor_settings.h"
 #include <time.h>
 
-// Forward declaration for timestamp function
+// Forward declarations for time functions
 extern uint32_t getCurrentTimestamp();
+extern String getCurrentTimeString();
 
 // Global storage instance
 PersistentStorage persistentStorage;

@@ -2258,7 +2258,7 @@ static bool connectToWiFiOrStartAP() {
 }
 
 // Function to initialize NTP time synchronization for Melbourne, Australia
-static void initializeNTPTime() {
+void initializeNTPTime() {
   Logger::info("=== Initializing NTP Time (Melbourne, Australia) ===");
 
   // Configure NTP with Melbourne timezone (UTC+11)
@@ -2300,7 +2300,23 @@ uint32_t getCurrentTimestamp() {
     return static_cast<uint32_t>(now);
   } else {
     // Fallback to millis-based timestamp if NTP not available
+    Logger::warn("⚠️ Using fallback timestamp - NTP not synchronized");
     return static_cast<uint32_t>(millis() / 1000);
+  }
+}
+
+// Function to get human-readable time string for debugging
+String getCurrentTimeString() {
+  time_t now = time(nullptr);
+  if (now > 1000000000) { // Valid NTP time
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+
+    char timeStr[64];
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    return String(timeStr) + " (Melbourne)";
+  } else {
+    return "Time not synchronized (using system uptime: " + String(millis() / 1000) + "s)";
   }
 }
 
@@ -2308,9 +2324,19 @@ uint32_t getCurrentTimestamp() {
 static bool restoreCalibrationFromStorage(const StoredCalibrationData& storedCalib) {
   Logger::info("🔄 Restoring calibration data to runtime settings...");
 
+  // Debug: Show what we're trying to restore
+  Logger::info("📊 Stored calibration data:");
+  Logger::info("  Black complete: " + String(storedCalib.blackComplete ? "YES" : "NO"));
+  Logger::info("  White complete: " + String(storedCalib.whiteComplete ? "YES" : "NO"));
+  Logger::info("  Blue complete: " + String(storedCalib.blueComplete ? "YES" : "NO"));
+  Logger::info("  Yellow complete: " + String(storedCalib.yellowComplete ? "YES" : "NO"));
+  Logger::info("  Is calibrated: " + String(storedCalib.isCalibrated ? "YES" : "NO"));
+
   // Validate that we have at least black and white calibration
   if (!storedCalib.blackComplete || !storedCalib.whiteComplete) {
     Logger::warn("❌ Incomplete calibration data - need both black and white references");
+    Logger::warn("   Black: " + String(storedCalib.blackComplete ? "✅" : "❌") +
+                " White: " + String(storedCalib.whiteComplete ? "✅" : "❌"));
     return false;
   }
 
@@ -2376,6 +2402,35 @@ static bool restoreCalibrationFromStorage(const StoredCalibrationData& storedCal
   return true;
 }
 
+// Function to get calibration status for notifications
+static String getCalibrationStatusMessage() {
+  if (!settings.legacyCalibrationData.isCalibrated) {
+    return "⚠️ Device not calibrated - Please run calibration procedure";
+  }
+
+  String status = "✅ Device is calibrated (";
+  status += "Black: ✅ White: ✅";
+
+  if (settings.legacyCalibrationData.blueReferenceComplete) {
+    status += " Blue: ✅";
+  }
+  if (settings.legacyCalibrationData.yellowReferenceComplete) {
+    status += " Yellow: ✅";
+  }
+
+  status += ")";
+  return status;
+}
+
+// Function to check if calibration will be overwritten
+static String getCalibrationOverwriteWarning() {
+  if (!settings.legacyCalibrationData.isCalibrated) {
+    return ""; // No warning needed if not calibrated
+  }
+
+  return "⚠️ WARNING: This will overwrite existing calibration data. Current calibration will be lost.";
+}
+
 // Function to display current WiFi status
 static void displayWiFiStatus() {
   Logger::info("=== FINAL NETWORK STATUS ===");
@@ -2420,6 +2475,84 @@ static void displayWiFiStatus() {
   }
 
   Logger::info("============================");
+}
+
+// GET /api/calibration-status - Get current calibration status with notifications
+void handleCalibrationStatus(AsyncWebServerRequest *request) {
+  Logger::info("Calibration status requested");
+
+  JsonResponseBuilder builder;
+  builder.addField("status", "success");
+
+  // Add calibration status
+  bool isCalibrated = settings.legacyCalibrationData.isCalibrated;
+  builder.addField("isCalibrated", isCalibrated ? "true" : "false");
+
+  // Add detailed status
+  builder.addField("blackComplete", settings.legacyCalibrationData.blackReferenceComplete ? "true" : "false");
+  builder.addField("whiteComplete", settings.legacyCalibrationData.whiteReferenceComplete ? "true" : "false");
+  builder.addField("blueComplete", settings.legacyCalibrationData.blueReferenceComplete ? "true" : "false");
+  builder.addField("yellowComplete", settings.legacyCalibrationData.yellowReferenceComplete ? "true" : "false");
+
+  // Add user-friendly status message
+  String statusMessage = getCalibrationStatusMessage();
+  builder.addField("statusMessage", statusMessage);
+
+  // Add overwrite warning if applicable
+  String overwriteWarning = getCalibrationOverwriteWarning();
+  if (overwriteWarning.length() > 0) {
+    builder.addField("overwriteWarning", overwriteWarning);
+  }
+
+  // Add calibration ranges if calibrated
+  if (isCalibrated) {
+    char rangesJson[256];
+    sprintf(rangesJson, R"({"X":[%d,%d],"Y":[%d,%d],"Z":[%d,%d]})",
+            static_cast<int>(settings.legacyCalibrationData.minX),
+            static_cast<int>(settings.legacyCalibrationData.maxX),
+            static_cast<int>(settings.legacyCalibrationData.minY),
+            static_cast<int>(settings.legacyCalibrationData.maxY),
+            static_cast<int>(settings.legacyCalibrationData.minZ),
+            static_cast<int>(settings.legacyCalibrationData.maxZ));
+    builder.addRawField("calibrationRanges", rangesJson);
+  }
+
+  String const response = builder.build();
+  request->send(HTTP_OK, "application/json", response);
+  Logger::debug("Calibration status sent to client");
+}
+
+// GET /api/time-debug - Get current time information for debugging
+void handleTimeDebug(AsyncWebServerRequest *request) {
+  Logger::info("Time debug information requested");
+
+  JsonResponseBuilder builder;
+  builder.addField("status", "success");
+
+  // Get current time information
+  time_t now = time(nullptr);
+  uint32_t timestamp = getCurrentTimestamp();
+  String timeString = getCurrentTimeString();
+
+  // Add time debugging information
+  builder.addField("currentTimestamp", String(timestamp));
+  builder.addField("currentTimeString", timeString);
+  builder.addField("systemUptime", String(millis() / 1000) + " seconds");
+  builder.addField("ntpSynchronized", (now > 1000000000) ? "true" : "false");
+
+  // Add WiFi status for NTP context
+  builder.addField("wifiConnected", (WiFi.status() == WL_CONNECTED) ? "true" : "false");
+  if (WiFi.status() == WL_CONNECTED) {
+    builder.addField("wifiSSID", WiFi.SSID());
+  }
+
+  // Add timezone information
+  builder.addField("timezone", "Melbourne, Australia (UTC+11)");
+  builder.addField("ntpServer", NTP_SERVER);
+
+  String const response = builder.build();
+  request->send(HTTP_OK, "application/json", response);
+  Logger::debug("Time debug information sent to client");
 }
 
 void setup() {
@@ -2601,9 +2734,17 @@ void setup() {
 
     // Initialize NTP time synchronization (only if WiFi connected)
     if (WiFi.status() == WL_CONNECTED) {
+      Logger::info("🌐 WiFi connected - initializing NTP time sync...");
       initializeNTPTime();
+
+      // Test time after initialization
+      delay(2000); // Give NTP a moment to sync
+      String timeTest = getCurrentTimeString();
+      Logger::info("🕐 Time after NTP init: " + timeTest);
     } else {
       Logger::info("⏰ NTP sync skipped - no WiFi connection (using system time)");
+      String timeTest = getCurrentTimeString();
+      Logger::info("🕐 Current time (no NTP): " + timeTest);
     }
   }
 
@@ -2779,6 +2920,13 @@ void setup() {
 
   server.on("/api/test-calibration-fixes", HTTP_GET, handleTestCalibrationFixes);
   Logger::debug("Route registered: /api/test-calibration-fixes (GET) -> handleTestCalibrationFixes");
+
+  // Calibration status and time debugging endpoints
+  server.on("/api/calibration-status", HTTP_GET, handleCalibrationStatus);
+  Logger::debug("Route registered: /api/calibration-status (GET) -> handleCalibrationStatus");
+
+  server.on("/api/time-debug", HTTP_GET, handleTimeDebug);
+  Logger::debug("Route registered: /api/time-debug (GET) -> handleTimeDebug");
 
   // Handle not found
   server.onNotFound([](AsyncWebServerRequest *request) {
@@ -3995,6 +4143,13 @@ void handleFixBlackReadings(AsyncWebServerRequest *request) {
 // POST /api/calibrate-black - Calibrate black reference (Step 1)
 void handleCalibrateBlackReference(AsyncWebServerRequest *request) {
   Logger::info("=== BLACK REFERENCE CALIBRATION ===");
+
+  // Check if calibration will be overwritten
+  String overwriteWarning = getCalibrationOverwriteWarning();
+  if (overwriteWarning.length() > 0) {
+    Logger::warn(overwriteWarning);
+  }
+
   Logger::info("INSTRUCTIONS:");
   Logger::info("1. Turn off all room lights for complete darkness");
   Logger::info("2. Use a non-reflective black object (black paper, cloth, etc.)");
