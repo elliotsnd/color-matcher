@@ -629,6 +629,94 @@ uint16_t getCurrentIntegrationTime() {
   return static_cast<uint16_t>(colorSensor.getIntegrationTime());
 }
 
+/**
+ * @brief Unified Auto-Exposure System - Replaces all conflicting auto-adjustment systems
+ *
+ * This single function handles all sensor optimization, replacing:
+ * - readOptimalSensorData() (caused saturation after calibration)
+ * - autoAdjustSensor() (conflicted with three-step auto-exposure)
+ * - performIntegrationTimeAdjustment() (conflicted with main auto-exposure)
+ * - Periodic optimization (caused instability)
+ * - Auto-gain checks (interfered with manual settings)
+ *
+ * @return SensorData with optimized readings that avoid saturation
+ */
+SensorData readUnifiedAutoExposure() {
+  const uint16_t SATURATION_THRESHOLD = 60000;  // 92% of 65535
+  const uint16_t OPTIMAL_TARGET = 35000;        // Target signal level
+  const uint16_t MIN_SIGNAL = 5000;             // Minimum acceptable signal
+  const int MAX_ATTEMPTS = 3;                   // Limit adjustment attempts
+
+  // Start with current settings
+  SensorData data = readAveragedSensorData();
+  uint16_t maxChannel = max(data.x, max(data.y, data.z));
+
+  // If readings are already good, return immediately
+  if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_THRESHOLD) {
+    return data;
+  }
+
+  // Perform dynamic calibration check
+  extern ColorCalibrationManager calibrationManager;
+  calibrationManager.recalibrateDarkOffsetIfNeeded(getCurrentGain(), getCurrentIntegrationTime());
+
+  for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Check if adjustment is needed
+    if (maxChannel > SATURATION_THRESHOLD) {
+      // Too bright - reduce sensitivity
+      float currentIntegration = colorSensor.getIntegrationTime();
+      if (currentIntegration > 25.0f) {
+        // Reduce integration time proportionally
+        float targetRatio = (float)OPTIMAL_TARGET / (float)maxChannel;
+        float newIntegration = max(25.0f, currentIntegration * targetRatio * 0.8f);
+        colorSensor.setIntegrationTime(newIntegration);
+        Logger::debug("[UNIFIED_AUTO] Reduced integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
+      } else {
+        // Reduce LED brightness as last resort
+        uint8_t currentBrightness = settings.ledBrightness;
+        if (currentBrightness > 20) {
+          uint8_t newBrightness = max(20, (int)(currentBrightness * 0.7f));
+          setHardwareLedBrightness(newBrightness);
+          Logger::debug("[UNIFIED_AUTO] Reduced LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
+        }
+      }
+    } else if (maxChannel < MIN_SIGNAL) {
+      // Too dark - increase sensitivity
+      float currentIntegration = colorSensor.getIntegrationTime();
+      if (currentIntegration < 300.0f) {
+        // Increase integration time proportionally
+        float targetRatio = (float)OPTIMAL_TARGET / (float)max((int)maxChannel, 100);
+        float newIntegration = min(300.0f, currentIntegration * targetRatio * 0.8f);
+        colorSensor.setIntegrationTime(newIntegration);
+        Logger::debug("[UNIFIED_AUTO] Increased integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
+      } else {
+        // Increase LED brightness as last resort
+        uint8_t currentBrightness = settings.ledBrightness;
+        if (currentBrightness < 200) {
+          uint8_t newBrightness = min(200, (int)(currentBrightness * 1.3f));
+          setHardwareLedBrightness(newBrightness);
+          Logger::debug("[UNIFIED_AUTO] Increased LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
+        }
+      }
+    } else {
+      // Readings are good, exit loop
+      break;
+    }
+
+    // Wait for sensor to stabilize and re-read
+    delay(100);
+    data = readAveragedSensorData();
+    maxChannel = max(data.x, max(data.y, data.z));
+
+    // Check if we've reached acceptable range
+    if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_THRESHOLD) {
+      break;
+    }
+  }
+
+  return data;
+}
+
 // Synchronize LED hardware with settings (called after LED changes)
 void syncLedWithSettings(uint8_t brightness) {
   settings.ledBrightness = brightness;
@@ -3610,12 +3698,8 @@ void loop() {
   unsigned long currentTime = millis();
 
   SensorData SENSOR_DATA;
-  // DISABLED: Auto-exposure system causes saturation after calibration
-  // Use simple averaged readings with our fixed anti-saturation settings
-  SENSOR_DATA = readAveragedSensorData();
-
-  // DISABLED: performIntegrationTimeAdjustment() - conflicts with three-step auto-exposure
-  // performIntegrationTimeAdjustment(SENSOR_DATA, hysteresis);
+  // UNIFIED AUTO-EXPOSURE: Single coherent system replaces all conflicting auto-adjustments
+  SENSOR_DATA = readUnifiedAutoExposure();
 
   // Check for sensor warnings (saturation, IR)
   checkForWarnings(SENSOR_DATA, timers);
