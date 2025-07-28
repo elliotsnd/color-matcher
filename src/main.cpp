@@ -1607,7 +1607,19 @@ static void analyzeSystemPerformance() {
   Logger::info("=====================================");
 }
 
-// Global variables to store current sensor data
+// =============================================================================
+// THREAD-SAFE SHARED DATA STRUCTURES
+// =============================================================================
+
+/**
+ * @brief Thread-safe shared data structures with FreeRTOS mutex protection
+ *
+ * CRITICAL SAFETY: ESP32 dual-core architecture requires synchronization
+ * - Core 0: Main loop updates sensor data
+ * - Core 1: Web server reads data for API responses
+ * - Without mutex protection: DATA CORRUPTION and SYSTEM CRASHES
+ */
+
 struct FastColorData {
   uint16_t xValue;
   uint16_t yValue;
@@ -1627,7 +1639,86 @@ struct FullColorData {
   unsigned long colorNameTimestamp{};
   unsigned long colorSearchDuration{};  // Time taken for color search in microseconds
 };
-static FullColorData currentColorData;
+
+// Thread-safe wrapper for shared color data
+class ThreadSafeColorData {
+private:
+  FullColorData data{};
+  SemaphoreHandle_t mutex;
+
+public:
+  ThreadSafeColorData() {
+    mutex = xSemaphoreCreateMutex();
+    if (mutex == nullptr) {
+      Logger::error("CRITICAL: Failed to create color data mutex - system unsafe!");
+    }
+  }
+
+  ~ThreadSafeColorData() {
+    if (mutex != nullptr) {
+      vSemaphoreDelete(mutex);
+    }
+  }
+
+  /**
+   * @brief Thread-safe update of fast color data (called by main loop)
+   */
+  void updateFast(const FastColorData& newFast) {
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      data.fast = newFast;
+      xSemaphoreGive(mutex);
+    } else {
+      Logger::warn("Failed to acquire mutex for fast data update");
+    }
+  }
+
+  /**
+   * @brief Thread-safe update of color name data (called by main loop)
+   */
+  void updateColorName(const String& colorName, unsigned long timestamp, unsigned long duration) {
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      data.colorName = colorName;
+      data.colorNameTimestamp = timestamp;
+      data.colorSearchDuration = duration;
+      xSemaphoreGive(mutex);
+    } else {
+      Logger::warn("Failed to acquire mutex for color name update");
+    }
+  }
+
+  /**
+   * @brief Thread-safe read of all data (called by web server)
+   */
+  FullColorData read() const {
+    FullColorData copy{};
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      copy = data;
+      xSemaphoreGive(mutex);
+    } else {
+      Logger::warn("Failed to acquire mutex for data read");
+      // Return empty data rather than corrupted data
+    }
+    return copy;
+  }
+
+  /**
+   * @brief Thread-safe read of fast data only (called by web server)
+   */
+  FastColorData readFast() const {
+    FastColorData copy{};
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      copy = data.fast;
+      xSemaphoreGive(mutex);
+    } else {
+      Logger::warn("Failed to acquire mutex for fast data read");
+      // Return empty data rather than corrupted data
+    }
+    return copy;
+  }
+};
+
+// Global thread-safe color data instance
+static ThreadSafeColorData currentColorData;
 
 // Color name lookup state
 static struct ColorNameLookup {
@@ -1701,19 +1792,23 @@ static void handleJS(AsyncWebServerRequest *request) {
 // Handle color API endpoint
 static void handleColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling color API request");
+
+  // Thread-safe read of current color data
+  FullColorData const colorData = currentColorData.read();
+
   // Create JSON response - removed const to allow modification
   JsonDocument doc;  // ArduinoJson v7 syntax
-  doc["r"] = currentColorData.fast.red;
-  doc["g"] = currentColorData.fast.green;
-  doc["b"] = currentColorData.fast.blue;
-  doc["x"] = currentColorData.fast.xValue;
-  doc["y"] = currentColorData.fast.yValue;
-  doc["z"] = currentColorData.fast.zValue;
-  doc["ir1"] = currentColorData.fast.ir1;
-  doc["ir2"] = currentColorData.fast.ir2;
-  doc["colorName"] = currentColorData.colorName; // Re-enabled for live color name updates
-  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
-  doc["timestamp"] = currentColorData.fast.timestamp;
+  doc["r"] = colorData.fast.red;
+  doc["g"] = colorData.fast.green;
+  doc["b"] = colorData.fast.blue;
+  doc["x"] = colorData.fast.xValue;
+  doc["y"] = colorData.fast.yValue;
+  doc["z"] = colorData.fast.zValue;
+  doc["ir1"] = colorData.fast.ir1;
+  doc["ir2"] = colorData.fast.ir2;
+  doc["colorName"] = colorData.colorName; // Re-enabled for live color name updates
+  doc["batteryVoltage"] = colorData.fast.batteryVoltage;
+  doc["timestamp"] = colorData.fast.timestamp;
 
   String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
@@ -1730,18 +1825,22 @@ static void handleColorAPI(AsyncWebServerRequest *request) {
 // Handle fast color API endpoint (no color name lookup - optimized for speed)
 static void handleFastColorAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling fast color API request");
+
+  // Thread-safe read of fast color data only (optimized)
+  FastColorData const fastData = currentColorData.readFast();
+
   // Create JSON response with only fast sensor data
   JsonDocument doc;
-  doc["r"] = currentColorData.fast.red;
-  doc["g"] = currentColorData.fast.green;
-  doc["b"] = currentColorData.fast.blue;
-  doc["x"] = currentColorData.fast.xValue;
-  doc["y"] = currentColorData.fast.yValue;
-  doc["z"] = currentColorData.fast.zValue;
-  doc["ir1"] = currentColorData.fast.ir1;
-  doc["ir2"] = currentColorData.fast.ir2;
-  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
-  doc["timestamp"] = currentColorData.fast.timestamp;
+  doc["r"] = fastData.red;
+  doc["g"] = fastData.green;
+  doc["b"] = fastData.blue;
+  doc["x"] = fastData.xValue;
+  doc["y"] = fastData.yValue;
+  doc["z"] = fastData.zValue;
+  doc["ir1"] = fastData.ir1;
+  doc["ir2"] = fastData.ir2;
+  doc["batteryVoltage"] = fastData.batteryVoltage;
+  doc["timestamp"] = fastData.timestamp;
 
   String response;  // Removed const - ArduinoJson needs to write to it
   serializeJson(doc, response);
@@ -1757,11 +1856,15 @@ static void handleFastColorAPI(AsyncWebServerRequest *request) {
 // Handle color name API endpoint (color name lookup only)
 static void handleColorNameAPI(AsyncWebServerRequest *request) {
   Logger::debug("Handling color name API request");
+
+  // Thread-safe read of color data
+  FullColorData const colorData = currentColorData.read();
+
   // Create JSON response with color name information
   JsonDocument doc;
-  doc["colorName"] = currentColorData.colorName;
-  doc["colorNameTimestamp"] = currentColorData.colorNameTimestamp;
-  doc["searchDuration"] = currentColorData.colorSearchDuration;
+  doc["colorName"] = colorData.colorName;
+  doc["colorNameTimestamp"] = colorData.colorNameTimestamp;
+  doc["searchDuration"] = colorData.colorSearchDuration;
   doc["lookupInProgress"] = colorLookup.inProgress;
   doc["lastLookupTime"] = colorLookup.lastLookupTime;
   doc["lookupInterval"] = colorLookup.lookupInterval;
@@ -1796,9 +1899,10 @@ static void handleForceColorLookup(AsyncWebServerRequest *request) {
   }
 
   // Force immediate color lookup
-  uint8_t const CURRENT_R = currentColorData.fast.red;
-  uint8_t const CURRENT_G = currentColorData.fast.green;
-  uint8_t const CURRENT_B = currentColorData.fast.blue;
+  FastColorData const fastData = currentColorData.readFast();
+  uint8_t const CURRENT_R = fastData.red;
+  uint8_t const CURRENT_G = fastData.green;
+  uint8_t const CURRENT_B = fastData.blue;
 
   colorLookup.inProgress = true;
   unsigned long const LOOKUP_START = micros();
@@ -1806,11 +1910,9 @@ static void handleForceColorLookup(AsyncWebServerRequest *request) {
   String const COLOR_NAME = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
   unsigned long const LOOKUP_DURATION = micros() - LOOKUP_START;
 
-  // Update color name data
+  // Thread-safe update of color name data
   unsigned long const CURRENT_TIME = millis();
-  currentColorData.colorName = COLOR_NAME;
-  currentColorData.colorNameTimestamp = CURRENT_TIME;
-  currentColorData.colorSearchDuration = LOOKUP_DURATION;
+  currentColorData.updateColorName(COLOR_NAME, CURRENT_TIME, LOOKUP_DURATION);
   colorLookup.currentColorName = COLOR_NAME;
   colorLookup.lastLookupTime = CURRENT_TIME;
   colorLookup.lastR = CURRENT_R;
@@ -1855,21 +1957,23 @@ static void handleCaptureColor(AsyncWebServerRequest *request) {
     return;
   }
 
-  // Get current color data
-  uint8_t const CURRENT_R = currentColorData.fast.red;
-  uint8_t const CURRENT_G = currentColorData.fast.green;
-  uint8_t const CURRENT_B = currentColorData.fast.blue;
-  uint16_t const CURRENT_X = currentColorData.fast.xValue;
-  uint16_t const CURRENT_Y = currentColorData.fast.yValue;
-  uint16_t const CURRENT_Z = currentColorData.fast.zValue;
-  uint16_t const CURRENT_IR1 = currentColorData.fast.ir1;
-  uint16_t const CURRENT_IR2 = currentColorData.fast.ir2;
+  // Thread-safe read of current color data
+  FullColorData const colorData = currentColorData.read();
+
+  uint8_t const CURRENT_R = colorData.fast.red;
+  uint8_t const CURRENT_G = colorData.fast.green;
+  uint8_t const CURRENT_B = colorData.fast.blue;
+  uint16_t const CURRENT_X = colorData.fast.xValue;
+  uint16_t const CURRENT_Y = colorData.fast.yValue;
+  uint16_t const CURRENT_Z = colorData.fast.zValue;
+  uint16_t const CURRENT_IR1 = colorData.fast.ir1;
+  uint16_t const CURRENT_IR2 = colorData.fast.ir2;
 
   // Force immediate color lookup if needed
-  String colorName = currentColorData.colorName;
-  unsigned long lookupDuration = currentColorData.colorSearchDuration;
+  String colorName = colorData.colorName;
+  unsigned long lookupDuration = colorData.colorSearchDuration;
 
-  if (colorName.isEmpty() || (millis() - currentColorData.colorNameTimestamp) > 5000) {
+  if (colorName.isEmpty() || (millis() - colorData.colorNameTimestamp) > 5000) {
     colorLookup.inProgress = true;
     unsigned long const LOOKUP_START = micros();
     colorName = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
@@ -1886,7 +1990,7 @@ static void handleCaptureColor(AsyncWebServerRequest *request) {
   // Create capture data
   StoredColorCapture const capture = StorageHelpers::createCaptureFromCurrent(
       CURRENT_X, CURRENT_Y, CURRENT_Z, CURRENT_IR1, CURRENT_IR2, CURRENT_R, CURRENT_G, CURRENT_B,
-      colorName, currentColorData.fast.batteryVoltage, lookupDuration);
+      colorName, colorData.fast.batteryVoltage, lookupDuration);
 
   // Save to persistent storage
   bool saveSuccess = false;
@@ -1918,7 +2022,7 @@ static void handleCaptureColor(AsyncWebServerRequest *request) {
   doc["ir"]["ir1"] = CURRENT_IR1;
   doc["ir"]["ir2"] = CURRENT_IR2;
   doc["timestamp"] = millis();
-  doc["batteryVoltage"] = currentColorData.fast.batteryVoltage;
+  doc["batteryVoltage"] = colorData.fast.batteryVoltage;
   doc["saved"] = saveSuccess;
 
   if (persistentStorage.isInitialized()) {
@@ -4828,14 +4932,18 @@ ColorRGB smoothColor(uint8_t red, uint8_t green, uint8_t blue) {
 
 /**
  * @brief Updates the global data structure used by the /api/fast-color endpoint.
+ * Thread-safe update using mutex protection.
  */
 void updateFastApiData(const SensorData& data, const ColorRGB& color) {
-  currentColorData.fast = {
+  FastColorData const fastData = {
     data.x, data.y, data.z, data.ir1, data.ir2,
     color.r, color.g, color.b,
     getBatteryVoltage(),
     millis()
   };
+
+  // Thread-safe update
+  currentColorData.updateFast(fastData);
 }
 
 /**
@@ -4870,10 +4978,8 @@ void handleColorNameLookup(const ColorRGB& color) {
       String const colorName = findClosestDuluxColor(color.r, color.g, color.b);
       unsigned long const searchTime = micros() - searchStart;
 
-      // Update global data structures
-      currentColorData.colorName = colorName;
-      currentColorData.colorNameTimestamp = now;
-      currentColorData.colorSearchDuration = searchTime;
+      // Thread-safe update of color name data
+      currentColorData.updateColorName(colorName, now, searchTime);
       colorLookup.currentColorName = colorName;
       colorLookup.needsUpdate = false;
       colorLookup.inProgress = false;
