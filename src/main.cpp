@@ -790,10 +790,11 @@ String getUnifiedSystemState() {
   JsonResponseBuilder builder;
 
   // Calibration state (single source of truth)
-  builder.addField("isCalibrated", calibrationManager.isCalibrated());
-  builder.addField("calibrationPoints", calibrationManager.getCalibrationPointCount());
-  builder.addField("matrixCalibrated", calibrationManager.isMatrixCalibrated());
-  builder.addField("calibrationQuality", calibrationManager.getCalibrationQuality(), 1);
+  builder.addField("isCalibrated", ColorCalibration::isCalibrated());
+  CalibrationStatus status = ColorCalibration::getManager().getCalibrationStatus();
+  builder.addField("calibrationPoints", static_cast<int>(status.calibratedColors.size()));
+  builder.addField("matrixCalibrated", ColorCalibration::getManager().isMatrixCalibrated());
+  builder.addField("calibrationQuality", status.overallQuality, 1);
 
   // Sensor settings (authoritative values)
   builder.addField("ledBrightness", settings.ledBrightness);
@@ -2387,10 +2388,8 @@ void convertXyZtoRgbUnified(uint16_t xValue, uint16_t yValue, uint16_t zValue,
     delay(100);
   }
 
-  // Use ColorCalibrationManager as the SINGLE authoritative conversion system
-  ColorCalibrationManager::CompensationLevel level = ColorCalibrationManager::CompensationLevel::AUTO;
-  bool success = calibrationManager.applyCalibrationCorrection(
-    xValue, yValue, zValue, redOut, greenOut, blueOut, level);
+  // Use ColorCalibration as the SINGLE authoritative conversion system
+  bool success = ColorCalibration::convertColor(xValue, yValue, zValue, redOut, greenOut, blueOut);
 
   if (success) {
     if (showDetailedConversion) {
@@ -2405,7 +2404,7 @@ void convertXyZtoRgbUnified(uint16_t xValue, uint16_t yValue, uint16_t zValue,
     return; // Successful conversion using unified system
   } else {
     if (showDetailedConversion) {
-      Logger::warning("[UNIFIED_COLOR] ??  Calibration not available - using uncalibrated fallback");
+      Logger::warn("[UNIFIED_COLOR] ??  Calibration not available - using uncalibrated fallback");
     }
     if (showDetailedConversion) {
       Logger::warn("[LIVE_CONVERT] ?? No calibration data available - using uncalibrated fallback");
