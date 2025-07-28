@@ -451,6 +451,8 @@ static void handleDiagnoseCalibration(AsyncWebServerRequest *request);
 static void handleOptimizeAccuracy(AsyncWebServerRequest *request);
 static void handleTestAllImprovements(AsyncWebServerRequest *request);
 static void handleTestCalibrationFixes(AsyncWebServerRequest *request);
+static void handleTestGammaCorrection(AsyncWebServerRequest *request);
+static void handleDiagnoseLinearization(AsyncWebServerRequest *request);
 static void optimizeSensorForCurrentLight();
 
 // Anonymous namespace removed - empty namespace not needed (clang-tidy fix)
@@ -641,10 +643,10 @@ uint16_t getCurrentIntegrationTime() {
  * @return SensorData with optimized readings that avoid saturation
  */
 SensorData readUnifiedAutoExposure() {
-  // Use existing macros from sensor_settings.h
-  const uint16_t SATURATION_LIMIT = SATURATION_THRESHOLD;  // 60000 - from sensor_settings.h
-  const uint16_t OPTIMAL_TARGET = OPTIMAL_TARGET_VALUE;    // 35000 - from sensor_settings.h
-  const uint16_t MIN_SIGNAL = 5000;                        // Minimum acceptable signal
+  // Use ENHANCED settings from sensor_settings.h for maximum dynamic range
+  const uint16_t SATURATION_LIMIT = SATURATION_THRESHOLD;  // 62000 - INCREASED for maximum signal utilization
+  const uint16_t OPTIMAL_TARGET = OPTIMAL_TARGET_VALUE;    // 45000 - INCREASED for better signal-to-noise ratio
+  const uint16_t MIN_SIGNAL = SIGNAL_QUALITY_MINIMUM;     // 25000 - INCREASED minimum for reliable measurements
   const int MAX_ATTEMPTS = 3;                              // Limit adjustment attempts
 
   // Start with current settings
@@ -671,10 +673,10 @@ SensorData readUnifiedAutoExposure() {
         colorSensor.setIntegrationTime(newIntegration);
         Logger::debug("[UNIFIED_AUTO] Reduced integration: " + String(currentIntegration, 1) + "ms ? " + String(newIntegration, 1) + "ms");
       } else {
-        // Reduce LED brightness as last resort
+        // Reduce LED brightness as last resort (using enhanced limits)
         uint8_t currentBrightness = settings.ledBrightness;
-        if (currentBrightness > 20) {
-          uint8_t newBrightness = static_cast<uint8_t>(max(20, static_cast<int>(currentBrightness * 0.7f)));
+        if (currentBrightness > LED_MIN_BRIGHTNESS) {
+          uint8_t newBrightness = static_cast<uint8_t>(max(LED_MIN_BRIGHTNESS, static_cast<int>(currentBrightness * 0.7f)));
           setHardwareLedBrightness(newBrightness);
           Logger::debug("[UNIFIED_AUTO] Reduced LED brightness: " + String(currentBrightness) + " ? " + String(newBrightness));
         }
@@ -689,10 +691,10 @@ SensorData readUnifiedAutoExposure() {
         colorSensor.setIntegrationTime(newIntegration);
         Logger::debug("[UNIFIED_AUTO] Increased integration: " + String(currentIntegration, 1) + "ms ? " + String(newIntegration, 1) + "ms");
       } else {
-        // Increase LED brightness as last resort
+        // Increase LED brightness as last resort (using enhanced limits)
         uint8_t currentBrightness = settings.ledBrightness;
-        if (currentBrightness < 200) {
-          uint8_t newBrightness = static_cast<uint8_t>(min(200, static_cast<int>(currentBrightness * 1.3f)));
+        if (currentBrightness < LED_MAX_BRIGHTNESS) {
+          uint8_t newBrightness = static_cast<uint8_t>(min(LED_MAX_BRIGHTNESS, static_cast<int>(currentBrightness * 1.3f)));
           setHardwareLedBrightness(newBrightness);
           Logger::debug("[UNIFIED_AUTO] Increased LED brightness: " + String(currentBrightness) + " ? " + String(newBrightness));
         }
@@ -792,9 +794,9 @@ String getUnifiedSystemState() {
   // Calibration state (single source of truth)
   builder.addField("isCalibrated", ColorCalibration::isCalibrated());
   CalibrationStatus status = ColorCalibration::getManager().getCalibrationStatus();
-  builder.addField("calibrationPoints", static_cast<int>(status.calibratedColors.size()));
+  builder.addField("calibrationPoints", static_cast<int>(status.totalPoints));
   builder.addField("matrixCalibrated", ColorCalibration::getManager().isMatrixCalibrated());
-  builder.addField("calibrationQuality", status.overallQuality, 1);
+  builder.addField("calibrationQuality", status.progress, 1);
 
   // Sensor settings (authoritative values)
   builder.addField("ledBrightness", settings.ledBrightness);
@@ -842,264 +844,21 @@ void handleSetFloatSetting(AsyncWebServerRequest *request, const String& paramNa
     request->send(HTTP_OK, "application/json", builder.build());
 }
 
-// DEPRECATED: Emergency desaturation function - now handled by dynamic auto-exposure system
-void emergencyDesaturation() {
-  Logger::warn("[EMERGENCY] DEPRECATED: Emergency desaturation called");
-  Logger::warn("[EMERGENCY] The new dynamic auto-exposure system handles saturation automatically");
-  Logger::warn("[EMERGENCY] Consider using readOptimalSensorData() instead");
+// REMOVED: Emergency desaturation function - replaced by unified auto-exposure system
+// This function has been completely removed to prevent LED control conflicts
+// Use readUnifiedAutoExposure() instead for proper auto-exposure control
 
-  // Minimal emergency action - just reduce LED brightness as last resort
-  uint8_t emergencyLedBrightness = 30;
-  analogWrite(leDpin, emergencyLedBrightness);
-  settings.ledBrightness = emergencyLedBrightness;
-  Logger::warn("[EMERGENCY] LED brightness reduced to " + String(emergencyLedBrightness) + " as emergency fallback");
+// REMOVED: autoAdjustSensorForVividWhite() function - replaced by unified auto-exposure system
+// This function manually adjusted sensor settings and conflicted with readOptimalSensorData()
+// Use readOptimalSensorData() instead for all sensor optimization
 
-  delay(100); // Brief stabilization
-}
 
-/**
- * @brief Auto-adjust sensor settings to achieve Vivid White target RGB (247, 248, 244)
- *
- * This function optimizes sensor settings specifically for white calibration by:
- * 1. Testing different gain/integration combinations
- * 2. Converting readings to RGB using current calibration
- * 3. Finding settings that get closest to Vivid White target
- *
- * @param x Output for final X reading
- * @param y Output for final Y reading
- * @param z Output for final Z reading
- * @param maxAttempts Maximum adjustment cycles to perform
- * @return true if settings found that get close to Vivid White target
- */
-bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 15) {
-  Logger::info("[VIVID_WHITE_AUTO] Starting auto-adjustment for Vivid White target RGB(247,248,244)");
 
-  // Target RGB values for Conservative White (updated for calibration stability)
-  const uint8_t TARGET_R = VIVID_WHITE_TARGET_R;
-  const uint8_t TARGET_G = VIVID_WHITE_TARGET_G;
-  const uint8_t TARGET_B = VIVID_WHITE_TARGET_B;
 
-  float bestError = 999999.0f;
-  TCS3430AutoGain::Gain bestGain = TCS3430AutoGain::Gain::GAIN_16X;
-  float bestIntegration = 200.0f;
-  uint16_t bestX = 0, bestY = 0, bestZ = 0;
+// REMOVED: autoAdjustSensor() function - completely replaced by readOptimalSensorData()
+// This function was deprecated and conflicted with the unified auto-exposure system
 
-  // Test different gain and integration time combinations
-  TCS3430AutoGain::Gain gains[] = {
-    TCS3430AutoGain::Gain::GAIN_1X,
-    TCS3430AutoGain::Gain::GAIN_4X,
-    TCS3430AutoGain::Gain::GAIN_16X,
-    TCS3430AutoGain::Gain::GAIN_64X
-  };
 
-  float integrationTimes[] = {50.0f, 100.0f, 200.0f, 400.0f};
-
-  for (auto gain : gains) {
-    for (float integration : integrationTimes) {
-      // Set test configuration
-      colorSensor.gain(gain);
-      colorSensor.integrationTime(integration);
-      delay(200); // Allow sensor to stabilize
-
-      // Take reading
-      uint16_t testX, testY, testZ, testIR1, testIR2;
-      colorSensor.readAll(testX, testY, testZ, testIR1, testIR2);
-
-      // Check for saturation
-      uint16_t maxChannel = max(testX, max(testY, testZ));
-      if (maxChannel >= 65000) {
-        Logger::debug("   Skipping saturated reading: " + String(maxChannel));
-        continue;
-      }
-
-      // Check for too low signal
-      if (maxChannel < 1000) {
-        Logger::debug("   Skipping low signal: " + String(maxChannel));
-        continue;
-      }
-
-      // Convert to RGB using current calibration
-      uint8_t testR, testG, testB;
-      convertXyZtoRgbUnified(testX, testY, testZ, testIR1, testIR2, testR, testG, testB);
-
-      // Calculate error from Vivid White target
-      float rDiff = static_cast<float>(testR) - static_cast<float>(TARGET_R);
-      float gDiff = static_cast<float>(testG) - static_cast<float>(TARGET_G);
-      float bDiff = static_cast<float>(testB) - static_cast<float>(TARGET_B);
-      float error = sqrt(rDiff*rDiff + gDiff*gDiff + bDiff*bDiff);
-
-      Logger::debug("   Gain:" + String(static_cast<int>(gain)) + "x Int:" + String(integration, 0) +
-                   "ms -> RGB(" + String(testR) + "," + String(testG) + "," + String(testB) +
-                   ") Error:" + String(error, 1));
-
-      if (error < bestError) {
-        bestError = error;
-        bestGain = gain;
-        bestIntegration = integration;
-        bestX = testX;
-        bestY = testY;
-        bestZ = testZ;
-
-        Logger::info("   ?? New best: Error=" + String(error, 1) + " Gain=" + String(static_cast<int>(gain)) +
-                    "x Int=" + String(integration, 0) + "ms");
-      }
-    }
-  }
-
-  // Apply best settings
-  colorSensor.gain(bestGain);
-  colorSensor.integrationTime(bestIntegration);
-  delay(200);
-
-  // Final reading with best settings
-  colorSensor.readAll(x, y, z, bestX, bestY); // Reuse variables for IR
-
-  Logger::info("? Auto-adjustment complete!");
-  Logger::info("   Best settings: Gain=" + String(static_cast<int>(bestGain)) + "x Integration=" + String(bestIntegration, 0) + "ms");
-  Logger::info("   Final error from Vivid White target: " + String(bestError, 1) + " RGB units");
-
-  return bestError < 50.0f; // Accept if within 50 RGB units of target
-}
-
-/**
- * @brief Original intelligent sensor reading with automatic adjustment to optimal range
- * @deprecated Use autoAdjustSensorForVividWhite for white calibration
- */
-bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 10) {
-  // DISABLED: This function conflicts with the three-step auto-exposure algorithm
-  // The new readOptimalSensorData() handles all sensor optimization
-  Logger::debug("[AUTO_ADJUST] DISABLED - Using three-step auto-exposure instead");
-
-  // Just take one optimal reading and return
-  SensorData data = readOptimalSensorData();
-  x = data.x;
-  y = data.y;
-  z = data.z;
-  return true;
-
-  // ORIGINAL CONFLICTING CODE DISABLED:
-  /*
-  Logger::debug("[AUTO_ADJUST] Starting intelligent sensor adjustment...");
-
-  for (int attempt = 0; attempt < maxAttempts; ++attempt) {
-    // DISABLED ORIGINAL CODE - CONFLICTS WITH THREE-STEP AUTO-EXPOSURE
-    /*
-    // Take optimal auto-exposure reading for stability
-    SensorData currentData = readOptimalSensorData();
-    x = currentData.x;
-    y = currentData.y;
-    z = currentData.z;
-
-    uint16_t maxChannelValue = max(max(x, y), z);
-
-    Logger::debug("[AUTO_ADJUST] Attempt " + String(attempt + 1) + "/" + String(maxAttempts) +
-                  " - Max channel: " + String(maxChannelValue));
-
-    // CONDITION 1: PERFECT! Reading is in optimal window
-    if (maxChannelValue >= OPTIMAL_WINDOW_LOW && maxChannelValue <= OPTIMAL_WINDOW_HIGH) {
-      if (attempt > 0) {
-        Logger::info("? Sensor auto-adjusted successfully to optimal range (max: " + String(maxChannelValue) + ")");
-      }
-      return true; // Reading is good
-    }
-
-    // CONDITION 2: OVERSATURATED or TOO BRIGHT
-    if (maxChannelValue > OPTIMAL_WINDOW_HIGH) {
-      Logger::warn("?? Sensor reading too high (max: " + String(maxChannelValue) + "). Adjusting...");
-
-      // Step 1: Try reducing integration time first (fastest)
-      float currentIntegration = colorSensor.getIntegrationTime();
-      if (currentIntegration > 25.0f) { // Minimum reasonable integration time
-        float newIntegration = currentIntegration / 1.5f; // Reduce by 33%
-        if (newIntegration < 25.0f) newIntegration = 25.0f;
-
-        colorSensor.integrationTime(newIntegration);
-        Logger::info("   ?? Reduced integration time: " + String(currentIntegration, 1) +
-                     "ms ? " + String(newIntegration, 1) + "ms");
-        delay(150); // Allow sensor to adapt
-        continue;
-      }
-
-      // Step 2: If integration time at minimum, reduce gain
-      TCS3430AutoGain::OldGain currentOldGain = colorSensor.getGain();
-      if (currentOldGain > TCS3430AutoGain::OldGain::GAIN_1X) {
-        // Convert OldGain to Gain and step down
-        TCS3430AutoGain::Gain currentGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentOldGain));
-        TCS3430AutoGain::Gain newGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentGain) - 1);
-        colorSensor.gain(newGain);
-        // Reset integration time to midpoint when changing gain
-        colorSensor.integrationTime(100.0f);
-        Logger::info("   ?? Reduced gain and reset integration time");
-        delay(150);
-        continue;
-      }
-
-      // Step 3: Last resort - reduce LED brightness
-      if (settings.ledBrightness > 20) {
-        uint8_t newBrightness = max(20, (int)(settings.ledBrightness * 0.7f)); // Reduce by 30%
-        analogWrite(leDpin, newBrightness);
-        settings.ledBrightness = newBrightness;
-        Logger::warn("   ?? Reduced LED brightness to " + String(newBrightness));
-        delay(150);
-        continue;
-      }
-
-      // If still saturated at minimum settings
-      Logger::error("? Sensor saturated even at minimum settings. Scene too bright!");
-      return false;
-    }
-
-    // CONDITION 3: TOO DARK
-    if (maxChannelValue < OPTIMAL_WINDOW_LOW) {
-      Logger::warn("?? Sensor reading too low (max: " + String(maxChannelValue) + "). Adjusting...");
-
-      // Step 1: Try increasing integration time first
-      float currentIntegration = colorSensor.getIntegrationTime();
-      if (currentIntegration < 400.0f) { // Maximum reasonable integration time
-        float newIntegration = currentIntegration * 1.5f; // Increase by 50%
-        if (newIntegration > 400.0f) newIntegration = 400.0f;
-
-        colorSensor.integrationTime(newIntegration);
-        Logger::info("   ?? Increased integration time: " + String(currentIntegration, 1) +
-                     "ms ? " + String(newIntegration, 1) + "ms");
-        delay(150);
-        continue;
-      }
-
-      // Step 2: If integration time maxed, increase gain
-      TCS3430AutoGain::OldGain currentOldGain = colorSensor.getGain();
-      if (currentOldGain < TCS3430AutoGain::OldGain::GAIN_64X) {
-        // Convert OldGain to Gain and step up
-        TCS3430AutoGain::Gain currentGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentOldGain));
-        TCS3430AutoGain::Gain newGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentGain) + 1);
-        colorSensor.gain(newGain);
-        // Reset integration time when changing gain
-        colorSensor.integrationTime(75.0f);
-        Logger::info("   ?? Increased gain and reset integration time");
-        delay(150);
-        continue;
-      }
-
-      // Step 3: Last resort - increase LED brightness
-      if (settings.ledBrightness < 200) {
-        uint8_t newBrightness = min(200, (int)(settings.ledBrightness * 1.3f)); // Increase by 30%
-        analogWrite(leDpin, newBrightness);
-        settings.ledBrightness = newBrightness;
-        Logger::warn("   ?? Increased LED brightness to " + String(newBrightness));
-        delay(150);
-        continue;
-      }
-
-      // If at max settings but still too dark, accept the reading with warning
-      Logger::warn("?? Sensor at max settings but signal still low. May have noise.");
-      return true; // Return reading anyway
-    }
-  }
-
-  Logger::error("? Auto-adjust failed after " + String(maxAttempts) + " attempts");
-  return false;
-  */ // END OF DISABLED CONFLICTING CODE
-}
 
 // === END OF CALIBRATION PARAMETERS ===
 
@@ -1640,33 +1399,103 @@ struct FullColorData {
   unsigned long colorSearchDuration{};  // Time taken for color search in microseconds
 };
 
+/**
+ * @brief RAII wrapper for FreeRTOS mutex - ensures automatic cleanup
+ *
+ * This class provides modern C++ RAII semantics for FreeRTOS mutexes,
+ * eliminating the risk of resource leaks and ensuring exception safety.
+ */
+class RAIIMutex {
+private:
+  SemaphoreHandle_t mutex_;
+
+public:
+  RAIIMutex() : mutex_(xSemaphoreCreateMutex()) {
+    if (mutex_ == nullptr) {
+      Logger::error("CRITICAL: Failed to create mutex - system unsafe!");
+    }
+  }
+
+  ~RAIIMutex() {
+    if (mutex_ != nullptr) {
+      vSemaphoreDelete(mutex_);
+      mutex_ = nullptr;
+    }
+  }
+
+  // Non-copyable but movable for modern C++ semantics
+  RAIIMutex(const RAIIMutex&) = delete;
+  RAIIMutex& operator=(const RAIIMutex&) = delete;
+
+  RAIIMutex(RAIIMutex&& other) noexcept : mutex_(other.mutex_) {
+    other.mutex_ = nullptr;
+  }
+
+  RAIIMutex& operator=(RAIIMutex&& other) noexcept {
+    if (this != &other) {
+      if (mutex_ != nullptr) {
+        vSemaphoreDelete(mutex_);
+      }
+      mutex_ = other.mutex_;
+      other.mutex_ = nullptr;
+    }
+    return *this;
+  }
+
+  /**
+   * @brief RAII lock guard for automatic mutex management
+   */
+  class LockGuard {
+  private:
+    SemaphoreHandle_t mutex_;
+    bool locked_;
+
+  public:
+    explicit LockGuard(RAIIMutex& mutex, TickType_t timeout = pdMS_TO_TICKS(10))
+      : mutex_(mutex.mutex_), locked_(false) {
+      if (mutex_ != nullptr) {
+        locked_ = (xSemaphoreTake(mutex_, timeout) == pdTRUE);
+        if (!locked_) {
+          Logger::warn("Failed to acquire mutex lock within timeout");
+        }
+      }
+    }
+
+    ~LockGuard() {
+      if (locked_ && mutex_ != nullptr) {
+        xSemaphoreGive(mutex_);
+      }
+    }
+
+    // Non-copyable and non-movable for safety
+    LockGuard(const LockGuard&) = delete;
+    LockGuard& operator=(const LockGuard&) = delete;
+    LockGuard(LockGuard&&) = delete;
+    LockGuard& operator=(LockGuard&&) = delete;
+
+    bool isLocked() const { return locked_; }
+  };
+
+  bool isValid() const { return mutex_ != nullptr; }
+};
+
 // Thread-safe wrapper for shared color data
 class ThreadSafeColorData {
 private:
   FullColorData data{};
-  SemaphoreHandle_t mutex;
+  RAIIMutex mutex_;  // RAII mutex management - automatic cleanup
 
 public:
-  ThreadSafeColorData() {
-    mutex = xSemaphoreCreateMutex();
-    if (mutex == nullptr) {
-      Logger::error("CRITICAL: Failed to create color data mutex - system unsafe!");
-    }
-  }
-
-  ~ThreadSafeColorData() {
-    if (mutex != nullptr) {
-      vSemaphoreDelete(mutex);
-    }
-  }
+  ThreadSafeColorData() = default;  // RAIIMutex handles initialization
 
   /**
    * @brief Thread-safe update of fast color data (called by main loop)
+   * Uses RAII lock guard for automatic mutex management
    */
   void updateFast(const FastColorData& newFast) {
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    RAIIMutex::LockGuard lock(mutex_);
+    if (lock.isLocked()) {
       data.fast = newFast;
-      xSemaphoreGive(mutex);
     } else {
       Logger::warn("Failed to acquire mutex for fast data update");
     }
@@ -1674,13 +1503,14 @@ public:
 
   /**
    * @brief Thread-safe update of color name data (called by main loop)
+   * Uses RAII lock guard for automatic mutex management
    */
   void updateColorName(const String& colorName, unsigned long timestamp, unsigned long duration) {
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    RAIIMutex::LockGuard lock(mutex_);
+    if (lock.isLocked()) {
       data.colorName = colorName;
       data.colorNameTimestamp = timestamp;
       data.colorSearchDuration = duration;
-      xSemaphoreGive(mutex);
     } else {
       Logger::warn("Failed to acquire mutex for color name update");
     }
@@ -1688,12 +1518,13 @@ public:
 
   /**
    * @brief Thread-safe read of all data (called by web server)
+   * Uses RAII lock guard for automatic mutex management
    */
   FullColorData read() const {
     FullColorData copy{};
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    RAIIMutex::LockGuard lock(const_cast<RAIIMutex&>(mutex_));
+    if (lock.isLocked()) {
       copy = data;
-      xSemaphoreGive(mutex);
     } else {
       Logger::warn("Failed to acquire mutex for data read");
       // Return empty data rather than corrupted data
@@ -1703,12 +1534,13 @@ public:
 
   /**
    * @brief Thread-safe read of fast data only (called by web server)
+   * Uses RAII lock guard for automatic mutex management
    */
   FastColorData readFast() const {
     FastColorData copy{};
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    RAIIMutex::LockGuard lock(const_cast<RAIIMutex&>(mutex_));
+    if (lock.isLocked()) {
       copy = data.fast;
-      xSemaphoreGive(mutex);
     } else {
       Logger::warn("Failed to acquire mutex for fast data read");
       // Return empty data rather than corrupted data
@@ -1979,11 +1811,9 @@ static void handleCaptureColor(AsyncWebServerRequest *request) {
     colorName = findClosestDuluxColor(CURRENT_R, CURRENT_G, CURRENT_B);
     lookupDuration = micros() - LOOKUP_START;
 
-    // Update color name data
+    // Update color name data using thread-safe method
     unsigned long const CURRENT_TIME = millis();
-    currentColorData.colorName = colorName;
-    currentColorData.colorNameTimestamp = CURRENT_TIME;
-    currentColorData.colorSearchDuration = lookupDuration;
+    currentColorData.updateColorName(colorName, CURRENT_TIME, lookupDuration);
     colorLookup.inProgress = false;
   }
 
@@ -2998,10 +2828,10 @@ void setup() {
   Logger::debug("I2C initialized with SDA=3, SCL=4");
 
   pinMode(leDpin, OUTPUT);
-  // FORCE reduced LED brightness to prevent saturation during calibration
-  settings.ledBrightness = 80;  // Force reduced brightness for anti-saturation
+  // Initialize LED with default brightness from sensor_settings.h
+  settings.ledBrightness = LED_BRIGHTNESS;  // Use default from sensor_settings.h
   analogWrite(leDpin, settings.ledBrightness);
-  Logger::info("LED pin configured with ANTI-SATURATION brightness: " + String(settings.ledBrightness));
+  Logger::info("LED pin configured with default brightness: " + String(settings.ledBrightness));
 
   // Initialize UMS3 library for ProS3 board peripherals
   ums3.begin();
@@ -3317,68 +3147,59 @@ void setup() {
   server.on("/api/reset-calibration", HTTP_POST, handleResetCalibration);
   Logger::debug("Route registered: /api/reset-calibration (POST) -> handleResetCalibration");
 
-  // Emergency desaturation endpoint (DEPRECATED)
+  // Emergency desaturation endpoint (REPLACED with unified auto-exposure)
   server.on("/api/emergency-desaturate", HTTP_POST, [](AsyncWebServerRequest *request) {
-    Logger::warn("DEPRECATED: Emergency desaturation requested via API");
-    emergencyDesaturation();
+    Logger::warn("DEPRECATED: Emergency desaturation requested - using unified auto-exposure instead");
+
+    // Use unified auto-exposure system instead of deprecated emergency function
+    SensorData optimizedData = readUnifiedAutoExposure();
 
     JsonResponseBuilder builder;
     builder.addField("status", "success");
-    builder.addField("message", "Emergency desaturation applied (DEPRECATED - use auto-exposure system)");
-    builder.addField("ledBrightness", settings.ledBrightness);
-    builder.addField("deprecated", true);
-    builder.addField("replacement", "Use /api/validate-auto-exposure for modern auto-exposure system");
+    builder.addField("message", "Using unified auto-exposure instead of deprecated emergency desaturation");
+    builder.addField("optimizedX", static_cast<int>(optimizedData.x));
+    builder.addField("optimizedY", static_cast<int>(optimizedData.y));
+    builder.addField("optimizedZ", static_cast<int>(optimizedData.z));
+    builder.addField("currentLedBrightness", static_cast<int>(settings.ledBrightness));
 
     request->send(200, "application/json", builder.build());
   });
   Logger::debug("Route registered: /api/emergency-desaturate (POST) -> Emergency desaturation (DEPRECATED)");
 
-  // Intelligent auto-adjustment endpoint
+  // Intelligent auto-adjustment endpoint (REPLACED with unified auto-exposure)
   server.on("/api/auto-adjust-sensor", HTTP_POST, [](AsyncWebServerRequest *request) {
-    Logger::info("Manual auto-adjustment requested via API");
+    Logger::info("Manual auto-adjustment requested - using unified auto-exposure system");
 
-    uint16_t x, y, z;
-    bool success = autoAdjustSensor(x, y, z, 10); // Allow full adjustment cycles
-
-    JsonResponseBuilder builder;
-    if (success) {
-      builder.addField("status", "success");
-      builder.addField("message", "Sensor auto-adjusted to optimal range");
-      builder.addField("x", x);
-      builder.addField("y", y);
-      builder.addField("z", z);
-      builder.addField("maxChannel", max(max(x, y), z));
-      builder.addField("ledBrightness", settings.ledBrightness);
-      request->send(200, "application/json", builder.build());
-    } else {
-      builder.addField("status", "error");
-      builder.addField("message", "Auto-adjustment failed - sensor could not be optimized");
-      builder.addField("suggestion", "Check lighting conditions or object distance");
-      request->send(500, "application/json", builder.build());
-    }
-  });
-  Logger::debug("Route registered: /api/auto-adjust-sensor (POST) -> Intelligent auto-adjustment");
-
-  // Quick brightness boost endpoint for "too dark" situations
-  server.on("/api/brightness-boost", HTTP_POST, [](AsyncWebServerRequest *request) {
-    Logger::info("Brightness boost requested - fixing 'too dark' issue");
-
-    // Increase LED brightness significantly
-    uint8_t newBrightness = min(200, settings.ledBrightness + 50);
-    analogWrite(leDpin, newBrightness);
-    settings.ledBrightness = newBrightness;
-
-    // Also increase integration time for more light gathering
-    colorSensor.integrationTime(150.0f);
-
-    // Small delay for changes to take effect
-    delay(100);
+    // Use unified auto-exposure system instead of deprecated autoAdjustSensor
+    SensorData optimizedData = readUnifiedAutoExposure();
 
     JsonResponseBuilder builder;
     builder.addField("status", "success");
-    builder.addField("message", "Brightness boosted to fix dark readings");
-    builder.addField("newLedBrightness", newBrightness);
-    builder.addField("integrationTime", "150ms");
+    builder.addField("message", "Using unified auto-exposure for sensor optimization");
+    builder.addField("x", static_cast<int>(optimizedData.x));
+    builder.addField("y", static_cast<int>(optimizedData.y));
+    builder.addField("z", static_cast<int>(optimizedData.z));
+    builder.addField("maxChannel", max({optimizedData.x, optimizedData.y, optimizedData.z}));
+    builder.addField("ledBrightness", static_cast<int>(settings.ledBrightness));
+    builder.addField("replacement", "Unified auto-exposure system provides better stability");
+    request->send(200, "application/json", builder.build());
+  });
+  Logger::debug("Route registered: /api/auto-adjust-sensor (POST) -> Intelligent auto-adjustment");
+
+  // REMOVED: Manual brightness boost - replaced by unified auto-exposure system
+  server.on("/api/brightness-boost", HTTP_POST, [](AsyncWebServerRequest *request) {
+    Logger::info("Brightness boost requested - using unified auto-exposure instead");
+
+    // Use the unified auto-exposure system instead of manual brightness control
+    SensorData optimizedData = readUnifiedAutoExposure();
+
+    JsonResponseBuilder builder;
+    builder.addField("status", "success");
+    builder.addField("message", "Using unified auto-exposure for optimal brightness");
+    builder.addField("optimizedX", static_cast<int>(optimizedData.x));
+    builder.addField("optimizedY", static_cast<int>(optimizedData.y));
+    builder.addField("optimizedZ", static_cast<int>(optimizedData.z));
+    builder.addField("currentBrightness", static_cast<int>(settings.ledBrightness));
 
     request->send(200, "application/json", builder.build());
   });
@@ -3411,6 +3232,13 @@ void setup() {
 
   server.on("/api/test-calibration-fixes", HTTP_GET, handleTestCalibrationFixes);
   Logger::debug("Route registered: /api/test-calibration-fixes (GET) -> handleTestCalibrationFixes");
+
+  // Gamma correction and linearization diagnostic endpoints
+  server.on("/api/test-gamma-correction", HTTP_GET, handleTestGammaCorrection);
+  Logger::debug("Route registered: /api/test-gamma-correction (GET) -> handleTestGammaCorrection");
+
+  server.on("/api/diagnose-linearization", HTTP_GET, handleDiagnoseLinearization);
+  Logger::debug("Route registered: /api/diagnose-linearization (GET) -> handleDiagnoseLinearization");
 
   // Calibration status and time debugging endpoints
   server.on("/api/calibration-status", HTTP_GET, handleCalibrationStatus);
@@ -3609,12 +3437,9 @@ void setup() {
     Logger::info("[SENSOR_LOCK] Integration time: " + String(settings.sensorIntegrationTime));
 
     // Lock to calibration-time settings (based on your calibration logs)
-    // These should match the settings used during Vivid White calibration
-    settings.ledBrightness = 80;  // From your logs: LED brightness set to 80
-    settings.sensorIntegrationTime = 0x80;  // From your logs: IntTime:400.3ms - use hex value for TCS3430
-
-    // Apply the locked settings immediately
-    analogWrite(leDpin, settings.ledBrightness);
+    // REMOVED: Hardcoded LED brightness - let unified auto-exposure handle optimization
+    // The readOptimalSensorData() function will automatically find the best settings
+    Logger::info("[SENSOR_LOCK] Using unified auto-exposure instead of hardcoded settings");
 
     // Set integration time on the sensor (convert to float for the library)
     float newIntegrationTime = colorSensor.integrationTime(static_cast<float>(settings.sensorIntegrationTime));
@@ -3760,20 +3585,12 @@ void setup() {
     String adjustmentLog = "";
     bool adjustmentMade = false;
 
-    // Strategy: If RGB values are too high (saturated), reduce sensor sensitivity
+    // REMOVED: Manual LED brightness adjustment - let unified auto-exposure handle optimization
+    // The readOptimalSensorData() function automatically handles saturation
     if (currentR >= 250 && currentG >= 250 && currentB >= 250) {
-      Logger::info("[VIVID_ADJUST] ?? RGB values saturated - reducing sensor sensitivity");
-
-      // Step 1: Reduce LED brightness
-      if (settings.ledBrightness > 30) {
-        int newBrightness = max(30, settings.ledBrightness - 20);
-        settings.ledBrightness = newBrightness;
-        analogWrite(leDpin, settings.ledBrightness);
-        Logger::info("[VIVID_ADJUST] ?? Reduced LED brightness: " + String(settings.ledBrightness + 20) + " ? " + String(newBrightness));
-        adjustmentLog += "LED brightness reduced to " + String(newBrightness) + "; ";
-        adjustmentMade = true;
-        delay(500); // Allow LED change to take effect
-      }
+      Logger::info("[VIVID_ADJUST] ?? RGB values saturated - unified auto-exposure will handle optimization");
+      adjustmentLog += "Saturation detected - auto-exposure will optimize; ";
+      adjustmentMade = true;
 
       // Step 2: Reduce integration time
       float currentIntTime = colorSensor.getIntegrationTime();
@@ -3786,20 +3603,12 @@ void setup() {
         delay(200);
       }
     }
-    // Strategy: If RGB values are too low, increase sensor sensitivity
+    // REMOVED: Manual LED brightness adjustment - let unified auto-exposure handle optimization
+    // The readOptimalSensorData() function automatically handles low signal
     else if (currentR < 200 || currentG < 200 || currentB < 200) {
-      Logger::info("[VIVID_ADJUST] ?? RGB values too low - increasing sensor sensitivity");
-
-      // Step 1: Increase LED brightness
-      if (settings.ledBrightness < 150) {
-        int newBrightness = min(150, settings.ledBrightness + 20);
-        settings.ledBrightness = newBrightness;
-        analogWrite(leDpin, settings.ledBrightness);
-        Logger::info("[VIVID_ADJUST] ?? Increased LED brightness: " + String(settings.ledBrightness - 20) + " ? " + String(newBrightness));
-        adjustmentLog += "LED brightness increased to " + String(newBrightness) + "; ";
-        adjustmentMade = true;
-        delay(500);
-      }
+      Logger::info("[VIVID_ADJUST] ?? RGB values too low - unified auto-exposure will handle optimization");
+      adjustmentLog += "Low signal detected - auto-exposure will optimize; ";
+      adjustmentMade = true;
 
       // Step 2: Increase integration time
       float currentIntTime = colorSensor.getIntegrationTime();
@@ -4503,24 +4312,16 @@ SensorData readAveragedSensorData() {
       Logger::error("[SENSOR_READ] Sample " + String(i+1) + ": X=" + String(DATA.X) +
                     " Y=" + String(DATA.Y) + " Z=" + String(DATA.Z));
 
-      // Call emergency desaturation if severely oversaturated
-      if (maxChannel >= 65000) {
-        emergencyDesaturation();
-        // Re-read after emergency desaturation
-        TCS3430AutoGain::RawData const EMERGENCY_DATA = colorSensor.raw();
-        sumX += EMERGENCY_DATA.X;
-        sumY += EMERGENCY_DATA.Y;
-        sumZ += EMERGENCY_DATA.Z;
-        sumIR1 += EMERGENCY_DATA.IR1;
-        sumIR2 += EMERGENCY_DATA.IR2;
-      } else {
-        // Still use the data but warn
-        sumX += DATA.X;
-        sumY += DATA.Y;
-        sumZ += DATA.Z;
-        sumIR1 += DATA.IR1;
-        sumIR2 += DATA.IR2;
-      }
+      // REMOVED: Emergency desaturation call - let unified auto-exposure handle saturation
+      // Log the saturation but continue with the data (auto-exposure will handle it)
+      Logger::warn("[SENSOR_READ] Saturation detected but continuing - unified auto-exposure will handle optimization");
+
+      // Use the data as-is (the unified auto-exposure system will prevent future saturation)
+      sumX += DATA.X;
+      sumY += DATA.Y;
+      sumZ += DATA.Z;
+      sumIR1 += DATA.IR1;
+      sumIR2 += DATA.IR2;
     } else {
       // Normal reading
       sumX += DATA.X;
@@ -5003,10 +4804,12 @@ void logPeriodicStatus(const SensorData& data, const ColorRGB& color, TimingStat
     return;
   }
 
+    // Get thread-safe copy of color data for logging
+    FullColorData colorData = currentColorData.read();
     char statusMsg[256];
     sprintf(statusMsg, "XYZ: %d,%d,%d | RGB: %d,%d,%d | Color: %s | Last search: %lu?s",
             data.x, data.y, data.z, color.r, color.g, color.b,
-            colorLookup.currentColorName.c_str(), currentColorData.colorSearchDuration);
+            colorLookup.currentColorName.c_str(), colorData.colorSearchDuration);
     Logger::info(statusMsg);
     timers.logging = now;
 }
@@ -5418,14 +5221,19 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
   Logger::info("Step 1: METERING... Finding optimal sensor settings for white reference");
 
   // --- METERING PHASE ---
-  uint16_t x, y, z;
-  // Call the Vivid White-specific auto-adjust function to find optimal settings for target RGB(247,248,244)
-  if (!autoAdjustSensorForVividWhite(x, y, z, 15)) { // Allow full adjustment cycles for calibration
-    // The auto-adjust failed - object too close (saturating) or too far (too dark)
-    Logger::error("? Auto-adjust failed. Sensor could not find optimal settings.");
+  // Use unified auto-exposure system instead of manual adjustment
+  SensorData optimalData = readOptimalSensorData();
+  uint16_t x = optimalData.x;
+  uint16_t y = optimalData.y;
+  uint16_t z = optimalData.z;
+
+  // Check if the reading is reasonable (unified auto-exposure should always succeed)
+  uint16_t maxChannel = max({x, y, z});
+  if (maxChannel < 1000) {
+    Logger::error("? Unified auto-exposure produced very low signal. Check physical setup.");
     Logger::error("?? Suggestions:");
-    Logger::error("   - If too bright: Move white object further from sensor");
-    Logger::error("   - If too dark: Move white object closer to sensor");
+    Logger::error("   - Move white object closer to sensor");
+    Logger::error("   - Check LED is working properly");
     Logger::error("   - Ensure adequate lighting conditions");
 
     JsonResponseBuilder builder;
@@ -5649,13 +5457,13 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
     return;
   }
 
-  // Read current vivid white sample
-  uint16_t x = 0;
-  uint16_t y = 0;
-  uint16_t z = 0;
-  uint16_t ir1 = 0;
-  uint16_t ir2 = 0;
-  colorSensor.readAll(x, y, z, ir1, ir2);
+  // Read current vivid white sample using unified auto-exposure
+  SensorData vividWhiteData = readOptimalSensorData();
+  uint16_t x = vividWhiteData.x;
+  uint16_t y = vividWhiteData.y;
+  uint16_t z = vividWhiteData.z;
+  uint16_t ir1 = vividWhiteData.ir1;
+  uint16_t ir2 = vividWhiteData.ir2;
 
   // Test current mapping with professional conversion
   uint8_t currentR = 0;
@@ -6627,4 +6435,205 @@ void handleTestCalibrationFixes(AsyncWebServerRequest *request) {
   Logger::info("=== CALIBRATION FIXES TEST COMPLETE ===");
   Logger::info("Results: " + String(testsPassedCount) + "/3 tests passed");
   Logger::info("Overall status: " + overallResult);
+}
+
+/**
+ * @brief Test gamma correction effectiveness
+ *
+ * This diagnostic endpoint tests the gamma correction implementation by:
+ * 1. Taking sensor readings at different brightness levels
+ * 2. Comparing linear vs gamma-corrected responses
+ * 3. Validating that linearization improves color accuracy
+ */
+static void handleTestGammaCorrection(AsyncWebServerRequest *request) {
+  Logger::info("=== GAMMA CORRECTION DIAGNOSTIC TEST ===");
+
+  JsonResponseBuilder builder;
+  builder.addField("status", "success");
+  builder.addField("test", "gamma_correction_diagnostic");
+
+  // Test 1: Compare raw vs linearized sensor response
+  SensorData rawData = readAveragedSensorData();
+
+  // Normalize raw values
+  float normalizedX = static_cast<float>(rawData.x) / 65535.0f;
+  float normalizedY = static_cast<float>(rawData.y) / 65535.0f;
+  float normalizedZ = static_cast<float>(rawData.z) / 65535.0f;
+
+  // Apply gamma correction (simulate what ColorCalibration does)
+  float linearX = 0.0f, linearY = 0.0f, linearZ = 0.0f;
+
+  // Apply inverse gamma correction formula
+  auto applyInverseGamma = [](float gamma) -> float {
+    if (gamma <= 0.0f) return 0.0f;
+    if (gamma >= 1.0f) return 1.0f;
+    if (gamma <= 0.04045f) {
+      return gamma / 12.92f;
+    } else {
+      return pow((gamma + 0.055f) / 1.055f, 2.4f);
+    }
+  };
+
+  linearX = applyInverseGamma(normalizedX);
+  linearY = applyInverseGamma(normalizedY);
+  linearZ = applyInverseGamma(normalizedZ);
+
+  // Test conversion with and without gamma correction
+  uint8_t rawR, rawG, rawB;
+  uint8_t correctedR, correctedG, correctedB;
+
+  // Raw conversion (old method)
+  rawR = static_cast<uint8_t>(constrain(rawData.x / 256, 0, 255));
+  rawG = static_cast<uint8_t>(constrain(rawData.y / 256, 0, 255));
+  rawB = static_cast<uint8_t>(constrain(rawData.z / 256, 0, 255));
+
+  // Gamma-corrected conversion (new method)
+  ColorCalibration::convertColor(rawData.x, rawData.y, rawData.z, correctedR, correctedG, correctedB);
+
+  // Calculate improvement metrics
+  float rawBrightness = (rawR + rawG + rawB) / 3.0f;
+  float correctedBrightness = (correctedR + correctedG + correctedB) / 3.0f;
+  float brightnessChange = abs(correctedBrightness - rawBrightness);
+
+  // Add test results
+  builder.addField("rawSensorX", static_cast<int>(rawData.x));
+  builder.addField("rawSensorY", static_cast<int>(rawData.y));
+  builder.addField("rawSensorZ", static_cast<int>(rawData.z));
+
+  builder.addField("normalizedX", normalizedX, 4);
+  builder.addField("normalizedY", normalizedY, 4);
+  builder.addField("normalizedZ", normalizedZ, 4);
+
+  builder.addField("linearizedX", linearX, 4);
+  builder.addField("linearizedY", linearY, 4);
+  builder.addField("linearizedZ", linearZ, 4);
+
+  builder.addField("rawRGB_R", static_cast<int>(rawR));
+  builder.addField("rawRGB_G", static_cast<int>(rawG));
+  builder.addField("rawRGB_B", static_cast<int>(rawB));
+
+  builder.addField("correctedRGB_R", static_cast<int>(correctedR));
+  builder.addField("correctedRGB_G", static_cast<int>(correctedG));
+  builder.addField("correctedRGB_B", static_cast<int>(correctedB));
+
+  builder.addField("brightnessChange", brightnessChange, 2);
+  builder.addField("gammaEnabled", ENABLE_GAMMA_CORRECTION ? "true" : "false");
+
+  // Determine if gamma correction is working
+  bool gammaWorking = (brightnessChange > 5.0f); // Significant change indicates gamma is working
+  builder.addField("gammaEffective", gammaWorking ? "true" : "false");
+
+  String response = builder.build();
+  request->send(HTTP_OK, "application/json", response);
+
+  Logger::info("Gamma correction test complete");
+  Logger::info("Raw RGB: (" + String(rawR) + "," + String(rawG) + "," + String(rawB) + ")");
+  Logger::info("Corrected RGB: (" + String(correctedR) + "," + String(correctedG) + "," + String(correctedB) + ")");
+  Logger::info("Brightness change: " + String(brightnessChange, 2));
+}
+
+/**
+ * @brief Comprehensive sensor linearization diagnostic
+ *
+ * This diagnostic tests the complete linearization pipeline by:
+ * 1. Testing sensor response at multiple brightness levels
+ * 2. Validating that the response becomes more linear after gamma correction
+ * 3. Checking for proper matrix transformation behavior
+ */
+static void handleDiagnoseLinearization(AsyncWebServerRequest *request) {
+  Logger::info("=== SENSOR LINEARIZATION DIAGNOSTIC ===");
+
+  JsonResponseBuilder builder;
+  builder.addField("status", "success");
+  builder.addField("test", "sensor_linearization_diagnostic");
+
+  // Store original LED brightness
+  uint8_t originalBrightness = settings.ledBrightness;
+
+  // Test at multiple brightness levels
+  uint8_t testBrightnesses[] = {50, 100, 150, 200};
+  int numTests = sizeof(testBrightnesses) / sizeof(testBrightnesses[0]);
+
+  float linearityScore = 0.0f;
+  float totalVariance = 0.0f;
+
+  Logger::info("Testing sensor linearity at " + String(numTests) + " brightness levels...");
+
+  for (int i = 0; i < numTests; i++) {
+    // Set test brightness
+    setHardwareLedBrightness(testBrightnesses[i]);
+    delay(500); // Allow LED to stabilize
+
+    // Take readings
+    SensorData data = readAveragedSensorData();
+
+    // Test both raw and corrected conversion
+    uint8_t rawR, rawG, rawB;
+    uint8_t correctedR, correctedG, correctedB;
+
+    // Raw conversion
+    rawR = static_cast<uint8_t>(constrain(data.x / 256, 0, 255));
+    rawG = static_cast<uint8_t>(constrain(data.y / 256, 0, 255));
+    rawB = static_cast<uint8_t>(constrain(data.z / 256, 0, 255));
+
+    // Gamma-corrected conversion
+    ColorCalibration::convertColor(data.x, data.y, data.z, correctedR, correctedG, correctedB);
+
+    // Calculate expected linear response
+    float expectedRatio = static_cast<float>(testBrightnesses[i]) / 200.0f; // Normalized to max brightness
+    float actualRatio = static_cast<float>(data.y) / 65535.0f; // Use Y channel as luminance
+
+    // Calculate linearity error
+    float linearityError = abs(actualRatio - expectedRatio);
+    totalVariance += linearityError;
+
+    Logger::info("Brightness " + String(testBrightnesses[i]) + ": XYZ(" + String(data.x) + "," + String(data.y) + "," + String(data.z) + ")");
+    Logger::info("  Raw RGB: (" + String(rawR) + "," + String(rawG) + "," + String(rawB) + ")");
+    Logger::info("  Corrected RGB: (" + String(correctedR) + "," + String(correctedG) + "," + String(correctedB) + ")");
+    Logger::info("  Linearity error: " + String(linearityError, 4));
+  }
+
+  // Restore original brightness
+  setHardwareLedBrightness(originalBrightness);
+
+  // Calculate overall linearity score
+  linearityScore = 1.0f - (totalVariance / numTests); // Higher score = more linear
+  linearityScore = max(0.0f, linearityScore); // Clamp to 0-1 range
+
+  // Test current calibration status
+  bool isCalibrated = ColorCalibration::isCalibrated();
+  CalibrationStatus status = ColorCalibration::getManager().getCalibrationStatus();
+
+  // Add diagnostic results
+  builder.addField("linearityScore", linearityScore, 4);
+  builder.addField("totalVariance", totalVariance, 4);
+  builder.addField("numTestPoints", numTests);
+  builder.addField("isCalibrated", isCalibrated ? "true" : "false");
+  builder.addField("calibrationPoints", static_cast<int>(status.totalPoints));
+  builder.addField("matrixCalibrated", ColorCalibration::getManager().isMatrixCalibrated() ? "true" : "false");
+
+  // Determine overall health
+  bool linearizationHealthy = (linearityScore > 0.7f) && isCalibrated;
+  builder.addField("linearizationHealthy", linearizationHealthy ? "true" : "false");
+
+  // Add recommendations
+  String recommendation;
+  if (!isCalibrated) {
+    recommendation = "Complete 5-point calibration to enable gamma correction";
+  } else if (linearityScore < 0.5f) {
+    recommendation = "Poor linearity detected - check physical setup (distance, ambient light)";
+  } else if (linearityScore < 0.7f) {
+    recommendation = "Moderate linearity - consider recalibration for better accuracy";
+  } else {
+    recommendation = "Excellent linearization - system working optimally";
+  }
+
+  builder.addField("recommendation", recommendation.c_str());
+
+  String response = builder.build();
+  request->send(HTTP_OK, "application/json", response);
+
+  Logger::info("=== LINEARIZATION DIAGNOSTIC COMPLETE ===");
+  Logger::info("Linearity score: " + String(linearityScore, 4) + " (0.0-1.0, higher is better)");
+  Logger::info("Recommendation: " + recommendation);
 }

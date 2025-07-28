@@ -55,12 +55,18 @@
 // 🎨 COLOR DETECTION SETTINGS
 // =============================================================================
 
-// Distance and Measurement Settings
-#define OPTIMAL_SENSOR_DISTANCE_MM 15  // 📏 Optimal distance from color target in mm (default: 15)
+// Distance and Measurement Settings - OPTIMIZED FOR MAXIMUM SIGNAL
+#define OPTIMAL_SENSOR_DISTANCE_MM 10  // 📏 REDUCED distance for maximum light capture (was 15mm)
+#define MAX_SENSOR_DISTANCE_MM 15      // 📏 Maximum recommended distance before signal degrades
+#define MIN_SENSOR_DISTANCE_MM 5       // 📏 Minimum distance to avoid LED saturation
 #define COLOR_READING_SAMPLES 7        // 🔄 Number of readings to average - increased for stability
 #define COLOR_STABILITY_THRESHOLD \
   5                            // 📊 RGB change threshold for stable reading - tighter tolerance
 #define SENSOR_SAMPLE_DELAY 3  // ⏲️ Delay between samples in ms - slightly increased for stability
+
+// Physical Setup Requirements
+#define AMBIENT_LIGHT_WARNING_THRESHOLD 1000  // 🌞 Warn if ambient light detected above this level
+#define SIGNAL_QUALITY_MINIMUM 25000          // 📊 Minimum signal for reliable color measurement
 
 // Sensor Hardware Settings
 /*
@@ -86,13 +92,22 @@
 #define SENSOR_INTEGRATION_TIME 0x20  // ⚙️ TCS3430 integration time - 90ms reduced for white calibration
 #define SENSOR_SATURATION_THRESHOLD 60000  // 🚨 Saturation detection limit - lowered for better detection
 
-// Intelligent Auto-Adjustment Constants - AGGRESSIVE ANTI-SATURATION TUNING
-#define SATURATION_THRESHOLD 60000        // 🚨 Lowered saturation threshold for earlier intervention
-#define OPTIMAL_TARGET_VALUE 35000        // 🎯 Raised target for better signal quality while maintaining headroom
-#define OPTIMAL_WINDOW_HIGH 60000         // 60000 - Increased upper bound for brighter scenes
-#define OPTIMAL_WINDOW_LOW  15000         // 15000 - Lower bound (maintained for dark scenes)
+// Intelligent Auto-Adjustment Constants - OPTIMIZED FOR MAXIMUM DYNAMIC RANGE
+#define SATURATION_THRESHOLD 62000        // 🚨 Higher threshold for maximum signal utilization
+#define OPTIMAL_TARGET_VALUE 45000        // 🎯 INCREASED target for better signal-to-noise ratio
+#define OPTIMAL_WINDOW_HIGH 62000         // 62000 - Push closer to saturation for maximum dynamic range
+#define OPTIMAL_WINDOW_LOW  20000         // 20000 - Higher minimum for better signal quality
+#define VIVID_WHITE_TARGET_SIGNAL 55000   // 🎯 Target signal level for Vivid White calibration
+
+// Gamma Correction Settings for Sensor Linearization
+#define SENSOR_GAMMA_CORRECTION 2.2f      // 🔬 Gamma value for sensor linearization (typical: 2.2)
+#define ENABLE_GAMMA_CORRECTION true      // 🔬 Enable gamma correction in color pipeline
+#define GAMMA_CORRECTION_THRESHOLD 0.04045f // 🔬 Threshold for linear vs gamma correction
+
 #define LED_PIN 5                          // 💡 LED pin number (default: 5)
-#define LED_BRIGHTNESS 100  // 🔆 LED brightness 0-255 - Reduced for white calibration
+#define LED_BRIGHTNESS 180  // 🔆 LED brightness 0-255 - INCREASED for better signal-to-noise ratio
+#define LED_MAX_BRIGHTNESS 220  // 🔆 Maximum allowed LED brightness for safety
+#define LED_MIN_BRIGHTNESS 20   // 🔆 Minimum LED brightness for stable operation
 
 // Color Calibration Fine-Tuning
 #define IR_COMPENSATION_FACTOR_1 \

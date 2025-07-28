@@ -202,10 +202,17 @@ private:
         float normalizedY = static_cast<float>(y) / 65535.0f;
         float normalizedZ = static_cast<float>(z) / 65535.0f;
 
-        // Apply matrix transformation: RGB = CCM * XYZ
-        float rf = m[0][0] * normalizedX + m[0][1] * normalizedY + m[0][2] * normalizedZ;
-        float gf = m[1][0] * normalizedX + m[1][1] * normalizedY + m[1][2] * normalizedZ;
-        float bf = m[2][0] * normalizedX + m[2][1] * normalizedY + m[2][2] * normalizedZ;
+        // === CRITICAL: SENSOR LINEARIZATION VIA INVERSE GAMMA CORRECTION ===
+        // The sensor has a non-linear response similar to a gamma curve.
+        // We must linearize the data BEFORE matrix transformation for accurate color math.
+        float linearX = applyInverseGamma(normalizedX);
+        float linearY = applyInverseGamma(normalizedY);
+        float linearZ = applyInverseGamma(normalizedZ);
+
+        // Apply matrix transformation to LINEARIZED data: RGB = CCM * XYZ_linear
+        float rf = m[0][0] * linearX + m[0][1] * linearY + m[0][2] * linearZ;
+        float gf = m[1][0] * linearX + m[1][1] * linearY + m[1][2] * linearZ;
+        float bf = m[2][0] * linearX + m[2][1] * linearY + m[2][2] * linearZ;
 
         // === ANTI-SATURATION PRE-SCALING ===
         // Check if any channel would exceed 1.0 and scale down proportionally to prevent saturation
@@ -288,16 +295,22 @@ private:
 
         // --- Stage 4: Normalize to 0-1 range ---
         // Find the maximum possible signal (white point minus flare)
-        float maxSignal = 4095.0f; // Assuming 12-bit ADC, adjust if needed
+        float maxSignal = 65535.0f; // Using 16-bit ADC range for TCS3430
         float normalizedX = flareCompensatedX / maxSignal;
         float normalizedY = flareCompensatedY / maxSignal;
         float normalizedZ = flareCompensatedZ / maxSignal;
 
+        // --- Stage 4.5: CRITICAL SENSOR LINEARIZATION ---
+        // Apply inverse gamma correction to linearize sensor response before matrix math
+        float linearX = applyInverseGamma(normalizedX);
+        float linearY = applyInverseGamma(normalizedY);
+        float linearZ = applyInverseGamma(normalizedZ);
+
         // --- Stage 5: Apply Color Correction Matrix ---
-        // The matrix is now applied to the pure, flare-free color signal
-        float linearR = m[0][0] * normalizedX + m[0][1] * normalizedY + m[0][2] * normalizedZ;
-        float linearG = m[1][0] * normalizedX + m[1][1] * normalizedY + m[1][2] * normalizedZ;
-        float linearB = m[2][0] * normalizedX + m[2][1] * normalizedY + m[2][2] * normalizedZ;
+        // The matrix is now applied to the linearized, flare-free color signal
+        float linearR = m[0][0] * linearX + m[0][1] * linearY + m[0][2] * linearZ;
+        float linearG = m[1][0] * linearX + m[1][1] * linearY + m[1][2] * linearZ;
+        float linearB = m[2][0] * linearX + m[2][1] * linearY + m[2][2] * linearZ;
 
         // === ANTI-SATURATION PRE-SCALING (Professional Pipeline) ===
         float maxLinear = fmax(fmax(linearR, linearG), linearB);
@@ -352,19 +365,22 @@ private:
                                        uint8_t& r, uint8_t& g, uint8_t& b) const {
         if (!isValid) return false;
 
-        // --- Step 1: Dark Current Compensation ---
-        // CRITICAL FIX: Use raw sensor values directly since darkOffset is (0,0,0)
-        // The blackRef includes both sensor noise AND reflected light from black sample
-        // We should NOT subtract blackRef here - that removes actual color information
-        float compensatedX = static_cast<float>(x); // Use raw values - darkOffset compensation is (0,0,0)
-        float compensatedY = static_cast<float>(y); // Use raw values - darkOffset compensation is (0,0,0)
-        float compensatedZ = static_cast<float>(z); // Use raw values - darkOffset compensation is (0,0,0)
+        // --- Step 1: Normalize and Linearize Sensor Data ---
+        // Normalize to 0-1 range first
+        float normalizedX = static_cast<float>(x) / 65535.0f;
+        float normalizedY = static_cast<float>(y) / 65535.0f;
+        float normalizedZ = static_cast<float>(z) / 65535.0f;
+
+        // Apply inverse gamma correction to linearize sensor response
+        float linearX = applyInverseGamma(normalizedX);
+        float linearY = applyInverseGamma(normalizedY);
+        float linearZ = applyInverseGamma(normalizedZ);
 
         // --- Step 2: Apply Color Correction Matrix ---
-        // Matrix operates on compensated values to get LINEAR RGB
-        float linearR = m[0][0] * compensatedX + m[0][1] * compensatedY + m[0][2] * compensatedZ;
-        float linearG = m[1][0] * compensatedX + m[1][1] * compensatedY + m[1][2] * compensatedZ;
-        float linearB = m[2][0] * compensatedX + m[2][1] * compensatedY + m[2][2] * compensatedZ;
+        // Matrix operates on linearized values to get LINEAR RGB
+        float linearR = m[0][0] * linearX + m[0][1] * linearY + m[0][2] * linearZ;
+        float linearG = m[1][0] * linearX + m[1][1] * linearY + m[1][2] * linearZ;
+        float linearB = m[2][0] * linearX + m[2][1] * linearY + m[2][2] * linearZ;
 
         // === ANTI-SATURATION PRE-SCALING (Black Compensation Pipeline) ===
         float maxLinear = fmax(fmax(linearR, linearG), linearB);
@@ -413,6 +429,29 @@ private:
             return 12.92f * linear;  // Linear portion for very dark values
         } else {
             return 1.055f * pow(linear, 1.0f / 2.4f) - 0.055f;  // Gamma curve for normal values
+        }
+    }
+
+    /**
+     * @brief Apply inverse gamma correction to linearize sensor readings
+     * @param gamma Gamma-corrected sensor value (0.0-1.0)
+     * @return Linearized value (0.0-1.0)
+     *
+     * CRITICAL: This function linearizes the sensor's non-linear response.
+     * The TCS3430 sensor has an inherent gamma-like curve that must be corrected
+     * before applying linear algebra (matrix transformations) for accurate color math.
+     */
+    float applyInverseGamma(float gamma) const {
+        // Handle edge cases
+        if (gamma <= 0.0f) return 0.0f;
+        if (gamma >= 1.0f) return 1.0f;
+
+        // Inverse sRGB gamma correction formula
+        // This converts from gamma-corrected sensor readings back to linear light values
+        if (gamma <= 0.04045f) {
+            return gamma / 12.92f;  // Linear portion for very dark values
+        } else {
+            return pow((gamma + 0.055f) / 1.055f, 2.4f);  // Inverse gamma curve
         }
     }
 

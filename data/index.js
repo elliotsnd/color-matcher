@@ -960,6 +960,54 @@ function setupOptimizationHandlers() {
             btn.innerHTML = '<i class="fas fa-clipboard-check"></i> Test All Improvements';
         }
     });
+
+    // Test gamma correction button
+    document.getElementById('testGammaCorrectionBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('testGammaCorrectionBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing Gamma...';
+
+        try {
+            const response = await fetch('/api/test-gamma-correction');
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                displayGammaTestResults(data);
+                showNotification('Gamma correction test completed!', 'success');
+            } else {
+                showNotification('Gamma test failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Gamma test error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-chart-line"></i> Test Gamma Correction';
+        }
+    });
+
+    // Diagnose linearization button
+    document.getElementById('diagnoseLinearizationBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('diagnoseLinearizationBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Diagnosing...';
+
+        try {
+            const response = await fetch('/api/diagnose-linearization');
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                displayLinearizationResults(data);
+                showNotification('Linearization diagnostic completed!', 'success');
+            } else {
+                showNotification('Linearization diagnostic failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            showNotification('Linearization diagnostic error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-microscope"></i> Diagnose Linearization';
+        }
+    });
 }
 
 function displayTestResults(data) {
@@ -981,6 +1029,44 @@ function displayTestResults(data) {
     }
 
     resultsDiv.style.display = 'block';
+}
+
+function displayGammaTestResults(data) {
+    const message = `Gamma Correction Test Results:
+
+Raw Sensor: XYZ(${data.rawSensorX}, ${data.rawSensorY}, ${data.rawSensorZ})
+Normalized: X=${data.normalizedX?.toFixed(4)}, Y=${data.normalizedY?.toFixed(4)}, Z=${data.normalizedZ?.toFixed(4)}
+Linearized: X=${data.linearizedX?.toFixed(4)}, Y=${data.linearizedY?.toFixed(4)}, Z=${data.linearizedZ?.toFixed(4)}
+
+Raw RGB: (${data.rawRGB_R}, ${data.rawRGB_G}, ${data.rawRGB_B})
+Corrected RGB: (${data.correctedRGB_R}, ${data.correctedRGB_G}, ${data.correctedRGB_B})
+
+Brightness Change: ${data.brightnessChange?.toFixed(2)} RGB units
+Gamma Enabled: ${data.gammaEnabled}
+Gamma Effective: ${data.gammaEffective}
+
+${data.gammaEffective === 'true' ? '✓ Gamma correction is working properly!' : '⚠ Gamma correction may need attention'}`;
+
+    alert(message);
+}
+
+function displayLinearizationResults(data) {
+    const message = `Sensor Linearization Diagnostic Results:
+
+Linearity Score: ${data.linearityScore?.toFixed(4)} (0.0-1.0, higher is better)
+Total Variance: ${data.totalVariance?.toFixed(4)}
+Test Points: ${data.numTestPoints}
+
+Calibration Status:
+- Is Calibrated: ${data.isCalibrated}
+- Calibration Points: ${data.calibrationPoints}
+- Matrix Calibrated: ${data.matrixCalibrated}
+
+System Health: ${data.linearizationHealthy === 'true' ? '✓ Healthy' : '⚠ Needs Attention'}
+
+Recommendation: ${data.recommendation}`;
+
+    alert(message);
 }
 
 // Battery monitoring
