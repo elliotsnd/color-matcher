@@ -138,7 +138,10 @@ bool MatrixSolver::solveChannel(const std::vector<CalibrationPoint>& points,
     float det = calculateDeterminant(matrix);
     
     // Check if matrix is singular (non-invertible)
-    if (abs(det) < 1e-9f) {
+    // CRITICAL FIX: Use appropriate epsilon for float precision
+    // 1e-9 was too small for 32-bit float, causing false negatives
+    // 1e-6 is appropriate for single-precision floating point
+    if (abs(det) < 1e-6f) {
         Serial.println("ERROR: Matrix is singular (determinant ≈ 0), cannot invert");
         return false;
     }
@@ -212,7 +215,8 @@ bool MatrixSolver::validateCalibrationPoints(const std::vector<CalibrationPoint>
     // For now, we use a simpler metric based on the determinant and matrix norms
     
     float det = abs(calculateDeterminant(matrix));
-    if (det < 1e-9f) {
+    // CRITICAL FIX: Use appropriate epsilon for float precision
+    if (det < 1e-6f) {
         return 1e9f; // Very high condition number for near-singular matrices
     }
     

@@ -344,8 +344,11 @@ bool MatrixSolver::solveChannel(const std::vector<CalibrationPoint>& points, uin
 
 bool MatrixSolver::invert3x3(const float matrix[3][3], float inverse[3][3]) {
     float det = determinant3x3(matrix);
-    
-    if (fabs(det) < 1e-10) {
+
+    // CRITICAL FIX: Use appropriate epsilon for float precision
+    // 1e-10 was too small for 32-bit float, causing false negatives
+    // 1e-6 is appropriate for single-precision floating point
+    if (fabs(det) < 1e-6f) {
         lastError = "Matrix is singular (determinant = 0)";
         return false;
     }
