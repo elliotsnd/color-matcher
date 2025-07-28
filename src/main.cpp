@@ -426,11 +426,9 @@ static const char * const apPassword = AP_PASSWORD;
 
 // Function forward declarations
 static void handleGetSettings(AsyncWebServerRequest *request);
-static void handleSetLedBrightness(AsyncWebServerRequest *request);
+// REMOVED: handleSetLedBrightness, handleSetColorSamples, handleSetSampleDelay - replaced with templates
 static void handleSetIntegrationTime(AsyncWebServerRequest *request);
 static void handleSetIRCompensation(AsyncWebServerRequest *request);
-static void handleSetColorSamples(AsyncWebServerRequest *request);
-static void handleSetSampleDelay(AsyncWebServerRequest *request);
 static void handleSetDebugSettings(AsyncWebServerRequest *request);
 static void handleAdvancedSensorSettings(AsyncWebServerRequest *request);
 static void handleSaveSettings(AsyncWebServerRequest *request);
@@ -667,7 +665,7 @@ SensorData readUnifiedAutoExposure() {
       float currentIntegration = colorSensor.getIntegrationTime();
       if (currentIntegration > 25.0f) {
         // Reduce integration time proportionally
-        float targetRatio = (float)OPTIMAL_TARGET / (float)maxChannel;
+        float targetRatio = static_cast<float>(OPTIMAL_TARGET) / static_cast<float>(maxChannel);
         float newIntegration = max(25.0f, currentIntegration * targetRatio * 0.8f);
         colorSensor.setIntegrationTime(newIntegration);
         Logger::debug("[UNIFIED_AUTO] Reduced integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
@@ -675,7 +673,7 @@ SensorData readUnifiedAutoExposure() {
         // Reduce LED brightness as last resort
         uint8_t currentBrightness = settings.ledBrightness;
         if (currentBrightness > 20) {
-          uint8_t newBrightness = max(20, (int)(currentBrightness * 0.7f));
+          uint8_t newBrightness = static_cast<uint8_t>(max(20, static_cast<int>(currentBrightness * 0.7f)));
           setHardwareLedBrightness(newBrightness);
           Logger::debug("[UNIFIED_AUTO] Reduced LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
         }
@@ -685,7 +683,7 @@ SensorData readUnifiedAutoExposure() {
       float currentIntegration = colorSensor.getIntegrationTime();
       if (currentIntegration < 300.0f) {
         // Increase integration time proportionally
-        float targetRatio = (float)OPTIMAL_TARGET / (float)max((int)maxChannel, 100);
+        float targetRatio = static_cast<float>(OPTIMAL_TARGET) / static_cast<float>(max(static_cast<int>(maxChannel), 100));
         float newIntegration = min(300.0f, currentIntegration * targetRatio * 0.8f);
         colorSensor.setIntegrationTime(newIntegration);
         Logger::debug("[UNIFIED_AUTO] Increased integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
@@ -693,7 +691,7 @@ SensorData readUnifiedAutoExposure() {
         // Increase LED brightness as last resort
         uint8_t currentBrightness = settings.ledBrightness;
         if (currentBrightness < 200) {
-          uint8_t newBrightness = min(200, (int)(currentBrightness * 1.3f));
+          uint8_t newBrightness = static_cast<uint8_t>(min(200, static_cast<int>(currentBrightness * 1.3f)));
           setHardwareLedBrightness(newBrightness);
           Logger::debug("[UNIFIED_AUTO] Increased LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
         }
@@ -886,9 +884,9 @@ bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int ma
       convertXyZtoRgbProfessional(testX, testY, testZ, testIR1, testIR2, testR, testG, testB);
 
       // Calculate error from Vivid White target
-      float rDiff = (float)testR - (float)TARGET_R;
-      float gDiff = (float)testG - (float)TARGET_G;
-      float bDiff = (float)testB - (float)TARGET_B;
+      float rDiff = static_cast<float>(testR) - static_cast<float>(TARGET_R);
+      float gDiff = static_cast<float>(testG) - static_cast<float>(TARGET_G);
+      float bDiff = static_cast<float>(testB) - static_cast<float>(TARGET_B);
       float error = sqrt(rDiff*rDiff + gDiff*gDiff + bDiff*bDiff);
 
       Logger::debug("   Gain:" + String(static_cast<int>(gain)) + "x Int:" + String(integration, 0) +
@@ -2252,25 +2250,7 @@ void handleGetSettings(AsyncWebServerRequest *request) {
   request->send(apiResponse);
 }
 
-// Quick individual setting update endpoints for real-time control
-void handleSetLedBrightness(AsyncWebServerRequest *request) {
-  if (request->hasParam("value")) {
-    int const BRIGHTNESS = request->getParam("value")->value().toInt();
-    if (BRIGHTNESS >= 0 && BRIGHTNESS <= RGB_MAX_INT) {
-      settings.ledBrightness = BRIGHTNESS;
-      analogWrite(leDpin, settings.ledBrightness);
-      Logger::info("LED brightness updated to: " + String(BRIGHTNESS));
-      request->send(HTTP_OK, "application/json",
-                    R"({"status":"success","brightness":)" + String(BRIGHTNESS) + "}");
-    } else {
-      request->send(HTTP_BAD_REQUEST, "application/json",
-                    R"({"error":"Brightness must be 0-255"})");
-    }
-  } else {
-    request->send(HTTP_BAD_REQUEST, "application/json",
-                  R"({"error":"Missing value parameter"})");
-  }
-}
+// REMOVED: handleSetLedBrightness - replaced with template-based handler
 
 void handleSetIntegrationTime(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
@@ -3059,8 +3039,12 @@ void setup() {
   Logger::debug("Route registered: /api/settings (GET) -> handleGetSettings");
 
   // Individual setting update endpoints for real-time adjustment (GET method for simplicity)
-  server.on("/api/set-led-brightness", HTTP_GET, handleSetLedBrightness);
-  Logger::debug("Route registered: /api/set-led-brightness (GET) -> handleSetLedBrightness");
+  // Using template-based handlers to eliminate code duplication
+  server.on("/api/set-led-brightness", HTTP_GET, [](AsyncWebServerRequest *request) {
+    handleSetIntSetting(request, "value", reinterpret_cast<int&>(settings.ledBrightness), 0, 255,
+                       "LED brightness updated to: ", true);
+  });
+  Logger::debug("Route registered: /api/set-led-brightness (GET) -> Template handler");
 
   server.on("/api/set-integration-time", HTTP_GET, handleSetIntegrationTime);
   Logger::debug("Route registered: /api/set-integration-time (GET) -> handleSetIntegrationTime");
@@ -3068,11 +3052,17 @@ void setup() {
   server.on("/api/set-ir-factors", HTTP_GET, handleSetIRCompensation);
   Logger::debug("Route registered: /api/set-ir-factors (GET) -> handleSetIRCompensation");
 
-  server.on("/api/set-color-samples", HTTP_GET, handleSetColorSamples);
-  Logger::debug("Route registered: /api/set-color-samples (GET) -> handleSetColorSamples");
+  server.on("/api/set-color-samples", HTTP_GET, [](AsyncWebServerRequest *request) {
+    handleSetIntSetting(request, "value", settings.colorReadingSamples, 1, 20,
+                       "Color samples updated to: ");
+  });
+  Logger::debug("Route registered: /api/set-color-samples (GET) -> Template handler");
 
-  server.on("/api/set-sample-delay", HTTP_GET, handleSetSampleDelay);
-  Logger::debug("Route registered: /api/set-sample-delay (GET) -> handleSetSampleDelay");
+  server.on("/api/set-sample-delay", HTTP_GET, [](AsyncWebServerRequest *request) {
+    handleSetIntSetting(request, "value", settings.sensorSampleDelay, 0, 1000,
+                       "Sample delay updated to: ");
+  });
+  Logger::debug("Route registered: /api/set-sample-delay (GET) -> Template handler");
 
   server.on("/api/set-debug", HTTP_GET, handleSetDebugSettings);
   Logger::debug("Route registered: /api/set-debug (GET) -> handleSetDebugSettings");
@@ -3837,54 +3827,9 @@ void loop() {
   monitorPerformance(performance, timers);
 }
 
-// Simplified individual setting handlers using GET requests for reliability
-void handleSetColorSamples(AsyncWebServerRequest *request) {
-  if (request->hasParam("value")) {
-    int const SAMPLES = request->getParam("value")->value().toInt();
-    if (SAMPLES >= 1 && SAMPLES <= MAX_COLOR_SAMPLES) {
-      settings.colorReadingSamples = SAMPLES;
-      char logMsg[64];
-      sprintf(logMsg, "Color samples updated to: %d", SAMPLES);
-      Logger::info(logMsg);
+// REMOVED: handleSetColorSamples - replaced with template-based handler
 
-      JsonResponseBuilder builder;
-      builder.addField("status", "success");
-      builder.addField("colorSamples", SAMPLES);
-      String const response = builder.build();
-      request->send(HTTP_OK, "application/json", response);
-    } else {
-      request->send(HTTP_BAD_REQUEST, "application/json",
-                    R"({"error":"Color samples must be 1-10"})");
-    }
-  } else {
-    request->send(HTTP_BAD_REQUEST, "application/json",
-                  R"({"error":"Missing value parameter"})");
-  }
-}
-
-void handleSetSampleDelay(AsyncWebServerRequest *request) {
-  if (request->hasParam("value")) {
-    int const DELAY = request->getParam("value")->value().toInt();
-    if (DELAY >= 1 && DELAY <= MAX_SAMPLE_DELAY) {
-      settings.sensorSampleDelay = DELAY;
-      char logMsg[64];
-      sprintf(logMsg, "Sample delay updated to: %dms", DELAY);
-      Logger::info(logMsg);
-
-      JsonResponseBuilder builder;
-      builder.addField("status", "success");
-      builder.addField("sampleDelay", DELAY);
-      String const response = builder.build();
-      request->send(HTTP_OK, "application/json", response);
-    } else {
-      request->send(HTTP_BAD_REQUEST, "application/json",
-                    R"({"error":"Sample delay must be 1-50ms"})");
-    }
-  } else {
-    request->send(HTTP_BAD_REQUEST, "application/json",
-                  R"({"error":"Missing value parameter"})");
-  }
-}
+// REMOVED: handleSetSampleDelay - replaced with template-based handler
 
 void handleSetDebugSettings(AsyncWebServerRequest *request) {
   bool updated = false;
@@ -4152,9 +4097,9 @@ void handleDebugVividColors(AsyncWebServerRequest *request) {
   gEnhanced = max(0.0f, min(1.0f, gEnhanced));
   bEnhanced = max(0.0f, min(1.0f, bEnhanced));
 
-  r3 = (uint8_t)(rEnhanced * 255);
-  g3 = (uint8_t)(gEnhanced * 255);
-  b3 = (uint8_t)(bEnhanced * 255);
+  r3 = static_cast<uint8_t>(rEnhanced * 255);
+  g3 = static_cast<uint8_t>(gEnhanced * 255);
+  b3 = static_cast<uint8_t>(bEnhanced * 255);
 
   // Build comprehensive diagnostic response
   String response = "{";
