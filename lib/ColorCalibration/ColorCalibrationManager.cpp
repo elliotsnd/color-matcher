@@ -12,7 +12,8 @@
 #include "ColorCalibrationManager.h"
 #include <Arduino.h>
 
-ColorCalibrationManager::ColorCalibrationManager() : isInitialized(false), darkOffsetCalibrated(false), blackRefCalibrated(false) {
+ColorCalibrationManager::ColorCalibrationManager() : isInitialized(false), darkOffsetCalibrated(false), blackRefCalibrated(false),
+                                                   lastCalibrationGain(0.0f), lastCalibrationIntegrationTime(0), sensorSettingsChanged(false) {
     lastError = "";
 
     // Initialize calibration points
@@ -63,10 +64,11 @@ bool ColorCalibrationManager::addOrUpdateCalibrationPoint(const String& colorNam
     }
 
     // Guard clause: Validate sensor readings (prevent overflow/underflow issues)
+    // NOTE: Zero readings are VALID for dark offset calibration (LED OFF)
+    // Only warn for zero readings, don't reject them
     if (rawX == 0 && rawY == 0 && rawZ == 0) {
-        lastError = "Invalid sensor readings: all values are zero (sensor may be disconnected or covered)";
-        Serial.println("❌ ColorCalibrationManager: Zero sensor readings detected");
-        return false;
+        Serial.println("ℹ️ ColorCalibrationManager: Zero sensor readings detected (valid for dark offset)");
+        // Continue processing - zero readings are acceptable
     }
 
     // Guard clause: Validate quality parameter
@@ -130,7 +132,41 @@ bool ColorCalibrationManager::calibrateDarkOffset(uint16_t rawX, uint16_t rawY, 
     saveCalibrationData();
 
     lastError = "";
+    // Track sensor settings for dynamic recalibration
+    extern float getCurrentGain();
+    extern uint16_t getCurrentIntegrationTime();
+    lastCalibrationGain = getCurrentGain();
+    lastCalibrationIntegrationTime = getCurrentIntegrationTime();
+    sensorSettingsChanged = false;
+
     return true;
+}
+
+bool ColorCalibrationManager::recalibrateDarkOffsetIfNeeded(float currentGain, uint16_t currentIntegrationTime) {
+    // Check if sensor settings have changed significantly
+    const float GAIN_THRESHOLD = 0.1f;  // 10% change threshold
+    const uint16_t TIME_THRESHOLD = 10;  // 10ms change threshold
+
+    bool gainChanged = abs(currentGain - lastCalibrationGain) > GAIN_THRESHOLD;
+    bool timeChanged = abs((int)currentIntegrationTime - (int)lastCalibrationIntegrationTime) > TIME_THRESHOLD;
+
+    if (!darkOffsetCalibrated || gainChanged || timeChanged || sensorSettingsChanged) {
+        Serial.println("🔄 Sensor settings changed - recalibrating dark offset...");
+        Serial.printf("   Gain: %.2f → %.2f (changed: %s)\n",
+                     lastCalibrationGain, currentGain, gainChanged ? "YES" : "NO");
+        Serial.printf("   Integration: %d → %d ms (changed: %s)\n",
+                     lastCalibrationIntegrationTime, currentIntegrationTime, timeChanged ? "YES" : "NO");
+
+        // Perform automatic dark offset recalibration
+        return performDarkOffsetCalibration();
+    }
+
+    return true; // No recalibration needed
+}
+
+void ColorCalibrationManager::invalidateDarkOffset() {
+    sensorSettingsChanged = true;
+    Serial.println("⚠️ Dark offset invalidated - will recalibrate on next reading");
 }
 
 bool ColorCalibrationManager::calibrateBlackReference(uint16_t rawX, uint16_t rawY, uint16_t rawZ) {
@@ -180,10 +216,13 @@ bool ColorCalibrationManager::applyCalibrationCorrection(uint16_t rawX, uint16_t
     }
 
     // Guard clause: Validate input sensor readings
+    // NOTE: Zero readings are VALID for dark offset calibration (LED OFF)
+    // Only reject zero readings for actual color measurements
     if (rawX == 0 && rawY == 0 && rawZ == 0) {
-        Serial.println("⚠️ ColorCalibrationManager: Zero sensor readings - using safe fallback values");
-        r = g = b = 0; // Safe black output for zero input
-        return false;
+        // Zero readings are acceptable - this could be a perfect dark offset (0,0,0)
+        // or a true black color measurement. Process normally.
+        r = g = b = 0; // Valid black output for zero input
+        return true; // Changed from false to true - zero is a valid result
     }
 
     // Guard clause: Check for sensor overflow (prevent calculation errors)

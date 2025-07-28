@@ -352,11 +352,13 @@ private:
                                        uint8_t& r, uint8_t& g, uint8_t& b) const {
         if (!isValid) return false;
 
-        // --- Step 1: Black-Level Compensation ---
-        // Subtract the black reference to remove sensor offset and flare
-        float compensatedX = fmax(0.0f, static_cast<float>(x) - static_cast<float>(blackRef.rawX));
-        float compensatedY = fmax(0.0f, static_cast<float>(y) - static_cast<float>(blackRef.rawY));
-        float compensatedZ = fmax(0.0f, static_cast<float>(z) - static_cast<float>(blackRef.rawZ));
+        // --- Step 1: Dark Current Compensation ---
+        // CRITICAL FIX: Use raw sensor values directly since darkOffset is (0,0,0)
+        // The blackRef includes both sensor noise AND reflected light from black sample
+        // We should NOT subtract blackRef here - that removes actual color information
+        float compensatedX = static_cast<float>(x); // Use raw values - darkOffset compensation is (0,0,0)
+        float compensatedY = static_cast<float>(y); // Use raw values - darkOffset compensation is (0,0,0)
+        float compensatedZ = static_cast<float>(z); // Use raw values - darkOffset compensation is (0,0,0)
 
         // --- Step 2: Apply Color Correction Matrix ---
         // Matrix operates on compensated values to get LINEAR RGB

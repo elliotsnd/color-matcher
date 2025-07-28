@@ -55,6 +55,20 @@ public:
     bool calibrateDarkOffset(uint16_t rawX, uint16_t rawY, uint16_t rawZ);
 
     /**
+     * @brief Dynamic dark offset recalibration for auto-exposure systems
+     * @param currentGain Current sensor gain setting
+     * @param currentIntegrationTime Current integration time in ms
+     * @return true if recalibration was performed and successful
+     */
+    bool recalibrateDarkOffsetIfNeeded(float currentGain, uint16_t currentIntegrationTime);
+
+    /**
+     * @brief Invalidate dark offset when sensor settings change
+     * Call this whenever gain, integration time, or other sensor settings change
+     */
+    void invalidateDarkOffset();
+
+    /**
      * @brief Calibrate black reference (LED ON with black sample) - Stage 2 of professional calibration
      * @param rawX Raw X sensor reading with LED ON and black reference
      * @param rawY Raw Y sensor reading with LED ON and black reference
@@ -225,6 +239,11 @@ private:
     bool isInitialized;                 ///< Initialization flag
     bool darkOffsetCalibrated;          ///< Dark offset calibration flag
     bool blackRefCalibrated;            ///< Black reference calibration flag
+
+    // Dynamic calibration tracking for auto-exposure systems
+    float lastCalibrationGain;          ///< Gain setting when dark offset was last calibrated
+    uint16_t lastCalibrationIntegrationTime; ///< Integration time when dark offset was last calibrated
+    bool sensorSettingsChanged;         ///< Flag indicating sensor settings have changed
 
     // Auto-calibration state
     AutoCalibrationStatus autoCalStatus; ///< Auto-calibration status

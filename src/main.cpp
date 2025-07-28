@@ -610,6 +610,25 @@ uint8_t getCurrentLedBrightness() {
   return settings.ledBrightness;
 }
 
+// Get current sensor gain for dynamic calibration
+float getCurrentGain() {
+  // Convert TCS3430 gain enum to float value
+  TCS3430Gain gain = colorSensor.getGain();
+  switch (gain) {
+    case TCS3430Gain::GAIN_1X:  return 1.0f;
+    case TCS3430Gain::GAIN_4X:  return 4.0f;
+    case TCS3430Gain::GAIN_16X: return 16.0f;
+    case TCS3430Gain::GAIN_64X: return 64.0f;
+    default: return 1.0f;
+  }
+}
+
+// Get current integration time for dynamic calibration
+uint16_t getCurrentIntegrationTime() {
+  // Get integration time in milliseconds
+  return static_cast<uint16_t>(colorSensor.getIntegrationTime());
+}
+
 // Synchronize LED hardware with settings (called after LED changes)
 void syncLedWithSettings(uint8_t brightness) {
   settings.ledBrightness = brightness;
