@@ -66,40 +66,43 @@ This project recently received major updates that fixed critical issues and adde
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
-   cd esp32-color-matcher
+   git clone https://github.com/elliotsnd/color-matcher.git
+   cd color-matcher
    ```
 
-2. **Install dependencies**
-   ```bash
-   # Frontend dependencies
-   cd data
-   npm install
-   npm run build
-   cd ..
-   
-   # Python dependencies (optional)
-   pip install -r requirements.txt
+2. **Configure WiFi credentials**
+   Edit `src/main.cpp` and update your WiFi settings:
+   ```cpp
+   const char* ssid = "YOUR_WIFI_SSID";
+   const char* password = "YOUR_WIFI_PASSWORD";
    ```
 
-3. **Prepare data files**
+3. **Build and upload firmware**
    ```bash
-   python prepare_binary_data.py
-   ```
+   # Build the project
+   pio run --environment um_pros3
 
-4. **Upload to ESP32**
-   ```bash
-   # Upload filesystem
-   pio run --target uploadfs --environment um_pros3
-   
    # Upload firmware
    pio run --target upload --environment um_pros3
    ```
 
+4. **Upload filesystem (web interface + color database)**
+   ```bash
+   # Upload data files to ESP32
+   pio run --target uploadfs --environment um_pros3
+   ```
+
 5. **Access web interface**
-   - Connect to your WiFi network
+   - Connect ESP32 to power
+   - Check serial monitor for IP address
    - Open browser to ESP32's IP address
-   - Enjoy real-time color matching!
+   - Start color matching!
+
+### Quick Setup Notes
+- **No build scripts needed** - Everything is ready to compile
+- **No frontend build required** - Web interface files are pre-built
+- **Color database included** - Binary database is ready to use
+- **All libraries included** - No external dependencies to install
 
 ## 📊 Performance Improvements
 
@@ -166,28 +169,53 @@ float calibrationMatrix[3][3] = {
 
 ## 📁 Project Structure
 
+This repository contains only the essential files needed to build and run the ESP32 color matcher:
+
 ```
 esp32-color-matcher/
-├── src/                          # ESP32 firmware source
-│   ├── main.cpp                  # Main application code
-│   ├── dulux_simple_reader.h     # Binary database reader
-│   └── dulux_binary_reader.h     # Alternative reader (legacy)
-├── data/                         # Frontend source & data
-│   ├── index.tsx                 # React application
-│   ├── package.json              # Node.js dependencies
-│   ├── dulux.bin                 # Binary color database
-│   └── dist/                     # Built frontend (generated)
-├── scripts/                      # Build and utility scripts
-│   ├── convert_dulux_to_binary.py
-│   ├── prepare_binary_data.py
-│   └── upload_fixed_data.py
-├── docs/                         # Documentation
-│   ├── README_BINARY_CONVERSION.md
-│   ├── OPTIMIZATION_SUMMARY.md
-│   └── UPLOAD_GUIDE.md
-├── platformio.ini                # PlatformIO configuration
-└── README.md                     # This file
+├── src/                          # ESP32 firmware source code
+│   ├── main.cpp                  # Main application with calibration system
+│   ├── CIEDE2000.cpp/.h          # Color difference calculations
+│   ├── constants.h               # System constants and definitions
+│   ├── dulux_binary_reader.h     # Optimized binary database reader
+│   ├── kdtree_color_search.h     # Fast color search algorithms
+│   ├── persistent_storage.cpp/.h # Settings and calibration storage
+│   ├── sensor_settings.h         # TCS3430 sensor configuration
+│   └── main_includes.h           # Common includes and utilities
+├── lib/                          # Custom libraries
+│   ├── ColorCalibration/         # Advanced calibration system
+│   │   ├── ColorCalibration.cpp/.h
+│   │   ├── MatrixSolver.cpp/.h   # Matrix-based calibration
+│   │   └── CalibrationEndpoints.cpp/.h
+│   ├── ColorScience/             # Color conversion algorithms
+│   ├── TCS3430AutoGain/          # Automatic sensor gain control
+│   ├── LEDBrightnessControl/     # LED management
+│   └── [Other specialized libraries]
+├── data/                         # Web interface and color database
+│   ├── index.html                # Main web interface
+│   ├── index.css                 # Styling
+│   ├── index.js                  # Frontend JavaScript
+│   └── dulux.bin                 # Binary color database (4,224 colors)
+├── .vscode/                      # VS Code configuration
+│   ├── settings.json             # Project settings
+│   ├── launch.json               # Debug configuration
+│   └── extensions.json           # Recommended extensions
+├── platformio.ini                # PlatformIO build configuration
+├── partitions_littlefs_16mb.csv  # ESP32 partition table
+├── .gitignore                    # Git ignore rules (excludes build files)
+├── LICENSE                       # MIT License
+└── README.md                     # This documentation
 ```
+
+### What's NOT Included (Excluded by .gitignore)
+
+To keep the repository clean and focused, these files are excluded:
+- **Build artifacts** (`.pio/`, `build/`, `*.bin`, `*.elf`)
+- **Development tools** (analysis reports, scripts, temporary files)
+- **Generated documentation** (guides, summaries, troubleshooting docs)
+- **Test files** (examples, test scripts, validation code)
+- **Data processing scripts** (Python scrapers, converters)
+- **IDE project files** (Visual Studio, CMake, Makefiles)
 
 ## 🌐 Web Interface
 
@@ -206,26 +234,39 @@ esp32-color-matcher/
 
 ## 🔬 Development
 
-### Building Frontend
+### Building and Testing
 ```bash
-cd data
-npm run build
-```
+# Clean build
+pio run --environment um_pros3 --target clean
+pio run --environment um_pros3
 
-### Testing Binary Database
-```bash
-python test_binary_format.py
-```
-
-### Uploading Data Files
-```bash
-python upload_fixed_data.py
-```
-
-### Monitoring
-```bash
+# Upload and monitor
+pio run --target upload --environment um_pros3
 pio device monitor --environment um_pros3
 ```
+
+### Modifying Web Interface
+The web interface files are in `data/` directory:
+- `index.html` - Main interface structure
+- `index.css` - Styling and layout
+- `index.js` - JavaScript functionality
+
+After modifications, re-upload the filesystem:
+```bash
+pio run --target uploadfs --environment um_pros3
+```
+
+### Adding New Colors
+The color database is in `data/dulux.bin`. To add colors, you would need:
+1. A script to convert color data to binary format
+2. Rebuild the binary database
+3. Re-upload the filesystem
+
+### Calibration Development
+The calibration system is in `lib/ColorCalibration/`. Key files:
+- `ColorCalibration.cpp` - Main calibration logic
+- `MatrixSolver.cpp` - Matrix-based calibration algorithms
+- `CalibrationEndpoints.cpp` - Web API endpoints
 
 ## 🐛 Troubleshooting
 
