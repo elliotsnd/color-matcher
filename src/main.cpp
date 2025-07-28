@@ -724,6 +724,87 @@ void syncLedWithSettings(uint8_t brightness) {
   Logger::debug("[LED_SYNC] LED and settings synchronized to brightness: " + String(brightness));
 }
 
+/**
+ * @brief Generic handler for API setting updates - Eliminates code duplication
+ *
+ * This function provides a unified pattern for /api/set-* endpoints, replacing
+ * dozens of nearly identical handler functions with a single, type-safe implementation.
+ *
+ * @param request The AsyncWebServerRequest object
+ * @param paramName The name of the parameter to extract from the request
+ * @param setting Reference to the setting variable to update
+ * @param minVal Minimum allowed value for the setting
+ * @param maxVal Maximum allowed value for the setting
+ * @param successMessage Message to log on successful update
+ * @param syncHardware Whether to sync hardware after setting update
+ */
+void handleSetIntSetting(AsyncWebServerRequest *request, const String& paramName, int& setting,
+                        int minVal, int maxVal, const String& successMessage, bool syncHardware = false) {
+    if (!request->hasParam(paramName)) {
+        request->send(HTTP_BAD_REQUEST, "application/json",
+                     "{\"error\":\"Missing parameter: " + paramName + "\"}");
+        return;
+    }
+
+    int value = request->getParam(paramName)->value().toInt();
+
+    if (value < minVal || value > maxVal) {
+        JsonResponseBuilder builder;
+        builder.addField("error", "Value out of range");
+        builder.addField("provided", value);
+        builder.addField("min", minVal);
+        builder.addField("max", maxVal);
+        request->send(HTTP_BAD_REQUEST, "application/json", builder.build());
+        return;
+    }
+
+    setting = value;
+    Logger::info(successMessage + String(value));
+
+    // Sync hardware if requested (e.g., for LED brightness)
+    if (syncHardware && paramName == "value" && &setting == reinterpret_cast<int*>(&settings.ledBrightness)) {
+        analogWrite(leDpin, static_cast<uint8_t>(value));
+    }
+
+    JsonResponseBuilder builder;
+    builder.addField("status", "success");
+    builder.addField(paramName.c_str(), value);
+    String message = successMessage + String(value);
+    builder.addField("message", message.c_str());
+    request->send(HTTP_OK, "application/json", builder.build());
+}
+
+void handleSetFloatSetting(AsyncWebServerRequest *request, const String& paramName, float& setting,
+                          float minVal, float maxVal, const String& successMessage) {
+    if (!request->hasParam(paramName)) {
+        request->send(HTTP_BAD_REQUEST, "application/json",
+                     "{\"error\":\"Missing parameter: " + paramName + "\"}");
+        return;
+    }
+
+    float value = request->getParam(paramName)->value().toFloat();
+
+    if (value < minVal || value > maxVal) {
+        JsonResponseBuilder builder;
+        builder.addField("error", "Value out of range");
+        builder.addField("provided", value, 3);
+        builder.addField("min", minVal, 3);
+        builder.addField("max", maxVal, 3);
+        request->send(HTTP_BAD_REQUEST, "application/json", builder.build());
+        return;
+    }
+
+    setting = value;
+    Logger::info(successMessage + String(value, 3));
+
+    JsonResponseBuilder builder;
+    builder.addField("status", "success");
+    builder.addField(paramName.c_str(), value, 3);
+    String message = successMessage + String(value, 3);
+    builder.addField("message", message.c_str());
+    request->send(HTTP_OK, "application/json", builder.build());
+}
+
 // DEPRECATED: Emergency desaturation function - now handled by dynamic auto-exposure system
 void emergencyDesaturation() {
   Logger::warn("[EMERGENCY] DEPRECATED: Emergency desaturation called");
