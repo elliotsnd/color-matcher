@@ -1,48 +1,58 @@
-# ESP32 Color Matcher Project - Git Ignore File
+# ESP32 Color Matcher Project - Essential Files Only
 
-# PlatformIO build files
+# PlatformIO build files and cache
 .pio/
 .vscode/.browse.c_cpp.db*
 .vscode/c_cpp_properties.json
-.vscode/launch.json
 .vscode/ipch
 .pioenvs/
 .piolibdeps/
 .clang_complete
 .gcc-flags.json
+build/
 
-# Node.js dependencies
+# Node.js dependencies (for web interface development)
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
 # Build outputs and generated files
-data/dist/
-data_clean/
-data_uploaded/
 *.bin
 *.hex
 *.elf
+*.map
+firmware.*
+bootloader.*
+partitions.bin
 
-# Keep essential binary files
+# Keep essential binary files for color database
 !data/dulux.bin
 
-# Large data files (keep source, ignore generated)
-dulux.json
+# Large data files (exclude all JSON/CSV data files)
+*.json
+*.csv
 *.zip
+*.png
+dulux.*
+xkcd_*
+colors.*
 
 # Static Analysis and Development Tools
 analysis-reports/
 .sonarlint/
+.pvs-studio/
 *.plog
 *.pvsconfig
-PVS-Studio-Analysis-Report.md
 actions-runner/
-build/
-compile_commands.json.backup*
+compile_commands.json*
+.clang-format
+.clang-tidy
+.sonarcloud.properties
+sonar-project.properties
 
-# Generated Documentation (keep essential docs)
+# Generated Documentation and Reports
 *_GUIDE.md
 *_SUMMARY.md
 *_COMPLETE.md
@@ -53,8 +63,12 @@ compile_commands.json.backup*
 *_INTEGRATION*.md
 *_OPTIMIZATION*.md
 *_FIXES*.md
+*_INSTALLATION*.md
+*_IMPLEMENTATION*.md
+*_REFERENCE*.md
+*_SYSTEM*.md
 
-# Visual Studio / Windows
+# Visual Studio / Windows project files
 *.sln
 *.vcxproj
 *.vcxproj.filters
@@ -62,32 +76,31 @@ compile_commands.json.backup*
 CMakeLists.txt
 Makefile
 
-# Data processing scripts and generated data
-scrape_dulux_*.py
-dulux_*.csv
-dulux_*.json
-colors.csv
-xkcd_colors.csv
-*.png
+# Python scripts (development/build tools only)
+*.py
+requirements.txt
 
-# Test files and examples (exclude all)
-test_*.py
-test_*.cpp
-test_*.html
-test_*.json
-examples/
+# PowerShell and batch scripts (development tools)
+*.ps1
+*.bat
+*.sh
+
+# Test files and examples
+test_*
 test/
+examples/
 
-# Temporary files
+# Temporary and backup files
 *.tmp
 *.temp
 *.log
 *.cache
 *.bak
 *.backup
-*_backup/
+*_backup*
 *.enhanced_backup
-*.fucked*
+*fucked*
+True
 
 # OS generated files
 .DS_Store
@@ -117,26 +130,26 @@ ENV/
 env.bak/
 venv.bak/
 
-# Environment files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# TypeScript build info
-*.tsbuildinfo
-
-# Test files (optional - remove if you want to include tests)
-test_*.html
-
-# Compiled binaries
-firmware.bin
-bootloader.bin
-partitions.bin
-
-# GitHub MCP Server tokens and configuration
+# Environment and security files
+.env*
+*.token
 github-token.txt
 github-mcp-server-config.json
 mcp-tokens.json
-*.token
+
+# VSCode extension development
+vscode-anthropic-completion/
+
+# Data processing outputs
+data_clean/
+data_minimal/
+data_uploaded/
+data/dist/
+
+# Calibration backup files
+calibration_debug.log
+recovery_main.cpp
+
+# Web development files
+index_react.html
+debug_live_view.html

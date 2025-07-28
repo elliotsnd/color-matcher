@@ -18,35 +18,54 @@ let lastR = 0, lastG = 0, lastB = 0;
 // Battery monitoring variables
 let batteryData = { voltage: 0, percentage: 0, status: 'unknown' };
 
-// Calibration status tracking
+// Enhanced calibration status tracking
 let calibrationStatus = {
     isCalibrated: false,
     blackReference: null,
     whiteReference: null,
     vividWhiteCalibrated: false,
-    // Professional 4-point calibration
-    is4PointCalibrated: false,
+    greyCalibrated: false,
+    // Professional 5-point calibration
+    is5PointCalibrated: false,
     blueReference: null,
     yellowReference: null,
-    interpolationMethod: 'linear'
+    interpolationMethod: 'linear',
+    // FINAL 6 COLORS ONLY - no extended colors needed
+    // Enhanced status
+    totalPoints: 0,
+    progress: 0,
+    calibrationTier: 3,
+    tierDescription: 'Uncalibrated - Basic functionality'
 };
 
-// Professional mode state
-let professionalMode = false;
+// Auto-calibration state
+let autoCalibrationState = {
+    isActive: false,
+    currentStep: 0,
+    totalSteps: 11,
+    currentColor: '',
+    targetRGB: { r: 0, g: 0, b: 0 },
+    canSkip: false,
+    instructions: ''
+};
 
-// Update calibration status display
+// Manual calibration mode state
+let manualCalibrationMode = false;
+
+// Update enhanced calibration status display
 function updateCalibrationStatus() {
-    fetch('/api/calibration-data')
+    // Fetch enhanced calibration status
+    fetch('/api/enhanced-calibration-status')
         .then(response => response.json())
         .then(data => {
-            calibrationStatus = data;
-            
+            calibrationStatus = { ...calibrationStatus, ...data };
+
             // Update main status indicator
             const indicator = document.getElementById('calibrationIndicator');
             const statusText = document.getElementById('calibrationStatusText');
             const mainCalibrationStatus = document.getElementById('calibrationStatus');
-            
-            if (data.isCalibrated) {
+
+            if (data.calibration_complete) {
                 indicator.className = 'fas fa-circle status-good';
                 statusText.textContent = 'Calibration Complete';
                 mainCalibrationStatus.textContent = 'Calibrated ✓';
@@ -55,44 +74,106 @@ function updateCalibrationStatus() {
                 statusText.textContent = 'Calibration Required';
                 mainCalibrationStatus.textContent = 'Not Calibrated';
             }
-            
+
+            // Update tier status
+            updateTierStatus(data.calibration_tier);
+
+            // Update progress
+            updateCalibrationProgress(data.progress || 0);
+
             // Update professional calibration status
-            if (data.calibrationStatus) {
-                calibrationStatus.is4PointCalibrated = data.calibrationStatus.is4PointCalibrated;
-                calibrationStatus.interpolationMethod = data.calibrationStatus.interpolationMethod || 'linear';
+            if (data.ccm_valid) {
+                calibrationStatus.is5PointCalibrated = data.calibration_complete;
+                calibrationStatus.interpolationMethod = 'matrix-based';
             }
 
-            // Update individual step status using explicit flags
-            const blackCalibrated = data.blackReferenceComplete ||
-                (data.calibrationStatus && data.calibrationStatus.blackComplete);
-            const whiteCalibrated = data.whiteReferenceComplete ||
-                (data.calibrationStatus && data.calibrationStatus.whiteComplete);
-            const blueCalibrated = data.calibrationStatus && data.calibrationStatus.blueComplete;
-            const yellowCalibrated = data.calibrationStatus && data.calibrationStatus.yellowComplete;
-
-            updateStepStatus('blackStatus', blackCalibrated);
-            updateStepStatus('whiteStatus', whiteCalibrated);
-            updateStepStatus('blueStatus', blueCalibrated);
-            updateStepStatus('yellowStatus', yellowCalibrated);
-            updateStepStatus('vividWhiteStatus', data.isCalibrated);
-
-            // Update progress indicator based on calibration mode
-            if (professionalMode) {
-                updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, data.isCalibrated);
-            } else {
-                updateStandardProgress(blackCalibrated, whiteCalibrated, data.isCalibrated);
+            // Update individual step status for 6 colors only
+            if (data.core_calibration) {
+                updateStepStatus('blackStatus', data.core_calibration.black_calibrated);
+                updateStepStatus('vividWhiteStatus', data.core_calibration.white_calibrated);
+                updateStepStatus('redStatus', data.core_calibration.red_calibrated);
+                updateStepStatus('greenStatus', data.core_calibration.green_calibrated);
+                updateStepStatus('blueStatus', data.core_calibration.blue_calibrated);
+                updateStepStatus('yellowStatus', data.core_calibration.yellow_calibrated);
             }
 
-            // Update professional status display
-            if (calibrationStatus.is4PointCalibrated) {
-                statusText.textContent += ' (Professional 4-Point)';
-                mainCalibrationStatus.textContent += ' - Tetrahedral Interpolation';
+            // REMOVED: Extended color status updates - using only 6 core colors
+
+            // REMOVED: Professional calibration status updates (not needed for 6-color system)
+
+            // Update tier status display
+            if (data.calibration_tier) {
+                const tierBadge = document.getElementById('tierBadge');
+                const tierDescription = document.getElementById('tierDescription');
+
+                if (tierBadge && tierDescription) {
+                    tierBadge.textContent = data.calibration_tier.current_tier;
+                    tierBadge.className = `tier-badge tier-${data.calibration_tier.tier_level}`;
+                    tierDescription.textContent = data.calibration_tier.description;
+                }
             }
         })
         .catch(error => {
-            console.error('Failed to get calibration status:', error);
-            document.getElementById('calibrationStatusText').textContent = 'Status Check Failed';
+            console.error('Failed to get enhanced calibration status:', error);
+            // Fallback to basic calibration status
+            fetch('/api/calibration-status')
+                .then(response => response.json())
+                .then(data => {
+                    updateBasicCalibrationStatus(data);
+                })
+                .catch(fallbackError => {
+                    console.error('Failed to get basic calibration status:', fallbackError);
+                    document.getElementById('calibrationStatusText').textContent = 'Status Check Failed';
+                });
         });
+}
+
+// Update tier status display
+function updateTierStatus(tierData) {
+    const tierBadge = document.getElementById('tierBadge');
+    const tierDescription = document.getElementById('tierDescription');
+
+    if (tierData && tierBadge && tierDescription) {
+        tierBadge.textContent = tierData.current_tier;
+        tierBadge.className = `tier-badge tier-${tierData.tier_level}`;
+        tierDescription.textContent = tierData.description;
+    }
+}
+
+// Update calibration progress
+function updateCalibrationProgress(progress) {
+    const progressFill = document.getElementById('calibrationProgress');
+    const progressText = document.getElementById('progressText');
+
+    if (progressFill && progressText) {
+        progressFill.style.width = `${progress}%`;
+        progressText.textContent = `${progress}% Complete`;
+    }
+}
+
+// Fallback function for basic calibration status
+function updateBasicCalibrationStatus(data) {
+    const indicator = document.getElementById('calibrationIndicator');
+    const statusText = document.getElementById('calibrationStatusText');
+    const mainCalibrationStatus = document.getElementById('calibrationStatus');
+
+    if (data.is_complete) {
+        indicator.className = 'fas fa-circle status-good';
+        statusText.textContent = 'Calibration Complete';
+        mainCalibrationStatus.textContent = 'Calibrated ✓';
+    } else {
+        indicator.className = 'fas fa-circle status-warning';
+        statusText.textContent = 'Calibration Required';
+        mainCalibrationStatus.textContent = 'Not Calibrated';
+    }
+
+    // Update basic step status for 6 colors only
+    updateStepStatus('blackStatus', data.black_calibrated);
+    updateStepStatus('vividWhiteStatus', data.white_calibrated);
+    updateStepStatus('redStatus', data.red_calibrated);
+    updateStepStatus('greenStatus', data.green_calibrated);
+    updateStepStatus('blueStatus', data.blue_calibrated);
+    updateStepStatus('yellowStatus', data.yellow_calibrated);
 }
 
 function updateStepStatus(elementId, isComplete) {
@@ -103,27 +184,261 @@ function updateStepStatus(elementId, isComplete) {
     }
 }
 
-function updateStandardProgress(blackCalibrated, whiteCalibrated, isCalibrated) {
+// Auto-calibration functions
+function startAutoCalibration() {
+    fetch('/api/start-auto-calibration', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            autoCalibrationState.isActive = true;
+            showAutoCalibrationProgress();
+            updateAutoCalibrationStatus();
+            showNotification('Auto-calibration started!', 'success');
+        } else {
+            showNotification('Failed to start auto-calibration: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error starting auto-calibration:', error);
+        showNotification('Error starting auto-calibration', 'error');
+    });
+}
+
+function updateAutoCalibrationStatus() {
+    if (!autoCalibrationState.isActive) return;
+
+    fetch('/api/auto-calibration-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                autoCalibrationState.currentStep = data.current_step;
+                autoCalibrationState.totalSteps = data.total_steps;
+                autoCalibrationState.currentColor = data.current_color;
+                autoCalibrationState.targetRGB = {
+                    r: data.target_r,
+                    g: data.target_g,
+                    b: data.target_b
+                };
+                autoCalibrationState.canSkip = data.can_skip;
+                autoCalibrationState.instructions = data.instructions;
+
+                updateAutoCalibrationDisplay();
+
+                // Check if completed
+                if (data.auto_calibration_state === 3) { // COMPLETED
+                    autoCalibrationComplete();
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error getting auto-calibration status:', error);
+        });
+}
+
+function updateAutoCalibrationDisplay() {
+    // Update current color name
+    const colorNameElement = document.getElementById('currentColorName');
+    if (colorNameElement) {
+        colorNameElement.textContent = autoCalibrationState.currentColor;
+    }
+
+    // Update color swatch
+    const colorSwatchElement = document.getElementById('currentColorSwatch');
+    if (colorSwatchElement) {
+        const rgb = autoCalibrationState.targetRGB;
+        colorSwatchElement.style.backgroundColor = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    }
+
+    // Update target RGB
+    const targetRGBElement = document.getElementById('targetRGB');
+    if (targetRGBElement) {
+        const rgb = autoCalibrationState.targetRGB;
+        targetRGBElement.textContent = `RGB(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    }
+
+    // Update step counter
+    const stepCounterElement = document.getElementById('stepCounter');
+    if (stepCounterElement) {
+        stepCounterElement.textContent = `Step ${autoCalibrationState.currentStep} of ${autoCalibrationState.totalSteps}`;
+    }
+
+    // Update step progress
+    const stepProgressFill = document.getElementById('stepProgressFill');
+    if (stepProgressFill) {
+        const progress = ((autoCalibrationState.currentStep - 1) / autoCalibrationState.totalSteps) * 100;
+        stepProgressFill.style.width = `${progress}%`;
+    }
+
+    // Update instructions
+    const instructionsElement = document.getElementById('autoCalInstructions');
+    if (instructionsElement) {
+        instructionsElement.textContent = autoCalibrationState.instructions;
+    }
+
+    // Update skip button state
+    const skipButton = document.getElementById('autoCalSkipBtn');
+    if (skipButton) {
+        skipButton.disabled = !autoCalibrationState.canSkip;
+    }
+}
+
+function autoCalibrationNext() {
+    fetch('/api/auto-calibration-next', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            updateAutoCalibrationStatus();
+            showNotification('Advanced to next color', 'success');
+        } else {
+            showNotification('Failed to advance: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error advancing auto-calibration:', error);
+        showNotification('Error advancing auto-calibration', 'error');
+    });
+}
+
+function autoCalibrationRetry() {
+    fetch('/api/auto-calibration-retry', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            updateAutoCalibrationStatus();
+            showNotification('Retrying current color', 'info');
+        } else {
+            showNotification('Failed to retry: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error retrying auto-calibration:', error);
+        showNotification('Error retrying auto-calibration', 'error');
+    });
+}
+
+function autoCalibrationSkip() {
+    fetch('/api/auto-calibration-skip', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            updateAutoCalibrationStatus();
+            showNotification('Skipped current color', 'info');
+        } else {
+            showNotification('Failed to skip: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error skipping auto-calibration:', error);
+        showNotification('Error skipping auto-calibration', 'error');
+    });
+}
+
+function autoCalibrationCancel() {
+    autoCalibrationState.isActive = false;
+    hideAutoCalibrationProgress();
+    showNotification('Auto-calibration cancelled', 'info');
+}
+
+function autoCalibrationComplete() {
+    autoCalibrationState.isActive = false;
+    hideAutoCalibrationProgress();
+    updateCalibrationStatus(); // Refresh overall status
+    showNotification('Auto-calibration completed successfully!', 'success');
+}
+
+function showAutoCalibrationProgress() {
+    const autoCalProgress = document.getElementById('autoCalProgress');
+    const startButton = document.getElementById('startAutoCalibrationBtn');
+
+    if (autoCalProgress) {
+        autoCalProgress.style.display = 'block';
+    }
+    if (startButton) {
+        startButton.style.display = 'none';
+    }
+}
+
+function hideAutoCalibrationProgress() {
+    const autoCalProgress = document.getElementById('autoCalProgress');
+    const startButton = document.getElementById('startAutoCalibrationBtn');
+
+    if (autoCalProgress) {
+        autoCalProgress.style.display = 'none';
+    }
+    if (startButton) {
+        startButton.style.display = 'block';
+    }
+}
+
+// Check if auto-calibration is already active on page load
+function checkAutoCalibrationStatus() {
+    fetch('/api/auto-calibration-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success' && data.auto_calibration_state > 0) {
+                // Auto-calibration is active
+                autoCalibrationState.isActive = true;
+                autoCalibrationState.currentStep = data.current_step;
+                autoCalibrationState.totalSteps = data.total_steps;
+                autoCalibrationState.currentColor = data.current_color;
+                autoCalibrationState.targetRGB = {
+                    r: data.target_r,
+                    g: data.target_g,
+                    b: data.target_b
+                };
+                autoCalibrationState.canSkip = data.can_skip;
+                autoCalibrationState.instructions = data.instructions;
+
+                showAutoCalibrationProgress();
+                updateAutoCalibrationDisplay();
+            }
+        })
+        .catch(error => {
+            console.error('Error checking auto-calibration status:', error);
+        });
+}
+
+function updateStandardProgress(blackCalibrated, whiteCalibrated, isComplete) {
     const statusText = document.getElementById('calibrationStatusText');
     const mainCalibrationStatus = document.getElementById('calibrationStatus');
 
     if (blackCalibrated && !whiteCalibrated) {
         statusText.textContent = 'Black Reference Complete - White Reference Needed';
-        mainCalibrationStatus.textContent = 'Partially Calibrated (1/3)';
-    } else if (blackCalibrated && whiteCalibrated && !isCalibrated) {
-        statusText.textContent = 'References Complete - Vivid White Calibration Needed';
-        mainCalibrationStatus.textContent = 'Partially Calibrated (2/3)';
+        mainCalibrationStatus.textContent = 'Partially Calibrated (1/5)';
+    } else if (blackCalibrated && whiteCalibrated && !isComplete) {
+        statusText.textContent = 'References Complete - Grey Point Needed';
+        mainCalibrationStatus.textContent = 'Partially Calibrated (2/5)';
     }
 }
 
-function updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isCalibrated) {
+function updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isComplete) {
     const statusText = document.getElementById('calibrationStatusText');
     const mainCalibrationStatus = document.getElementById('calibrationStatus');
 
-    const completedSteps = [blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isCalibrated].filter(Boolean).length;
+    const completedSteps = [blackCalibrated, whiteCalibrated, blueCalibrated, yellowCalibrated, isComplete].filter(Boolean).length;
 
     if (completedSteps === 0) {
-        statusText.textContent = 'Professional 4-Point Calibration - Start with Black Reference';
+        statusText.textContent = 'Professional 5-Point Calibration - Start with Black Reference';
         mainCalibrationStatus.textContent = 'Not Calibrated (0/5)';
     } else if (completedSteps === 1 && blackCalibrated) {
         statusText.textContent = 'Black Complete - White Reference Needed';
@@ -135,11 +450,11 @@ function updateProfessionalProgress(blackCalibrated, whiteCalibrated, blueCalibr
         statusText.textContent = 'Blue Complete - Yellow Reference Needed';
         mainCalibrationStatus.textContent = 'Professional Calibration (3/5)';
     } else if (completedSteps === 4 && yellowCalibrated) {
-        statusText.textContent = '4-Point References Complete - Vivid White Calibration Needed';
+        statusText.textContent = '4-Point References Complete - Grey Point Needed';
         mainCalibrationStatus.textContent = 'Professional Calibration (4/5)';
     } else if (completedSteps === 5) {
-        statusText.textContent = 'Professional 4-Point Calibration Complete';
-        mainCalibrationStatus.textContent = 'Professional Calibrated (5/5) - Tetrahedral';
+        statusText.textContent = 'Professional 5-Point Matrix Calibration Complete';
+        mainCalibrationStatus.textContent = 'Professional Calibrated (5/5) - Matrix-Based';
     }
 }
 
@@ -152,7 +467,7 @@ function setupCalibrationHandlers() {
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
         
         try {
-            const response = await fetch('/api/tune-black', { method: 'POST' });
+            const response = await fetch('/api/calibrate-black', { method: 'POST' });
             const data = await response.json();
             
             if (data.status === 'success') {
@@ -165,63 +480,62 @@ function setupCalibrationHandlers() {
             showNotification('Black calibration error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-square" style="color: #000;"></i> Calibrate Black Reference';
+            btn.innerHTML = '<i class="fas fa-square"></i> Calibrate Black';
         }
     });
 
-    // White reference calibration
-    document.getElementById('calibrateWhiteBtn').addEventListener('click', async () => {
-        const btn = document.getElementById('calibrateWhiteBtn');
+    // REMOVED: White calibration handler (replaced with vivid white)
+
+    // Red reference calibration
+    document.getElementById('calibrateRedBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateRedBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
-        
+
         try {
-            const response = await fetch('/api/calibrate-white', { method: 'POST' });
+            const response = await fetch('/api/calibrate-red', { method: 'POST' });
             const data = await response.json();
-            
+
             if (data.status === 'success') {
-                showNotification('White reference calibrated successfully!', 'success');
+                showNotification('Red reference calibrated successfully!', 'success');
                 updateCalibrationStatus();
             } else {
-                showNotification('White calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+                showNotification('Red calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
             }
         } catch (error) {
-            showNotification('White calibration error: ' + error.message, 'error');
+            showNotification('Red calibration error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-square" style="color: #fff; border: 1px solid #ccc;"></i> Calibrate White Reference';
+            btn.innerHTML = '<i class="fas fa-square"></i> Calibrate Red';
         }
     });
 
-    // Vivid white calibration
-    document.getElementById('calibrateVividWhiteBtn').addEventListener('click', async () => {
-        const btn = document.getElementById('calibrateVividWhiteBtn');
+    // Green reference calibration
+    document.getElementById('calibrateGreenBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('calibrateGreenBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
-        
+
         try {
-            const response = await fetch('/api/calibrate-vivid-white', { method: 'POST' });
+            const response = await fetch('/api/calibrate-green', { method: 'POST' });
             const data = await response.json();
-            
+
             if (data.status === 'success') {
-                showNotification('Vivid white calibrated successfully!', 'success');
+                showNotification('Green reference calibrated successfully!', 'success');
                 updateCalibrationStatus();
             } else {
-                showNotification('Vivid white calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
+                showNotification('Green calibration failed: ' + (data.message || data.error || 'Unknown error'), 'error');
             }
         } catch (error) {
-            showNotification('Vivid white calibration error: ' + error.message, 'error');
+            showNotification('Green calibration error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-bullseye"></i> Calibrate Vivid White Target';
+            btn.innerHTML = '<i class="fas fa-square"></i> Calibrate Green';
         }
     });
 
-    // Professional mode toggle
-    document.getElementById('professionalModeToggle').addEventListener('change', function() {
-        professionalMode = this.checked;
-        toggleProfessionalMode(professionalMode);
-    });
+    // Manual mode toggle (removed - handled in auto-calibration section)
+    // The manual mode toggle is now handled in the auto-calibration event listeners section
 
     // Blue reference calibration (Professional mode)
     document.getElementById('calibrateBlueBtn').addEventListener('click', async () => {
@@ -243,7 +557,7 @@ function setupCalibrationHandlers() {
             showNotification('Blue calibration error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-square" style="color: #0066ff;"></i> Calibrate Blue Reference';
+            btn.innerHTML = '<i class="fas fa-square"></i> Calibrate Blue';
         }
     });
 
@@ -267,7 +581,7 @@ function setupCalibrationHandlers() {
             showNotification('Yellow calibration error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-square" style="color: #ffcc00;"></i> Calibrate Yellow Reference';
+            btn.innerHTML = '<i class="fas fa-square"></i> Calibrate Yellow';
         }
     });
 
@@ -302,6 +616,104 @@ function setupCalibrationHandlers() {
             btn.innerHTML = '<i class="fas fa-flask"></i> Run CIEDE2000 Validation';
         }
     });
+
+    // Auto-calibration event listeners
+    const startAutoCalBtn = document.getElementById('startAutoCalibrationBtn');
+    if (startAutoCalBtn) {
+        startAutoCalBtn.addEventListener('click', startAutoCalibration);
+    }
+
+    const autoCalNextBtn = document.getElementById('autoCalNextBtn');
+    if (autoCalNextBtn) {
+        autoCalNextBtn.addEventListener('click', autoCalibrationNext);
+    }
+
+    const autoCalRetryBtn = document.getElementById('autoCalRetryBtn');
+    if (autoCalRetryBtn) {
+        autoCalRetryBtn.addEventListener('click', autoCalibrationRetry);
+    }
+
+    const autoCalSkipBtn = document.getElementById('autoCalSkipBtn');
+    if (autoCalSkipBtn) {
+        autoCalSkipBtn.addEventListener('click', autoCalibrationSkip);
+    }
+
+    const autoCalCancelBtn = document.getElementById('autoCalCancelBtn');
+    if (autoCalCancelBtn) {
+        autoCalCancelBtn.addEventListener('click', autoCalibrationCancel);
+    }
+
+    // Manual calibration mode toggle
+    const manualModeToggle = document.getElementById('manualModeToggle');
+    if (manualModeToggle) {
+        manualModeToggle.addEventListener('change', (e) => {
+            manualCalibrationMode = e.target.checked;
+            toggleManualCalibrationMode(manualCalibrationMode);
+        });
+    }
+
+    // REMOVED: Professional two-stage calibration handlers (not needed for 6-color system)
+
+    // Vivid white calibration handler (replaces white)
+    setupVividWhiteHandler();
+
+    // Extended color calibration handlers (now empty)
+    setupExtendedColorHandlers();
+}
+
+// REMOVED: Professional two-stage calibration handlers (not needed for 6-color system)
+
+// Setup vivid white calibration handler (replaces white)
+function setupVividWhiteHandler() {
+    const vividWhiteBtn = document.getElementById('calibrateVividWhiteBtn');
+    if (vividWhiteBtn) {
+        vividWhiteBtn.addEventListener('click', () => {
+            calibrateColor('/api/calibrate-vivid-white', 'Vivid White');
+        });
+    }
+}
+
+// REMOVED: Extended color handlers - using only 6 core colors
+function setupExtendedColorHandlers() {
+    // No extended colors needed - all 6 colors are core colors
+    const extendedColors = [];
+    // REMOVED: All extended color handlers
+
+    extendedColors.forEach(color => {
+        const btn = document.getElementById(color.id);
+        if (btn) {
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Calibrating...';
+
+                try {
+                    const response = await fetch(color.endpoint, { method: 'POST' });
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        showNotification(`${color.name} calibrated successfully!`, 'success');
+                        updateCalibrationStatus();
+                    } else {
+                        showNotification(`${color.name} calibration failed: ${data.message || 'Unknown error'}`, 'error');
+                    }
+                } catch (error) {
+                    showNotification(`${color.name} calibration error: ${error.message}`, 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i class="fas fa-square"></i> Calibrate ${color.name}`;
+                }
+            });
+        }
+    });
+}
+
+// Toggle manual calibration mode
+function toggleManualCalibrationMode(enabled) {
+    const manualSteps = document.getElementById('manualCalibrationSteps');
+
+    if (manualSteps) {
+        manualSteps.style.display = enabled ? 'block' : 'none';
+    }
 }
 
 // Professional mode toggle functionality
@@ -311,6 +723,7 @@ function toggleProfessionalMode(enabled) {
     const blueStep = document.getElementById('blueCalibrationStep');
     const yellowStep = document.getElementById('yellowCalibrationStep');
     const vividWhiteStepNumber = document.getElementById('vividWhiteStepNumber');
+    const greyStepNumber = document.getElementById('greyStepNumber');
     const validationPanel = document.getElementById('validationPanel');
 
     if (enabled) {
@@ -320,6 +733,7 @@ function toggleProfessionalMode(enabled) {
         blueStep.style.display = 'block';
         yellowStep.style.display = 'block';
         vividWhiteStepNumber.textContent = '5';
+        if (greyStepNumber) greyStepNumber.textContent = '5';
         validationPanel.style.display = 'block';
 
         showNotification('Professional 4-Point Calibration enabled! This provides industry-grade color accuracy with tetrahedral interpolation.', 'success');
@@ -330,6 +744,7 @@ function toggleProfessionalMode(enabled) {
         blueStep.style.display = 'none';
         yellowStep.style.display = 'none';
         vividWhiteStepNumber.textContent = '3';
+        if (greyStepNumber) greyStepNumber.textContent = '3';
         validationPanel.style.display = 'none';
     }
 
@@ -725,7 +1140,7 @@ function setupUtilityHandlers() {
     // Get calibration data button
     document.getElementById('getCalibrationDataBtn').addEventListener('click', async () => {
         try {
-            const response = await fetch('/api/calibration-data');
+            const response = await fetch('/api/calibration-status');
             const data = await response.json();
 
             const info = `Calibration Status: ${data.isCalibrated ? 'Complete' : 'Incomplete'}\n` +
@@ -1117,6 +1532,16 @@ function init() {
 
     // Update calibration status
     updateCalibrationStatus();
+
+    // Check if auto-calibration is already active
+    checkAutoCalibrationStatus();
+
+    // Set up auto-calibration status polling (every 2 seconds when active)
+    setInterval(() => {
+        if (autoCalibrationState.isActive) {
+            updateAutoCalibrationStatus();
+        }
+    }, 2000);
 
     console.log('TCS3430 Calibration System initialized successfully!');
 }

@@ -2,14 +2,24 @@
 #define COLORSCIENCE_COMPAT_H
 
 #include "ColorScience.h"
+#include "../ColorCalibration/CalibrationStructures.h"
 
 // Forward declarations for CIEDE2000 validation
 class ColorScience;
 extern float calculateColorDistance(uint8_t red1, uint8_t green1, uint8_t blue1,
                                    uint8_t red2, uint8_t green2, uint8_t blue2);
-    
+
 /**
+ * @deprecated This structure is deprecated in favor of the unified calibration system
+ * in CalibrationStructures.h. Use ColorCalibrationManager instead.
+ *
  * Enhanced CalibrationData with Professional 4-Point Calibration Support
+ *
+ * ARCHITECTURAL DEBT WARNING: This structure creates a competing data structure
+ * with CalibrationStructures.h, leading to two sources of truth for calibration state.
+ *
+ * MIGRATION PATH: Use the unified ColorCalibrationManager and CalibrationStatus
+ * from CalibrationStructures.h instead of this deprecated structure.
  *
  * This structure extends the base CalibrationData with:
  * - 4-point calibration support (Black, White, Blue, Yellow)
@@ -32,22 +42,28 @@ struct EnhancedCalibrationData : public ColorScience::CalibrationData {
         // Professional Status Tracking
         // ========================================
         
+        /**
+         * @deprecated Use CalibrationStatus from CalibrationStructures.h instead
+         *
+         * This Status struct creates architectural debt by duplicating functionality
+         * from the unified CalibrationStatus. New code should use the unified system.
+         */
         struct Status {
             bool blackComplete = false;      ///< Black reference calibration complete
             bool whiteComplete = false;      ///< White reference calibration complete
             bool blueComplete = false;       ///< Blue reference calibration complete
             bool yellowComplete = false;     ///< Yellow reference calibration complete
-            
+
             /** Check if 2-point calibration is complete */
             bool is2PointCalibrated() const {
                 return blackComplete && whiteComplete;
             }
-            
+
             /** Check if full 4-point calibration is complete */
             bool is4PointCalibrated() const {
                 return blackComplete && whiteComplete && blueComplete && yellowComplete;
             }
-            
+
             /** Get calibration completeness percentage */
             float getCompletionPercentage() const {
                 int completed = 0;
@@ -57,13 +73,38 @@ struct EnhancedCalibrationData : public ColorScience::CalibrationData {
                 if (yellowComplete) completed++;
                 return (completed / 4.0f) * 100.0f;
             }
-            
+
             /** Reset all calibration status */
             void reset() {
                 blackComplete = false;
                 whiteComplete = false;
                 blueComplete = false;
                 yellowComplete = false;
+            }
+
+            /**
+             * @brief Convert to unified CalibrationStatus
+             * @return CalibrationStatus equivalent of this deprecated status
+             */
+            CalibrationStatus toUnifiedStatus() const {
+                CalibrationStatus unified;
+                unified.blackCalibrated = blackComplete;
+                unified.whiteCalibrated = whiteComplete;
+                unified.blueCalibrated = blueComplete;
+                unified.yellowCalibrated = yellowComplete;
+                // Other colors default to false in unified system
+                return unified;
+            }
+
+            /**
+             * @brief Update from unified CalibrationStatus
+             * @param unified The unified status to copy from
+             */
+            void fromUnifiedStatus(const CalibrationStatus& unified) {
+                blackComplete = unified.blackCalibrated;
+                whiteComplete = unified.whiteCalibrated;
+                blueComplete = unified.blueCalibrated;
+                yellowComplete = unified.yellowCalibrated;
             }
         } status;
         
@@ -319,7 +360,10 @@ struct EnhancedCalibrationData : public ColorScience::CalibrationData {
         return calibData;
     }
     
-    /** Convert legacy CalibrationData to EnhancedCalibrationData */
+    /**
+     * @deprecated Convert legacy CalibrationData to EnhancedCalibrationData
+     * Use ColorCalibrationManager instead for new code.
+     */
     inline EnhancedCalibrationData upgradeCalibrationData(const ColorScience::CalibrationData& legacy) {
         EnhancedCalibrationData enhanced;
 
@@ -334,6 +378,53 @@ struct EnhancedCalibrationData : public ColorScience::CalibrationData {
         // This would need to be customized based on how legacy data indicates completion
 
         return enhanced;
+    }
+
+    // =============================================================================
+    // MIGRATION GUIDE: RESOLVING COMPETING DATA STRUCTURES
+    // =============================================================================
+
+    /**
+     * @brief Migration helper to convert from deprecated EnhancedCalibrationData to unified system
+     *
+     * ARCHITECTURAL DEBT RESOLUTION:
+     * This file (ColorScienceCompat.h) creates competing data structures with CalibrationStructures.h,
+     * leading to two sources of truth for calibration state. This is being resolved by:
+     *
+     * 1. DEPRECATING this entire file in favor of the unified system
+     * 2. MIGRATING all code to use ColorCalibrationManager from CalibrationStructures.h
+     * 3. PROVIDING migration helpers for backward compatibility during transition
+     *
+     * MIGRATION STEPS:
+     * 1. Replace EnhancedCalibrationData with ColorCalibrationManager
+     * 2. Replace EnhancedCalibrationData::Status with CalibrationStatus
+     * 3. Use the unified apply() method with CompensationLevel instead of multiple methods
+     * 4. Remove dependencies on this file once migration is complete
+     *
+     * BENEFITS OF UNIFIED SYSTEM:
+     * - Single source of truth for calibration state
+     * - Consistent API across all calibration operations
+     * - Better error handling and fallback logic
+     * - Extensible design for adding new colors
+     * - Elimination of architectural debt
+     */
+
+    /**
+     * @deprecated Use ColorCalibrationManager instead
+     *
+     * This function helps migrate from the deprecated EnhancedCalibrationData
+     * to the unified ColorCalibrationManager system.
+     */
+    inline void migrateToUnifiedSystem(const EnhancedCalibrationData& deprecated) {
+        // This would contain migration logic to transfer data to ColorCalibrationManager
+        // Implementation depends on specific migration requirements
+
+        // Example migration pattern:
+        // ColorCalibrationManager& manager = ColorCalibration::getManager();
+        // if (deprecated.status.blackComplete) {
+        //     manager.addOrUpdateCalibrationPoint("black", ...);
+        // }
+        // ... etc for other colors
     }
 
 #endif // COLORSCIENCE_COMPAT_H

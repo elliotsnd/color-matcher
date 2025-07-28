@@ -83,10 +83,16 @@
  * 🏃 For faster sampling, try 0x11 (50ms)
  * 🎯 For maximum precision, try 0x80 (359ms)
  */
-#define SENSOR_INTEGRATION_TIME 0x40  // ⚙️ TCS3430 integration time - 181ms for higher precision
-#define SENSOR_SATURATION_THRESHOLD 65000  // 🚨 Saturation detection limit (default: 65000)
+#define SENSOR_INTEGRATION_TIME 0x20  // ⚙️ TCS3430 integration time - 90ms reduced for white calibration
+#define SENSOR_SATURATION_THRESHOLD 60000  // 🚨 Saturation detection limit - lowered for better detection
+
+// Intelligent Auto-Adjustment Constants
+#define SATURATION_THRESHOLD 65000        // 🚨 Raw sensor value considered saturated
+#define OPTIMAL_TARGET_VALUE 35000        // 🎯 Ideal target for brightest channel (lowered from 40000)
+#define OPTIMAL_WINDOW_HIGH (OPTIMAL_TARGET_VALUE + 15000)  // 50000 - Upper bound (wider range)
+#define OPTIMAL_WINDOW_LOW  (OPTIMAL_TARGET_VALUE - 20000)  // 15000 - Lower bound (more tolerant)
 #define LED_PIN 5                          // 💡 LED pin number (default: 5)
-#define LED_BRIGHTNESS 220  // 🔆 LED brightness 0-255 - increased for low-light conditions
+#define LED_BRIGHTNESS 100  // 🔆 LED brightness 0-255 - Reduced for white calibration
 
 // Color Calibration Fine-Tuning
 #define IR_COMPENSATION_FACTOR_1 \
@@ -155,8 +161,8 @@
 // =============================================================================
 
 // TCS3430 Sensor Configuration
-#define TCS3430_INTEGRATION_TIME_MS 100  // 📡 Sensor integration time (default: 100)
-#define TCS3430_GAIN_SETTING 16          // 📡 Sensor gain 1,4,16,64 (default: 16)
+#define TCS3430_INTEGRATION_TIME_MS 50   // 📡 Sensor integration time - reduced for white calibration
+#define TCS3430_GAIN_SETTING 4           // 📡 Sensor gain 1,4,16,64 - reduced for white calibration
 #define TCS3430_AUTO_GAIN_ADJUST true    // 📡 Enable automatic gain adjustment (default: true)
 
 // System Performance

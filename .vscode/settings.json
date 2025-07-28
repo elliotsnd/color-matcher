@@ -1,5 +1,5 @@
 {
-  "platformio-ide.useBuiltinPIOCore": false,
+  "platformio-ide.useBuiltinPIOCore": true,
   "platformio-ide.activateOnlyOnPlatformIOProject": true,
   
   "pvs-studio.analyzer.pathToPVSStudio": "",
@@ -121,5 +121,11 @@
   "sonarlint.connectedMode.project": {
     "connectionId": "elliotsnd",
     "projectKey": "elliotsnd_color-matcher"
-  }
+  },
+  
+  // xAI Grok Extension Settings
+  "xai-grok.useEnvironmentVariables": true,
+  "xai-grok.model": "grok-4-latest",
+  "xai-grok.maxTokens": 200,
+  "xai-grok.temperature": 0.1
 }

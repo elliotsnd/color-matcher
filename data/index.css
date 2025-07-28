@@ -556,10 +556,13 @@ input[type="number"]:focus {
 
 .calibration-status {
     margin-bottom: 1.5rem;
-    padding: 1rem;
+    padding: 1.5rem;
     background: rgba(59, 130, 246, 0.1);
     border-radius: var(--border-radius);
     border-left: 4px solid var(--primary-color);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
 .status-indicator {
@@ -573,6 +576,237 @@ input[type="number"]:focus {
 .status-warning { color: #f59e0b; }
 .status-error { color: #ef4444; }
 
+/* Enhanced Tier Status */
+.tier-status {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.tier-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    background: var(--primary-color);
+    color: white;
+}
+
+.tier-badge.tier-1 {
+    background: #10b981; /* Matrix - Green */
+}
+
+.tier-badge.tier-2 {
+    background: #f59e0b; /* 2-Point - Yellow */
+}
+
+.tier-badge.tier-3 {
+    background: #6b7280; /* Uncalibrated - Grey */
+}
+
+.tier-description {
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+
+/* Progress Container */
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.progress-text {
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+    min-width: 80px;
+}
+
+/* Auto-Calibration Section */
+.auto-calibration-section {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: rgba(3, 218, 198, 0.1);
+    border-radius: var(--border-radius);
+    border: 2px solid var(--secondary-color);
+}
+
+.auto-cal-description {
+    color: var(--text-color-secondary);
+    margin-bottom: 1rem;
+    font-style: italic;
+}
+
+.btn-auto-calibration {
+    background: linear-gradient(135deg, var(--secondary-color), #00bcd4);
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    border-radius: var(--border-radius);
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    justify-content: center;
+}
+
+.btn-auto-calibration:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(3, 218, 198, 0.3);
+}
+
+/* Auto-Calibration Progress */
+.auto-cal-progress {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--border-radius);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.current-color-display {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    gap: 2rem;
+}
+
+.color-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.color-info h4 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--text-color);
+}
+
+.color-swatch {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.target-rgb {
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    color: var(--text-color-secondary);
+}
+
+.step-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.step-counter {
+    font-weight: 600;
+    color: var(--secondary-color);
+}
+
+.step-progress {
+    width: 200px;
+}
+
+.step-progress-bar {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.step-progress-fill {
+    height: 100%;
+    background: var(--secondary-color);
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.auto-cal-instructions {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 8px;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.auto-cal-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn-auto-next, .btn-auto-retry, .btn-auto-skip, .btn-auto-cancel {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-auto-next {
+    background: #10b981;
+    color: white;
+}
+
+.btn-auto-retry {
+    background: #f59e0b;
+    color: white;
+}
+
+.btn-auto-skip {
+    background: #6b7280;
+    color: white;
+}
+
+.btn-auto-skip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-auto-cancel {
+    background: #ef4444;
+    color: white;
+}
+
+.btn-auto-next:hover, .btn-auto-retry:hover, .btn-auto-skip:hover:not(:disabled), .btn-auto-cancel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
 .calibration-steps {
     display: flex;
     flex-direction: column;
@@ -583,6 +817,120 @@ input[type="number"]:focus {
     color: var(--text-color-secondary);
     font-style: italic;
     margin-bottom: 1rem;
+}
+
+/* Color Groups */
+.color-group {
+    margin-bottom: 2rem;
+}
+
+.color-group h4 {
+    color: var(--secondary-color);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--secondary-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Enhanced Calibration Step */
+.calibration-step .step-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.calibration-step .step-header h5 {
+    margin: 0;
+    flex: 1;
+}
+
+/* FINAL 6 COLOR SWATCHES ONLY */
+.black-swatch { background-color: rgb(5, 5, 5); }
+.vivid-white-swatch { background-color: rgb(247, 248, 244); }
+.red-reference-swatch { background-color: rgb(200, 30, 30); }
+.green-reference-swatch { background-color: rgb(30, 200, 30); }
+.blue-reference-swatch { background-color: rgb(30, 30, 200); }
+.yellow-reference-swatch { background-color: rgb(230, 220, 50); }
+
+/* REMOVED COLOR SWATCHES (colors no longer supported):
+.dark-offset-swatch, .black-ref-swatch - professional calibration removed
+.white-swatch - replaced with vivid-white-swatch
+.grey-swatch, .blue-swatch, .yellow-swatch - old inconsistent definitions
+.grey-port-swatch, .hog-bristle-swatch - extended colors removed
+.highgate-swatch, .domino-swatch, .tranquil-retreat-swatch, .grey-cabin-swatch - previously removed
+*/
+
+/* Professional Calibration Group */
+.professional-group {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(5, 150, 105, 0.1));
+    border: 2px solid #10b981;
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.professional-group h4 {
+    color: #10b981;
+    border-bottom-color: #10b981;
+}
+
+.group-description {
+    color: var(--text-color-secondary);
+    font-style: italic;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+.gamma-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 0.75rem;
+    border-radius: 6px;
+    border-left: 3px solid #10b981;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-color);
+}
+
+.gamma-info i {
+    color: #10b981;
+    font-size: 1rem;
+}
+
+/* Professional Calibration Steps */
+.professional-step {
+    background: rgba(16, 185, 129, 0.05);
+    border-left: 4px solid #10b981;
+}
+
+/* Professional Calibration Buttons */
+.btn-calibration.professional {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border: 2px solid #10b981;
+    color: white;
+}
+
+.btn-calibration.professional:hover {
+    background: linear-gradient(135deg, #059669, #047857);
+    border-color: #059669;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+}
+
+/* Extended Calibration Buttons */
+.btn-calibration.extended {
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    border: 2px solid #8b5cf6;
+}
+
+.btn-calibration.extended:hover {
+    background: linear-gradient(135deg, #7c3aed, #9333ea);
+    border-color: #7c3aed;
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
 }
 
 .calibration-step {
@@ -939,31 +1287,7 @@ input:checked + .slider:before {
     font-size: 0.85rem;
 }
 
-.professional-step {
-    border-left: 4px solid #8b5cf6;
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(168, 85, 247, 0.05));
-}
-
-.professional-badge {
-    background: linear-gradient(135deg, #8b5cf6, #a855f7);
-    color: white;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: bold;
-    margin-left: auto;
-}
-
-.btn-calibration.professional {
-    background: linear-gradient(135deg, #8b5cf6, #a855f7);
-    border: 2px solid #7c3aed;
-}
-
-.btn-calibration.professional:hover {
-    background: linear-gradient(135deg, #7c3aed, #8b5cf6);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
-}
+/* Removed duplicate professional styles - now defined in the professional calibration group section */
 
 /* Professional Validation Panel */
 .validation-panel {

@@ -46,94 +46,181 @@
             </div>
         </div>
 
-        <!-- TCS3430 Calibration System -->
+        <!-- Enhanced Multi-Tier Calibration System -->
         <div class="card calibration-panel">
-            <h2><i class="fas fa-tools"></i> TCS3430 Calibration System</h2>
+            <h2><i class="fas fa-tools"></i> Enhanced Multi-Tier Calibration System</h2>
+
+            <!-- Enhanced Calibration Status -->
             <div class="calibration-status" id="calibrationStatusPanel">
                 <div class="status-indicator">
                     <i class="fas fa-circle" id="calibrationIndicator"></i>
                     <span id="calibrationStatusText">Checking calibration status...</span>
                 </div>
+                <div class="tier-status" id="tierStatus">
+                    <span class="tier-badge" id="tierBadge">Tier 3</span>
+                    <span class="tier-description" id="tierDescription">Uncalibrated - Basic functionality</span>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="calibrationProgress" style="width: 0%"></div>
+                    </div>
+                    <span class="progress-text" id="progressText">0% Complete</span>
+                </div>
             </div>
 
-            <!-- Professional Calibration Mode Toggle -->
+            <!-- Auto-Calibration Section -->
+            <div class="auto-calibration-section">
+                <h3><i class="fas fa-magic"></i> Auto Multi-Color Calibration</h3>
+                <p class="auto-cal-description">Automated 11-color calibration cycle for maximum accuracy</p>
+
+                <div class="auto-cal-controls" id="autoCalControls">
+                    <button type="button" class="btn-auto-calibration" id="startAutoCalibrationBtn">
+                        <i class="fas fa-play"></i> Start Auto Multi-Color Calibration
+                    </button>
+                </div>
+
+                <!-- Auto-Calibration Progress (Hidden by default) -->
+                <div class="auto-cal-progress" id="autoCalProgress" style="display: none;">
+                    <div class="current-color-display">
+                        <div class="color-info">
+                            <h4 id="currentColorName">Black</h4>
+                            <div class="color-swatch" id="currentColorSwatch"></div>
+                            <div class="target-rgb" id="targetRGB">RGB(0, 0, 0)</div>
+                        </div>
+                        <div class="step-info">
+                            <span class="step-counter" id="stepCounter">Step 1 of 11</span>
+                            <div class="step-progress">
+                                <div class="step-progress-bar">
+                                    <div class="step-progress-fill" id="stepProgressFill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="auto-cal-instructions" id="autoCalInstructions">
+                        Place Black sample over sensor and click Next
+                    </div>
+
+                    <div class="auto-cal-buttons">
+                        <button type="button" class="btn-auto-next" id="autoCalNextBtn">
+                            <i class="fas fa-arrow-right"></i> Next
+                        </button>
+                        <button type="button" class="btn-auto-retry" id="autoCalRetryBtn">
+                            <i class="fas fa-redo"></i> Retry
+                        </button>
+                        <button type="button" class="btn-auto-skip" id="autoCalSkipBtn" disabled>
+                            <i class="fas fa-forward"></i> Skip
+                        </button>
+                        <button type="button" class="btn-auto-cancel" id="autoCalCancelBtn">
+                            <i class="fas fa-times"></i> Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual Calibration Mode Toggle -->
             <div class="calibration-mode-toggle">
-                <label class="toggle-switch" for="professionalModeToggle">
-                    <input type="checkbox" id="professionalModeToggle">
+                <label class="toggle-switch" for="manualModeToggle">
+                    <input type="checkbox" id="manualModeToggle">
                     <span class="slider"></span>
                 </label>
-                <label class="toggle-label" for="professionalModeToggle">
-                    <i class="fas fa-graduation-cap"></i> Professional 4-Point Calibration
-                    <small>(Industry-grade accuracy with tetrahedral interpolation)</small>
+                <label class="toggle-label" for="manualModeToggle">
+                    <i class="fas fa-hand-paper"></i> Manual Individual Color Calibration
+                    <small>(Calibrate specific colors individually)</small>
                 </label>
             </div>
 
-            <div class="calibration-steps">
-                <h3 id="calibrationProcessTitle"><i class="fas fa-list-ol"></i> 3-Step Calibration Process</h3>
-                <p class="calibration-help" id="calibrationHelp">Follow these steps in a dark room for best results:</p>
+            <!-- Manual Calibration Steps (Hidden by default) -->
+            <div class="calibration-steps" id="manualCalibrationSteps" style="display: none;">
+                <h3 id="calibrationProcessTitle"><i class="fas fa-list-ol"></i> Manual Color Calibration</h3>
+                <p class="calibration-help" id="calibrationHelp">Calibrate individual colors manually:</p>
 
-                <div class="calibration-step">
-                    <div class="step-header">
-                        <span class="step-number">1</span>
-                        <h4>Black Reference Calibration</h4>
+                <!-- REMOVED: Professional Two-Stage Calibration (not needed for 6-color system) -->
+
+                <!-- Final 6 Colors Only -->
+                <div class="color-group">
+                    <h4><i class="fas fa-star"></i> 6-Color Matrix Calibration</h4>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">1</span>
+                            <h5>Black Reference</h5>
+                            <div class="color-swatch black-swatch"></div>
+                        </div>
+                        <p>RGB(5, 5, 5) - Place black sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateBlackBtn">
+                            <i class="fas fa-square"></i> Calibrate Black
+                        </button>
+                        <div class="step-status" id="blackStatus">Not calibrated</div>
                     </div>
-                    <p>Place a BLACK object (black paper/cloth) over the sensor</p>
-                    <button type="button" class="btn-calibration" id="calibrateBlackBtn">
-                        <i class="fas fa-square" style="color: #000;"></i> Calibrate Black Reference
-                    </button>
-                    <div class="step-status" id="blackStatus">Not calibrated</div>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">2</span>
+                            <h5>Vivid White</h5>
+                            <div class="color-swatch vivid-white-swatch"></div>
+                        </div>
+                        <p>RGB(247, 248, 244) - Place Vivid White sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateVividWhiteBtn">
+                            <i class="fas fa-square"></i> Calibrate Vivid White
+                        </button>
+                        <div class="step-status" id="vividWhiteStatus">Not calibrated</div>
+                    </div>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">3</span>
+                            <h5>Red Reference</h5>
+                            <div class="color-swatch red-reference-swatch"></div>
+                        </div>
+                        <p>RGB(200, 30, 30) - Place red sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateRedBtn">
+                            <i class="fas fa-square"></i> Calibrate Red
+                        </button>
+                        <div class="step-status" id="redStatus">Not calibrated</div>
+                    </div>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">4</span>
+                            <h5>Green Reference</h5>
+                            <div class="color-swatch green-reference-swatch"></div>
+                        </div>
+                        <p>RGB(30, 200, 30) - Place green sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateGreenBtn">
+                            <i class="fas fa-square"></i> Calibrate Green
+                        </button>
+                        <div class="step-status" id="greenStatus">Not calibrated</div>
+                    </div>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">5</span>
+                            <h5>Blue Reference</h5>
+                            <div class="color-swatch blue-reference-swatch"></div>
+                        </div>
+                        <p>RGB(30, 30, 200) - Place blue sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateBlueBtn">
+                            <i class="fas fa-square"></i> Calibrate Blue
+                        </button>
+                        <div class="step-status" id="blueStatus">Not calibrated</div>
+                    </div>
+
+                    <div class="calibration-step">
+                        <div class="step-header">
+                            <span class="step-number">6</span>
+                            <h5>Yellow Reference</h5>
+                            <div class="color-swatch yellow-reference-swatch"></div>
+                        </div>
+                        <p>RGB(230, 220, 50) - Place yellow sample over sensor</p>
+                        <button type="button" class="btn-calibration core" id="calibrateYellowBtn">
+                            <i class="fas fa-square"></i> Calibrate Yellow
+                        </button>
+                        <div class="step-status" id="yellowStatus">Not calibrated</div>
+                    </div>
                 </div>
 
-                <div class="calibration-step">
-                    <div class="step-header">
-                        <span class="step-number">2</span>
-                        <h4>White Reference Calibration</h4>
-                    </div>
-                    <p>Place a WHITE object (white paper) over the sensor</p>
-                    <button type="button" class="btn-calibration" id="calibrateWhiteBtn">
-                        <i class="fas fa-square" style="color: #fff; border: 1px solid #ccc;"></i> Calibrate White Reference
-                    </button>
-                    <div class="step-status" id="whiteStatus">Not calibrated</div>
-                </div>
-
-                <!-- Professional 4-Point Calibration Steps (Hidden by default) -->
-                <div class="calibration-step professional-step" id="blueCalibrationStep" style="display: none;">
-                    <div class="step-header">
-                        <span class="step-number">3</span>
-                        <h4>Blue Reference Calibration</h4>
-                        <span class="professional-badge">PRO</span>
-                    </div>
-                    <p>Place a BLUE object (blue paper/cloth) over the sensor</p>
-                    <button type="button" class="btn-calibration professional" id="calibrateBlueBtn">
-                        <i class="fas fa-square" style="color: #0066ff;"></i> Calibrate Blue Reference
-                    </button>
-                    <div class="step-status" id="blueStatus">Not calibrated</div>
-                </div>
-
-                <div class="calibration-step professional-step" id="yellowCalibrationStep" style="display: none;">
-                    <div class="step-header">
-                        <span class="step-number">4</span>
-                        <h4>Yellow Reference Calibration</h4>
-                        <span class="professional-badge">PRO</span>
-                    </div>
-                    <p>Place a YELLOW object (yellow paper/cloth) over the sensor</p>
-                    <button type="button" class="btn-calibration professional" id="calibrateYellowBtn">
-                        <i class="fas fa-square" style="color: #ffcc00;"></i> Calibrate Yellow Reference
-                    </button>
-                    <div class="step-status" id="yellowStatus">Not calibrated</div>
-                </div>
-
-                <div class="calibration-step">
-                    <div class="step-header">
-                        <span class="step-number" id="vividWhiteStepNumber">3</span>
-                        <h4>Vivid White Target Calibration</h4>
-                    </div>
-                    <p>Place your VIVID WHITE sample over the sensor for RGB(247,248,244)</p>
-                    <button type="button" class="btn-calibration" id="calibrateVividWhiteBtn">
-                        <i class="fas fa-bullseye"></i> Calibrate Vivid White Target
-                    </button>
-                    <div class="step-status" id="vividWhiteStatus">Not calibrated</div>
-                </div>
+                <!-- REMOVED: Extended Colors section - using only 6 core colors -->
             </div>
         </div>
 

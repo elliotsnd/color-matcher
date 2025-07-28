@@ -103,6 +103,26 @@ bool PersistentStorage::validateCalibrationData(const StoredCalibrationData& cal
         return false;
     }
     
+    // FIXED: Validate blue reference if present (blue/yellow calibration now works!)
+    if (calibData.blueComplete && calibData.blueReference.isValid) {
+        if (calibData.blueReference.timestamp == 0) {
+            return false;
+        }
+        if (calibData.blueReference.quality < 0.0f || calibData.blueReference.quality > 1.0f) {
+            return false;
+        }
+    }
+    
+    // FIXED: Validate yellow reference if present (blue/yellow calibration now works!)
+    if (calibData.yellowComplete && calibData.yellowReference.isValid) {
+        if (calibData.yellowReference.timestamp == 0) {
+            return false;
+        }
+        if (calibData.yellowReference.quality < 0.0f || calibData.yellowReference.quality > 1.0f) {
+            return false;
+        }
+    }
+    
     return true;
 }
 

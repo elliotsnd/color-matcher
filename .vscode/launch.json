@@ -9,6 +9,17 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Launch xAI Grok Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/vscode-anthropic-completion"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/vscode-anthropic-completion/out/**/*.js"
+            ]
+        },
+        {
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug",
