@@ -13,7 +13,7 @@
  * @url  https://github.com/DFRobot/DFRobot_TCS3430
  */
 
-// 🎛️ EASY SETTINGS - All adjustable parameters are in sensor_settings.h
+// ??? EASY SETTINGS - All adjustable parameters are in sensor_settings.h
 
 #include <ESPAsyncWebServer.h>
 #include <esp_heap_caps.h>
@@ -313,9 +313,10 @@ void updateFastApiData(const SensorData &data, const ColorRGB &color);
 void handleColorNameLookup(const ColorRGB &color);
 void logPeriodicStatus(const SensorData &data, const ColorRGB &color, TimingState &timers);
 void monitorPerformance(PerformanceState &state, TimingState &timers);
-void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zValue,
-                                uint16_t infraredOne, uint16_t infraredTwo, uint8_t &redOut,
-                                uint8_t &greenOut, uint8_t &blueOut);
+// UNIFIED COLOR CONVERSION - Single authoritative function for all color conversion
+void convertXyZtoRgbUnified(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                           uint16_t infraredOne, uint16_t infraredTwo, uint8_t &redOut,
+                           uint8_t &greenOut, uint8_t &blueOut);
 
 // Custom PSRAM allocator for ArduinoJson v7 (must use void* due to interface requirements)
 class PsramAllocator : public ArduinoJson::Allocator {
@@ -668,14 +669,14 @@ SensorData readUnifiedAutoExposure() {
         float targetRatio = static_cast<float>(OPTIMAL_TARGET) / static_cast<float>(maxChannel);
         float newIntegration = max(25.0f, currentIntegration * targetRatio * 0.8f);
         colorSensor.setIntegrationTime(newIntegration);
-        Logger::debug("[UNIFIED_AUTO] Reduced integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
+        Logger::debug("[UNIFIED_AUTO] Reduced integration: " + String(currentIntegration, 1) + "ms ? " + String(newIntegration, 1) + "ms");
       } else {
         // Reduce LED brightness as last resort
         uint8_t currentBrightness = settings.ledBrightness;
         if (currentBrightness > 20) {
           uint8_t newBrightness = static_cast<uint8_t>(max(20, static_cast<int>(currentBrightness * 0.7f)));
           setHardwareLedBrightness(newBrightness);
-          Logger::debug("[UNIFIED_AUTO] Reduced LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
+          Logger::debug("[UNIFIED_AUTO] Reduced LED brightness: " + String(currentBrightness) + " ? " + String(newBrightness));
         }
       }
     } else if (maxChannel < MIN_SIGNAL) {
@@ -686,14 +687,14 @@ SensorData readUnifiedAutoExposure() {
         float targetRatio = static_cast<float>(OPTIMAL_TARGET) / static_cast<float>(max(static_cast<int>(maxChannel), 100));
         float newIntegration = min(300.0f, currentIntegration * targetRatio * 0.8f);
         colorSensor.setIntegrationTime(newIntegration);
-        Logger::debug("[UNIFIED_AUTO] Increased integration: " + String(currentIntegration, 1) + "ms → " + String(newIntegration, 1) + "ms");
+        Logger::debug("[UNIFIED_AUTO] Increased integration: " + String(currentIntegration, 1) + "ms ? " + String(newIntegration, 1) + "ms");
       } else {
         // Increase LED brightness as last resort
         uint8_t currentBrightness = settings.ledBrightness;
         if (currentBrightness < 200) {
           uint8_t newBrightness = static_cast<uint8_t>(min(200, static_cast<int>(currentBrightness * 1.3f)));
           setHardwareLedBrightness(newBrightness);
-          Logger::debug("[UNIFIED_AUTO] Increased LED brightness: " + String(currentBrightness) + " → " + String(newBrightness));
+          Logger::debug("[UNIFIED_AUTO] Increased LED brightness: " + String(currentBrightness) + " ? " + String(newBrightness));
         }
       }
     } else {
@@ -770,6 +771,43 @@ void handleSetIntSetting(AsyncWebServerRequest *request, const String& paramName
     String message = successMessage + String(value);
     builder.addField("message", message.c_str());
     request->send(HTTP_OK, "application/json", builder.build());
+}
+
+/**
+ * @brief UNIFIED SYSTEM STATE - Single Source of Truth for All State Information
+ *
+ * This function eliminates redundant state management across multiple systems:
+ * - RuntimeSettings struct in main.cpp
+ * - ColorCalibrationManager class state
+ * - Frontend calibrationStatus object
+ *
+ * Provides authoritative state information that all other systems should query
+ * instead of maintaining their own copies.
+ *
+ * @return JSON string containing complete system state
+ */
+String getUnifiedSystemState() {
+  JsonResponseBuilder builder;
+
+  // Calibration state (single source of truth)
+  builder.addField("isCalibrated", calibrationManager.isCalibrated());
+  builder.addField("calibrationPoints", calibrationManager.getCalibrationPointCount());
+  builder.addField("matrixCalibrated", calibrationManager.isMatrixCalibrated());
+  builder.addField("calibrationQuality", calibrationManager.getCalibrationQuality(), 1);
+
+  // Sensor settings (authoritative values)
+  builder.addField("ledBrightness", settings.ledBrightness);
+  builder.addField("integrationTime", colorSensor.getIntegrationTime(), 1);
+  builder.addField("sensorGain", static_cast<int>(colorSensor.getGain()));
+  builder.addField("colorSamples", settings.colorReadingSamples);
+  builder.addField("sampleDelay", settings.sensorSampleDelay);
+
+  // System status (unified view)
+  builder.addField("autoExposureEnabled", true); // Always enabled in unified system
+  builder.addField("conversionMethod", "unified_5point_matrix");
+  builder.addField("competingSystems", "eliminated");
+
+  return builder.build();
 }
 
 void handleSetFloatSetting(AsyncWebServerRequest *request, const String& paramName, float& setting,
@@ -881,7 +919,7 @@ bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int ma
 
       // Convert to RGB using current calibration
       uint8_t testR, testG, testB;
-      convertXyZtoRgbProfessional(testX, testY, testZ, testIR1, testIR2, testR, testG, testB);
+      convertXyZtoRgbUnified(testX, testY, testZ, testIR1, testIR2, testR, testG, testB);
 
       // Calculate error from Vivid White target
       float rDiff = static_cast<float>(testR) - static_cast<float>(TARGET_R);
@@ -901,7 +939,7 @@ bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int ma
         bestY = testY;
         bestZ = testZ;
 
-        Logger::info("   🎯 New best: Error=" + String(error, 1) + " Gain=" + String(static_cast<int>(gain)) +
+        Logger::info("   ?? New best: Error=" + String(error, 1) + " Gain=" + String(static_cast<int>(gain)) +
                     "x Int=" + String(integration, 0) + "ms");
       }
     }
@@ -915,7 +953,7 @@ bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int ma
   // Final reading with best settings
   colorSensor.readAll(x, y, z, bestX, bestY); // Reuse variables for IR
 
-  Logger::info("✅ Auto-adjustment complete!");
+  Logger::info("? Auto-adjustment complete!");
   Logger::info("   Best settings: Gain=" + String(static_cast<int>(bestGain)) + "x Integration=" + String(bestIntegration, 0) + "ms");
   Logger::info("   Final error from Vivid White target: " + String(bestError, 1) + " RGB units");
 
@@ -959,14 +997,14 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
     // CONDITION 1: PERFECT! Reading is in optimal window
     if (maxChannelValue >= OPTIMAL_WINDOW_LOW && maxChannelValue <= OPTIMAL_WINDOW_HIGH) {
       if (attempt > 0) {
-        Logger::info("✅ Sensor auto-adjusted successfully to optimal range (max: " + String(maxChannelValue) + ")");
+        Logger::info("? Sensor auto-adjusted successfully to optimal range (max: " + String(maxChannelValue) + ")");
       }
       return true; // Reading is good
     }
 
     // CONDITION 2: OVERSATURATED or TOO BRIGHT
     if (maxChannelValue > OPTIMAL_WINDOW_HIGH) {
-      Logger::warn("📈 Sensor reading too high (max: " + String(maxChannelValue) + "). Adjusting...");
+      Logger::warn("?? Sensor reading too high (max: " + String(maxChannelValue) + "). Adjusting...");
 
       // Step 1: Try reducing integration time first (fastest)
       float currentIntegration = colorSensor.getIntegrationTime();
@@ -975,8 +1013,8 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         if (newIntegration < 25.0f) newIntegration = 25.0f;
 
         colorSensor.integrationTime(newIntegration);
-        Logger::info("   🔧 Reduced integration time: " + String(currentIntegration, 1) +
-                     "ms → " + String(newIntegration, 1) + "ms");
+        Logger::info("   ?? Reduced integration time: " + String(currentIntegration, 1) +
+                     "ms ? " + String(newIntegration, 1) + "ms");
         delay(150); // Allow sensor to adapt
         continue;
       }
@@ -990,7 +1028,7 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         colorSensor.gain(newGain);
         // Reset integration time to midpoint when changing gain
         colorSensor.integrationTime(100.0f);
-        Logger::info("   🔧 Reduced gain and reset integration time");
+        Logger::info("   ?? Reduced gain and reset integration time");
         delay(150);
         continue;
       }
@@ -1000,19 +1038,19 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         uint8_t newBrightness = max(20, (int)(settings.ledBrightness * 0.7f)); // Reduce by 30%
         analogWrite(leDpin, newBrightness);
         settings.ledBrightness = newBrightness;
-        Logger::warn("   💡 Reduced LED brightness to " + String(newBrightness));
+        Logger::warn("   ?? Reduced LED brightness to " + String(newBrightness));
         delay(150);
         continue;
       }
 
       // If still saturated at minimum settings
-      Logger::error("❌ Sensor saturated even at minimum settings. Scene too bright!");
+      Logger::error("? Sensor saturated even at minimum settings. Scene too bright!");
       return false;
     }
 
     // CONDITION 3: TOO DARK
     if (maxChannelValue < OPTIMAL_WINDOW_LOW) {
-      Logger::warn("📉 Sensor reading too low (max: " + String(maxChannelValue) + "). Adjusting...");
+      Logger::warn("?? Sensor reading too low (max: " + String(maxChannelValue) + "). Adjusting...");
 
       // Step 1: Try increasing integration time first
       float currentIntegration = colorSensor.getIntegrationTime();
@@ -1021,8 +1059,8 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         if (newIntegration > 400.0f) newIntegration = 400.0f;
 
         colorSensor.integrationTime(newIntegration);
-        Logger::info("   🔧 Increased integration time: " + String(currentIntegration, 1) +
-                     "ms → " + String(newIntegration, 1) + "ms");
+        Logger::info("   ?? Increased integration time: " + String(currentIntegration, 1) +
+                     "ms ? " + String(newIntegration, 1) + "ms");
         delay(150);
         continue;
       }
@@ -1036,7 +1074,7 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         colorSensor.gain(newGain);
         // Reset integration time when changing gain
         colorSensor.integrationTime(75.0f);
-        Logger::info("   🔧 Increased gain and reset integration time");
+        Logger::info("   ?? Increased gain and reset integration time");
         delay(150);
         continue;
       }
@@ -1046,18 +1084,18 @@ bool autoAdjustSensor(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 1
         uint8_t newBrightness = min(200, (int)(settings.ledBrightness * 1.3f)); // Increase by 30%
         analogWrite(leDpin, newBrightness);
         settings.ledBrightness = newBrightness;
-        Logger::warn("   💡 Increased LED brightness to " + String(newBrightness));
+        Logger::warn("   ?? Increased LED brightness to " + String(newBrightness));
         delay(150);
         continue;
       }
 
       // If at max settings but still too dark, accept the reading with warning
-      Logger::warn("⚠️ Sensor at max settings but signal still low. May have noise.");
+      Logger::warn("?? Sensor at max settings but signal still low. May have noise.");
       return true; // Return reading anyway
     }
   }
 
-  Logger::error("❌ Auto-adjust failed after " + String(maxAttempts) + " attempts");
+  Logger::error("? Auto-adjust failed after " + String(maxAttempts) + " attempts");
   return false;
   */ // END OF DISABLED CONFLICTING CODE
 }
@@ -1309,17 +1347,17 @@ static bool loadColorDatabase() {
           unsigned long const KD_LOAD_TIME = millis() - KD_START_TIME;
           size_t const MEMORY_USAGE = kdTreeColorDB.getMemoryUsage();
 
-          Logger::info("🎯 KD-tree built successfully in " + String(KD_LOAD_TIME) + "ms");
-          Logger::info("📊 KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " +
+          Logger::info("?? KD-tree built successfully in " + String(KD_LOAD_TIME) + "ms");
+          Logger::info("?? KD-tree stats: " + String(kdTreeColorDB.getNodeCount()) + " nodes, " +
                        String(MEMORY_USAGE) + " bytes");
-          Logger::info("🚀 Search performance: O(log " + String(loadedCount) + ") vs O(" +
+          Logger::info("?? Search performance: O(log " + String(loadedCount) + ") vs O(" +
                        String(loadedCount) + ") linear");
-          Logger::info("💾 PSRAM after KD-tree: " + String(ESP.getFreePsram() / BYTES_PER_KB) +
+          Logger::info("?? PSRAM after KD-tree: " + String(ESP.getFreePsram() / BYTES_PER_KB) +
                        " KB free");
 
           // Performance validation: Estimate search speed improvement
           float speedupFactor = static_cast<float>(loadedCount) / static_cast<float>(log2(loadedCount));
-          Logger::info("⚡ Estimated search speedup: " + String(speedupFactor, 1) +
+          Logger::info("? Estimated search speedup: " + String(speedupFactor, 1) +
                        "x faster than linear search");
 
         } else {
@@ -1402,7 +1440,7 @@ static String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
         if (settings.debugColorMatching) {
           unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
           Logger::debug("KD-tree search completed in " + String(SEARCH_TIME) +
-                        "μs. Best match: " + result);
+                        "�s. Best match: " + result);
         }
         return result;
       }
@@ -1436,7 +1474,7 @@ static String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
     if (settings.debugColorMatching) {
       unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
       Logger::debug("Binary search completed in " + String(SEARCH_TIME) +
-                    "μs. Best match: " + result);
+                    "�s. Best match: " + result);
     }
     return result;
   }
@@ -1468,7 +1506,7 @@ static String findClosestDuluxColor(uint8_t red, uint8_t green, uint8_t blue) {
 
   if (settings.debugColorMatching) {
     unsigned long const SEARCH_TIME = micros() - SEARCH_START_TIME;
-    Logger::debug(searchMethod + " completed in " + String(SEARCH_TIME) + "μs. Result: " + result);
+    Logger::debug(searchMethod + " completed in " + String(SEARCH_TIME) + "�s. Result: " + result);
   }
 
   // Track color matching issues - log when RGB changes but color name doesn't
@@ -1502,7 +1540,7 @@ static void analyzeSystemPerformance() {
   size_t const TOTAL_PSRAM = psramFound() ? ESP.getPsramSize() : 0;
   size_t const FREE_PSRAM = psramFound() ? ESP.getFreePsram() : 0;
 
-  Logger::info("💾 Memory Status:");
+  Logger::info("?? Memory Status:");
   Logger::info("  Heap: " + String(FREE_HEAP / BYTES_PER_KB) + " KB free / " +
                String(TOTAL_HEAP / BYTES_PER_KB) + " KB total (" +
                String((FREE_HEAP * PERCENTAGE_SCALE) / TOTAL_HEAP) + "% free)");
@@ -1515,7 +1553,7 @@ static void analyzeSystemPerformance() {
   }
 
   // Color database analysis
-  Logger::info("🎨 Color Database Performance:");
+  Logger::info("?? Color Database Performance:");
   size_t const COLOR_COUNT = simpleColorDB.isOpen() ? simpleColorDB.getColorCount() : 0;
   Logger::info("  Colors loaded: " + String(COLOR_COUNT));
 
@@ -1527,7 +1565,7 @@ static void analyzeSystemPerformance() {
   if (settings.enableKdtree && kdTreeColorDB.isBuilt()) {
     activeMethod = "KD-Tree Search";
     float logN = static_cast<float>(log2(COLOR_COUNT));
-    performanceNote = "O(log " + String(COLOR_COUNT) + ") ≈ " + String(logN, 1) + " operations";
+    performanceNote = "O(log " + String(COLOR_COUNT) + ") � " + String(logN, 1) + " operations";
   } else
 #endif
       if (simpleColorDB.isOpen()) {
@@ -1542,27 +1580,27 @@ static void analyzeSystemPerformance() {
   Logger::info("  Performance complexity: " + performanceNote);
 
   // Performance optimization recommendations
-  Logger::info("🚀 Performance Recommendations:");
+  Logger::info("?? Performance Recommendations:");
 
   if (COLOR_COUNT <= LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
-    Logger::info("  ✅ Small database - KD-tree overhead avoided (optimal)");
+    Logger::info("  ? Small database - KD-tree overhead avoided (optimal)");
   } else if (COLOR_COUNT > LARGE_COLOR_DB_THRESHOLD && !settings.enableKdtree) {
-    Logger::warn("  ⚠️ Large database without KD-tree - consider enabling for " +
+    Logger::warn("  ?? Large database without KD-tree - consider enabling for " +
                  String((float)COLOR_COUNT / log2(COLOR_COUNT), 1) + "x speedup");
   } else if (COLOR_COUNT > LARGE_COLOR_DB_THRESHOLD && settings.enableKdtree) {
-    Logger::info("  ✅ Large database with KD-tree - optimal performance achieved");
+    Logger::info("  ? Large database with KD-tree - optimal performance achieved");
   }
 
   if (FREE_PSRAM < (PSRAM_SAFETY_MARGIN_KB * BYTES_PER_KB)) {
-    Logger::warn("  ⚠️ Low PSRAM - increase safety margin or reduce database size");
+    Logger::warn("  ?? Low PSRAM - increase safety margin or reduce database size");
   } else {
-    Logger::info("  ✅ PSRAM adequate for current configuration");
+    Logger::info("  ? PSRAM adequate for current configuration");
   }
 
   if (FREE_HEAP < 100000) {
-    Logger::warn("  ⚠️ Low heap memory - monitor for stability issues");
+    Logger::warn("  ?? Low heap memory - monitor for stability issues");
   } else {
-    Logger::info("  ✅ Heap memory sufficient");
+    Logger::info("  ? Heap memory sufficient");
   }
 
   Logger::info("=====================================");
@@ -1800,7 +1838,7 @@ static void handleForceColorLookup(AsyncWebServerRequest *request) {
 
   Logger::info("Forced color lookup: RGB(" + String(CURRENT_R) + "," + String(CURRENT_G) + "," +
                String(CURRENT_B) + ") -> " + COLOR_NAME +
-               " | Duration: " + String(LOOKUP_DURATION) + "μs");
+               " | Duration: " + String(LOOKUP_DURATION) + "�s");
 }
 
 // Handle color capture and storage API endpoint
@@ -2296,10 +2334,35 @@ void handleSetIRCompensation(AsyncWebServerRequest *request) {
 
 // REMOVED: Legacy placeholder function - now using ColorCalibration library exclusively
 
-// Professional matrix-based color conversion function - SLOWED DEBUG FOR RECORDING
-void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zValue,
-                                 uint16_t /*infraredOne*/, uint16_t /*infraredTwo*/,
-                                 uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
+/**
+ * @brief UNIFIED COLOR CONVERSION - Single Source of Truth
+ *
+ * This function eliminates ALL competing color conversion methods and provides
+ * a single, authoritative pipeline based on the 5-point matrix calibration system.
+ *
+ * REPLACES:
+ * - 4-Point Tetrahedral Interpolation (TetrahedralInterpolator)
+ * - ColorCorrectionMatrix.h.disabled (abandoned system)
+ * - ColorScience.cpp Standard Matrices (academic approach)
+ * - Legacy 2-point calibration fallbacks
+ * - Multiple convertXyZtoRgb... variants
+ *
+ * USES ONLY:
+ * - ColorCalibrationManager (5-point matrix system)
+ * - Tiered fallback architecture (Matrix → 2-point → Uncalibrated)
+ *
+ * @param xValue Raw X sensor reading
+ * @param yValue Raw Y sensor reading
+ * @param zValue Raw Z sensor reading
+ * @param infraredOne IR1 sensor reading (for compensation)
+ * @param infraredTwo IR2 sensor reading (for compensation)
+ * @param redOut Output red component (0-255)
+ * @param greenOut Output green component (0-255)
+ * @param blueOut Output blue component (0-255)
+ */
+void convertXyZtoRgbUnified(uint16_t xValue, uint16_t yValue, uint16_t zValue,
+                           uint16_t infraredOne, uint16_t infraredTwo,
+                           uint8_t &redOut, uint8_t &greenOut, uint8_t &blueOut) {
 
   // === CONDITIONAL DEBUG LOGGING (only during detailed analysis) ===
   static unsigned long lastConversionLog = 0;
@@ -2308,51 +2371,50 @@ void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zVal
 
   if (showDetailedConversion) {
     Serial.println("\n" + String('=').substring(0, 80)); // Clear separator line
-    Logger::info("🔍 [CONVERSION_ANALYSIS] Starting detailed conversion analysis");
+    Logger::info("?? [CONVERSION_ANALYSIS] Starting detailed conversion analysis");
     delay(200);
-    Logger::info("[LIVE_CONVERT] 🔬 Input XYZ: (" + String(xValue) + "," + String(yValue) + "," + String(zValue) + ")");
+    Logger::info("[LIVE_CONVERT] ?? Input XYZ: (" + String(xValue) + "," + String(yValue) + "," + String(zValue) + ")");
     delay(200); // Slow down for readability
     lastConversionLog = now;
   }
 
-  // --- PRIMARY METHOD: USE THE COLORCALIBRATION LIBRARY ---
-  bool isCalibrated = ColorCalibration::isCalibrated();
+  // --- UNIFIED COLOR PIPELINE: SINGLE SOURCE OF TRUTH ---
+  // This replaces ALL competing color conversion methods with the authoritative
+  // ColorCalibrationManager system as the ONLY conversion path.
 
   if (showDetailedConversion) {
-    Logger::info("[LIVE_CONVERT] 📊 Calibration status: " + String(isCalibrated ? "✅ AVAILABLE" : "❌ NOT_AVAILABLE"));
+    Logger::info("[UNIFIED_COLOR] ?? Using ONLY ColorCalibrationManager (eliminates competing systems)");
     delay(100);
   }
 
-  if (isCalibrated) {
-    // Use the superior 5-point matrix calibration
+  // Use ColorCalibrationManager as the SINGLE authoritative conversion system
+  ColorCalibrationManager::CompensationLevel level = ColorCalibrationManager::CompensationLevel::AUTO;
+  bool success = calibrationManager.applyCalibrationCorrection(
+    xValue, yValue, zValue, redOut, greenOut, blueOut, level);
+
+  if (success) {
     if (showDetailedConversion) {
-      Logger::info("[LIVE_CONVERT] 🎯 Using ColorCalibration library (same as calibration system)");
-      delay(100);
+      Logger::info("[UNIFIED_COLOR] ? Conversion SUCCESS: XYZ(" + String(xValue) + "," +
+                  String(yValue) + "," + String(zValue) + ") ? RGB(" + String(redOut) +
+                  "," + String(greenOut) + "," + String(blueOut) + ")");
+      delay(200);
+      Logger::info("[UNIFIED_COLOR] ?? Single authoritative conversion path - no competing systems!");
+      delay(200);
+      Serial.println(String('=').substring(0, 80) + "\n");
     }
-
-    bool success = ColorCalibration::convertColor(xValue, yValue, zValue, redOut, greenOut, blueOut);
-
-    if (success) {
-      if (showDetailedConversion) {
-        Logger::info("[LIVE_CONVERT] ✅ Matrix conversion SUCCESS: XYZ(" + String(xValue) + "," + String(yValue) + "," + String(zValue) + ") → RGB(" + String(redOut) + "," + String(greenOut) + "," + String(blueOut) + ")");
-        delay(200);
-        Logger::info("[LIVE_CONVERT] 🎉 LIVE READINGS using SAME conversion path as calibration system!");
-        delay(200);
-        Serial.println(String('=').substring(0, 80) + "\n"); // Clear end separator
-      }
-      return; // Superior accuracy achieved - same as calibration system
-    } else {
-      Logger::error("[LIVE_CONVERT] ❌ Matrix conversion FAILED despite being calibrated - using fallback");
-    }
+    return; // Successful conversion using unified system
   } else {
     if (showDetailedConversion) {
-      Logger::warn("[LIVE_CONVERT] ⚠️ No calibration data available - using uncalibrated fallback");
+      Logger::warning("[UNIFIED_COLOR] ??  Calibration not available - using uncalibrated fallback");
+    }
+    if (showDetailedConversion) {
+      Logger::warn("[LIVE_CONVERT] ?? No calibration data available - using uncalibrated fallback");
     }
   }
 
   // --- FALLBACK: UNCALIBRATED CONVERSION ---
   if (showDetailedConversion) {
-    Logger::warn("[LIVE_CONVERT] 🔄 Using uncalibrated fallback conversion");
+    Logger::warn("[LIVE_CONVERT] ?? Using uncalibrated fallback conversion");
     delay(100);
   }
 
@@ -2361,7 +2423,7 @@ void convertXyZtoRgbProfessional(uint16_t xValue, uint16_t yValue, uint16_t zVal
   blueOut  = static_cast<uint8_t>(constrain(zValue / 256, 0, 255));
 
   if (showDetailedConversion) {
-    Logger::info("[LIVE_CONVERT] 📤 Fallback result: RGB(" + String(redOut) + "," + String(greenOut) + "," + String(blueOut) + ")");
+    Logger::info("[LIVE_CONVERT] ?? Fallback result: RGB(" + String(redOut) + "," + String(greenOut) + "," + String(blueOut) + ")");
   }
 }
 
@@ -2621,20 +2683,20 @@ void initializeNTPTime() {
       char timeStr[64];
       strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
 
-      Logger::info("✅ NTP time synchronized successfully");
-      Logger::info("📅 Current Melbourne time: " + String(timeStr));
+      Logger::info("? NTP time synchronized successfully");
+      Logger::info("?? Current Melbourne time: " + String(timeStr));
       return;
     }
 
     delay(500);
     retryCount++;
     if (retryCount % 4 == 0) { // Log every 2 seconds
-      Logger::info("⏳ Waiting for NTP sync... (" + String(retryCount/2) + "s)");
+      Logger::info("? Waiting for NTP sync... (" + String(retryCount/2) + "s)");
     }
   }
 
-  Logger::warn("⚠️ NTP synchronization timeout - using system time");
-  Logger::warn("📅 Timestamps may be incorrect until next sync");
+  Logger::warn("?? NTP synchronization timeout - using system time");
+  Logger::warn("?? Timestamps may be incorrect until next sync");
 }
 
 // Function to get current timestamp in Melbourne time
@@ -2644,7 +2706,7 @@ uint32_t getCurrentTimestamp() {
     return static_cast<uint32_t>(now);
   } else {
     // Fallback to millis-based timestamp if NTP not available
-    Logger::warn("⚠️ Using fallback timestamp - NTP not synchronized");
+    Logger::warn("?? Using fallback timestamp - NTP not synchronized");
     return static_cast<uint32_t>(millis() / 1000);
   }
 }
@@ -2666,7 +2728,7 @@ String getCurrentTimeString() {
 
 // REMOVED: Legacy restoreCalibrationFromStorage function - now using ColorCalibration library exclusively
 static bool restoreCalibrationFromStorage(const StoredCalibrationData& storedCalib) {
-  Logger::info("🔄 Legacy calibration restore skipped - using ColorCalibration library");
+  Logger::info("?? Legacy calibration restore skipped - using ColorCalibration library");
   // The ColorCalibration library handles its own persistence
   return true; // Always return true to avoid breaking existing code
 }
@@ -2674,16 +2736,16 @@ static bool restoreCalibrationFromStorage(const StoredCalibrationData& storedCal
 // Function to get calibration status for notifications - SIMPLIFIED
 static String getCalibrationStatusMessage() {
   if (ColorCalibration::isCalibrated()) {
-    return "✅ Device is calibrated using ColorCalibration library";
+    return "? Device is calibrated using ColorCalibration library";
   } else {
-    return "⚠️ Device not calibrated - Please run professional calibration procedure";
+    return "?? Device not calibrated - Please run professional calibration procedure";
   }
 }
 
 // Function to check if calibration will be overwritten - SIMPLIFIED
 static String getCalibrationOverwriteWarning() {
   if (ColorCalibration::isCalibrated()) {
-    return "⚠️ WARNING: This will overwrite existing ColorCalibration data.";
+    return "?? WARNING: This will overwrite existing ColorCalibration data.";
   }
   return ""; // No warning needed if not calibrated
 }
@@ -2927,22 +2989,22 @@ void setup() {
     // Load any existing calibration data
     StoredCalibrationData storedCalib;
     if (persistentStorage.loadCalibrationData(storedCalib)) {
-      Logger::info("✅ Loaded existing calibration data from flash");
+      Logger::info("? Loaded existing calibration data from flash");
 
       // Apply stored calibration to runtime settings
       if (restoreCalibrationFromStorage(storedCalib)) {
-        Logger::info("🎯 Calibration restored successfully - device is calibrated!");
-        String calibStatus = "📊 Calibration Status: ";
-        calibStatus += "Black: " + String(storedCalib.blackComplete ? "✅" : "❌") + " ";
-        calibStatus += "White: " + String(storedCalib.whiteComplete ? "✅" : "❌") + " ";
-        calibStatus += "Blue: " + String(storedCalib.blueComplete ? "✅" : "❌") + " ";
-        calibStatus += "Yellow: " + String(storedCalib.yellowComplete ? "✅" : "❌");
+        Logger::info("?? Calibration restored successfully - device is calibrated!");
+        String calibStatus = "?? Calibration Status: ";
+        calibStatus += "Black: " + String(storedCalib.blackComplete ? "?" : "?") + " ";
+        calibStatus += "White: " + String(storedCalib.whiteComplete ? "?" : "?") + " ";
+        calibStatus += "Blue: " + String(storedCalib.blueComplete ? "?" : "?") + " ";
+        calibStatus += "Yellow: " + String(storedCalib.yellowComplete ? "?" : "?");
         Logger::info(calibStatus);
       } else {
-        Logger::warn("⚠️ Failed to restore calibration - may need recalibration");
+        Logger::warn("?? Failed to restore calibration - may need recalibration");
       }
     } else {
-      Logger::info("ℹ️ No existing calibration data found in flash - device needs calibration");
+      Logger::info("?? No existing calibration data found in flash - device needs calibration");
     }
   } else {
     Logger::error("Failed to initialize persistent storage - captures and calibration won't be saved");
@@ -2974,17 +3036,17 @@ void setup() {
 
     // Initialize NTP time synchronization (only if WiFi connected)
     if (WiFi.status() == WL_CONNECTED) {
-      Logger::info("🌐 WiFi connected - initializing NTP time sync...");
+      Logger::info("?? WiFi connected - initializing NTP time sync...");
       initializeNTPTime();
 
       // Test time after initialization
       delay(2000); // Give NTP a moment to sync
       String timeTest = getCurrentTimeString();
-      Logger::info("🕐 Time after NTP init: " + timeTest);
+      Logger::info("?? Time after NTP init: " + timeTest);
     } else {
-      Logger::info("⏰ NTP sync skipped - no WiFi connection (using system time)");
+      Logger::info("? NTP sync skipped - no WiFi connection (using system time)");
       String timeTest = getCurrentTimeString();
-      Logger::info("🕐 Current time (no NTP): " + timeTest);
+      Logger::info("?? Current time (no NTP): " + timeTest);
     }
   }
 
@@ -3288,20 +3350,20 @@ void setup() {
     }
 
     // Test each calibration point for accuracy
-    Logger::info("[ACCURACY_TEST] 🧪 Testing calibration point accuracy...");
+    Logger::info("[ACCURACY_TEST] ?? Testing calibration point accuracy...");
 
     // Get current sensor reading for comparison
     SensorData currentReading = readOptimalSensorData();
     uint8_t currentR, currentG, currentB;
 
-    Logger::info("[ACCURACY_TEST] 📊 Current sensor XYZ: (" + String(currentReading.x) + "," + String(currentReading.y) + "," + String(currentReading.z) + ")");
+    Logger::info("[ACCURACY_TEST] ?? Current sensor XYZ: (" + String(currentReading.x) + "," + String(currentReading.y) + "," + String(currentReading.z) + ")");
 
     // Test conversion with detailed scaling analysis
-    convertXyZtoRgbProfessional(currentReading.x, currentReading.y, currentReading.z,
+    convertXyZtoRgbUnified(currentReading.x, currentReading.y, currentReading.z,
                                currentReading.ir1, currentReading.ir2,
                                currentR, currentG, currentB);
 
-    Logger::info("[ACCURACY_TEST] 📤 Final RGB result: (" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
+    Logger::info("[ACCURACY_TEST] ?? Final RGB result: (" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
     Logger::info("=== SCALING ACCURACY TEST COMPLETE ===");
 
     String response = "{\"status\":\"success\",\"message\":\"Scaling accuracy test completed - check serial output for detailed analysis\",\"currentRGB\":[" +
@@ -3320,9 +3382,9 @@ void setup() {
       return;
     }
 
-    Logger::info("[CALIB_ACCURACY] 🎯 Testing accuracy with exact calibration samples");
-    Logger::info("[CALIB_ACCURACY] 📋 Instructions: Place each calibration sample on sensor when prompted");
-    Logger::info("[CALIB_ACCURACY] ⏱️ You have 30 seconds to place each sample");
+    Logger::info("[CALIB_ACCURACY] ?? Testing accuracy with exact calibration samples");
+    Logger::info("[CALIB_ACCURACY] ?? Instructions: Place each calibration sample on sensor when prompted");
+    Logger::info("[CALIB_ACCURACY] ?? You have 30 seconds to place each sample");
 
     // Test sequence for each calibration color
     String testColors[] = {"black", "vivid-white", "red", "green", "blue", "yellow"};
@@ -3332,8 +3394,8 @@ void setup() {
     String results = "\"testResults\":[";
 
     for (int i = 0; i < 6; i++) {
-      Logger::info("[CALIB_ACCURACY] 🎨 NEXT: Place " + sampleNames[i] + " sample (target RGB: " + targetRGBs[i] + ")");
-      Logger::info("[CALIB_ACCURACY] ⏳ Waiting 5 seconds for sample placement...");
+      Logger::info("[CALIB_ACCURACY] ?? NEXT: Place " + sampleNames[i] + " sample (target RGB: " + targetRGBs[i] + ")");
+      Logger::info("[CALIB_ACCURACY] ? Waiting 5 seconds for sample placement...");
 
       delay(5000); // Give time to place sample
 
@@ -3341,13 +3403,13 @@ void setup() {
       SensorData reading = readOptimalSensorData();
       uint8_t resultR, resultG, resultB;
 
-      Logger::info("[CALIB_ACCURACY] 📊 " + sampleNames[i] + " sensor XYZ: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
+      Logger::info("[CALIB_ACCURACY] ?? " + sampleNames[i] + " sensor XYZ: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
 
       // Convert using calibrated system
-      convertXyZtoRgbProfessional(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
+      convertXyZtoRgbUnified(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
 
-      Logger::info("[CALIB_ACCURACY] 📤 " + sampleNames[i] + " result RGB: (" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
-      Logger::info("[CALIB_ACCURACY] 🎯 " + sampleNames[i] + " target RGB: " + targetRGBs[i]);
+      Logger::info("[CALIB_ACCURACY] ?? " + sampleNames[i] + " result RGB: (" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
+      Logger::info("[CALIB_ACCURACY] ?? " + sampleNames[i] + " target RGB: " + targetRGBs[i]);
 
       // Calculate and display accuracy
       int errorR = abs((int)resultR - (i == 0 ? 5 : i == 1 ? 247 : i == 2 ? 200 : i == 3 ? 30 : i == 4 ? 30 : 230));
@@ -3355,16 +3417,16 @@ void setup() {
       int errorB = abs((int)resultB - (i == 0 ? 5 : i == 1 ? 244 : i == 2 ? 30 : i == 3 ? 30 : i == 4 ? 200 : 50));
       int totalError = errorR + errorG + errorB;
 
-      Logger::info("[CALIB_ACCURACY] 📏 " + sampleNames[i] + " accuracy: R±" + String(errorR) + " G±" + String(errorG) + " B±" + String(errorB) + " (total: ±" + String(totalError) + " points)");
+      Logger::info("[CALIB_ACCURACY] ?? " + sampleNames[i] + " accuracy: R�" + String(errorR) + " G�" + String(errorG) + " B�" + String(errorB) + " (total: �" + String(totalError) + " points)");
 
       if (totalError <= 2) {
-        Logger::info("[CALIB_ACCURACY] ✅ " + sampleNames[i] + " EXCELLENT accuracy (<2 point target achieved!)");
+        Logger::info("[CALIB_ACCURACY] ? " + sampleNames[i] + " EXCELLENT accuracy (<2 point target achieved!)");
       } else if (totalError <= 5) {
-        Logger::info("[CALIB_ACCURACY] ✅ " + sampleNames[i] + " GOOD accuracy (<5 points)");
+        Logger::info("[CALIB_ACCURACY] ? " + sampleNames[i] + " GOOD accuracy (<5 points)");
       } else if (totalError <= 10) {
-        Logger::info("[CALIB_ACCURACY] ⚠️ " + sampleNames[i] + " FAIR accuracy (5-10 points)");
+        Logger::info("[CALIB_ACCURACY] ?? " + sampleNames[i] + " FAIR accuracy (5-10 points)");
       } else {
-        Logger::info("[CALIB_ACCURACY] ❌ " + sampleNames[i] + " POOR accuracy (>" + String(totalError) + " points)");
+        Logger::info("[CALIB_ACCURACY] ? " + sampleNames[i] + " POOR accuracy (>" + String(totalError) + " points)");
       }
 
       // Add to results
@@ -3392,9 +3454,9 @@ void setup() {
       return;
     }
 
-    Logger::info("[VIVID_WHITE] 🔍 Diagnosing Vivid White accuracy issue");
-    Logger::info("[VIVID_WHITE] 🎯 Target: RGB(247,248,244) - NOT pure white (255,255,255)");
-    Logger::info("[VIVID_WHITE] 📋 Place Vivid White sample on sensor now...");
+    Logger::info("[VIVID_WHITE] ?? Diagnosing Vivid White accuracy issue");
+    Logger::info("[VIVID_WHITE] ?? Target: RGB(247,248,244) - NOT pure white (255,255,255)");
+    Logger::info("[VIVID_WHITE] ?? Place Vivid White sample on sensor now...");
 
     delay(3000); // Give time to place sample
 
@@ -3402,29 +3464,29 @@ void setup() {
     SensorData reading = readOptimalSensorData();
     uint8_t resultR, resultG, resultB;
 
-    Logger::info("[VIVID_WHITE] 📊 Raw sensor XYZ: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
+    Logger::info("[VIVID_WHITE] ?? Raw sensor XYZ: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
 
     // Test conversion with temporary debug
-    Logger::info("[VIVID_WHITE] 🔬 Converting with matrix...");
-    convertXyZtoRgbProfessional(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
+    Logger::info("[VIVID_WHITE] ?? Converting with matrix...");
+    convertXyZtoRgbUnified(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
 
-    Logger::info("[VIVID_WHITE] 📤 Matrix result: RGB(" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
-    Logger::info("[VIVID_WHITE] 🎯 Target should be: RGB(247,248,244)");
+    Logger::info("[VIVID_WHITE] ?? Matrix result: RGB(" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
+    Logger::info("[VIVID_WHITE] ?? Target should be: RGB(247,248,244)");
 
     int errorR = abs((int)resultR - 247);
     int errorG = abs((int)resultG - 248);
     int errorB = abs((int)resultB - 244);
     int totalError = errorR + errorG + errorB;
 
-    Logger::info("[VIVID_WHITE] 📏 Error: R±" + String(errorR) + " G±" + String(errorG) + " B±" + String(errorB) + " (total: ±" + String(totalError) + " points)");
+    Logger::info("[VIVID_WHITE] ?? Error: R�" + String(errorR) + " G�" + String(errorG) + " B�" + String(errorB) + " (total: �" + String(totalError) + " points)");
 
     if (resultR == 255 && resultG == 255 && resultB == 255) {
-      Logger::error("[VIVID_WHITE] ❌ PROBLEM: Matrix is saturating to pure white (255,255,255)");
-      Logger::error("[VIVID_WHITE] 💡 This suggests matrix coefficients are too high or sensor reading too bright");
+      Logger::error("[VIVID_WHITE] ? PROBLEM: Matrix is saturating to pure white (255,255,255)");
+      Logger::error("[VIVID_WHITE] ?? This suggests matrix coefficients are too high or sensor reading too bright");
     } else if (totalError > 10) {
-      Logger::warn("[VIVID_WHITE] ⚠️ PROBLEM: Large accuracy error (" + String(totalError) + " points)");
+      Logger::warn("[VIVID_WHITE] ?? PROBLEM: Large accuracy error (" + String(totalError) + " points)");
     } else {
-      Logger::info("[VIVID_WHITE] ✅ Accuracy within acceptable range");
+      Logger::info("[VIVID_WHITE] ? Accuracy within acceptable range");
     }
 
     String response = "{\"status\":\"success\",\"sensorXYZ\":[" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) +
@@ -3439,7 +3501,7 @@ void setup() {
     Logger::info("=== LOCKING SENSOR SETTINGS FOR ACCURACY TEST ===");
 
     // Get current settings first
-    Logger::info("[SENSOR_LOCK] 📊 Current settings before lock:");
+    Logger::info("[SENSOR_LOCK] ?? Current settings before lock:");
     Logger::info("[SENSOR_LOCK] LED brightness: " + String(settings.ledBrightness));
     Logger::info("[SENSOR_LOCK] Integration time: " + String(settings.sensorIntegrationTime));
 
@@ -3453,14 +3515,14 @@ void setup() {
 
     // Set integration time on the sensor (convert to float for the library)
     float newIntegrationTime = colorSensor.integrationTime(static_cast<float>(settings.sensorIntegrationTime));
-    Logger::info("[SENSOR_LOCK] ✅ Integration time set to " + String(newIntegrationTime, 1) + "ms");
+    Logger::info("[SENSOR_LOCK] ? Integration time set to " + String(newIntegrationTime, 1) + "ms");
 
-    Logger::info("[SENSOR_LOCK] ✅ Sensor settings LOCKED for accuracy testing:");
-    Logger::info("[SENSOR_LOCK] 🔒 LED brightness: " + String(settings.ledBrightness));
-    Logger::info("[SENSOR_LOCK] 🔒 Integration time: " + String(settings.sensorIntegrationTime) + "ms");
-    Logger::info("[SENSOR_LOCK] 🔒 Auto-exposure: DISABLED (manual settings active)");
-    Logger::info("[SENSOR_LOCK] 📋 Now test Vivid White sample - should get consistent XYZ readings");
-    Logger::info("[SENSOR_LOCK] 🎯 Expected XYZ: ~(35617,35984,15325) to match calibration");
+    Logger::info("[SENSOR_LOCK] ? Sensor settings LOCKED for accuracy testing:");
+    Logger::info("[SENSOR_LOCK] ?? LED brightness: " + String(settings.ledBrightness));
+    Logger::info("[SENSOR_LOCK] ?? Integration time: " + String(settings.sensorIntegrationTime) + "ms");
+    Logger::info("[SENSOR_LOCK] ?? Auto-exposure: DISABLED (manual settings active)");
+    Logger::info("[SENSOR_LOCK] ?? Now test Vivid White sample - should get consistent XYZ readings");
+    Logger::info("[SENSOR_LOCK] ?? Expected XYZ: ~(35617,35984,15325) to match calibration");
 
     String response = "{\"status\":\"success\",\"message\":\"Sensor settings locked to calibration values\",\"settings\":{\"ledBrightness\":" +
                      String(settings.ledBrightness) + ",\"integrationTime\":" + String(settings.sensorIntegrationTime) + "}}";
@@ -3472,10 +3534,10 @@ void setup() {
   server.on("/api/test-locked-vivid-white", HTTP_GET, [](AsyncWebServerRequest *request) {
     Logger::info("=== TESTING VIVID WHITE WITH LOCKED SETTINGS ===");
 
-    Logger::info("[LOCKED_TEST] 🔒 Using locked sensor settings:");
+    Logger::info("[LOCKED_TEST] ?? Using locked sensor settings:");
     Logger::info("[LOCKED_TEST] LED brightness: " + String(settings.ledBrightness));
     Logger::info("[LOCKED_TEST] Integration time: " + String(settings.sensorIntegrationTime) + "ms");
-    Logger::info("[LOCKED_TEST] 📋 Place Vivid White sample on sensor now...");
+    Logger::info("[LOCKED_TEST] ?? Place Vivid White sample on sensor now...");
 
     delay(3000); // Give time to place sample
 
@@ -3483,35 +3545,35 @@ void setup() {
     SensorData reading = readOptimalSensorData();
     uint8_t resultR, resultG, resultB;
 
-    Logger::info("[LOCKED_TEST] 📊 XYZ with locked settings: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
-    Logger::info("[LOCKED_TEST] 🎯 Calibration XYZ was: (35617,35984,15325)");
+    Logger::info("[LOCKED_TEST] ?? XYZ with locked settings: (" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) + ")");
+    Logger::info("[LOCKED_TEST] ?? Calibration XYZ was: (35617,35984,15325)");
 
     // Calculate XYZ difference from calibration
     int diffX = abs((int)reading.x - 35617);
     int diffY = abs((int)reading.y - 35984);
     int diffZ = abs((int)reading.z - 15325);
 
-    Logger::info("[LOCKED_TEST] 📏 XYZ difference from calibration: X±" + String(diffX) + " Y±" + String(diffY) + " Z±" + String(diffZ));
+    Logger::info("[LOCKED_TEST] ?? XYZ difference from calibration: X�" + String(diffX) + " Y�" + String(diffY) + " Z�" + String(diffZ));
 
     // Test conversion
-    convertXyZtoRgbProfessional(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
+    convertXyZtoRgbUnified(reading.x, reading.y, reading.z, reading.ir1, reading.ir2, resultR, resultG, resultB);
 
-    Logger::info("[LOCKED_TEST] 📤 Matrix result: RGB(" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
-    Logger::info("[LOCKED_TEST] 🎯 Target should be: RGB(247,248,244)");
+    Logger::info("[LOCKED_TEST] ?? Matrix result: RGB(" + String(resultR) + "," + String(resultG) + "," + String(resultB) + ")");
+    Logger::info("[LOCKED_TEST] ?? Target should be: RGB(247,248,244)");
 
     int errorR = abs((int)resultR - 247);
     int errorG = abs((int)resultG - 248);
     int errorB = abs((int)resultB - 244);
     int totalError = errorR + errorG + errorB;
 
-    Logger::info("[LOCKED_TEST] 📏 RGB accuracy: R±" + String(errorR) + " G±" + String(errorG) + " B±" + String(errorB) + " (total: ±" + String(totalError) + " points)");
+    Logger::info("[LOCKED_TEST] ?? RGB accuracy: R�" + String(errorR) + " G�" + String(errorG) + " B�" + String(errorB) + " (total: �" + String(totalError) + " points)");
 
     if (totalError <= 2) {
-      Logger::info("[LOCKED_TEST] ✅ EXCELLENT! <2 point accuracy achieved with locked settings!");
+      Logger::info("[LOCKED_TEST] ? EXCELLENT! <2 point accuracy achieved with locked settings!");
     } else if (totalError <= 5) {
-      Logger::info("[LOCKED_TEST] ✅ GOOD accuracy with locked settings");
+      Logger::info("[LOCKED_TEST] ? GOOD accuracy with locked settings");
     } else {
-      Logger::warn("[LOCKED_TEST] ⚠️ Still poor accuracy - matrix or calibration issue");
+      Logger::warn("[LOCKED_TEST] ?? Still poor accuracy - matrix or calibration issue");
     }
 
     String response = "{\"status\":\"success\",\"lockedXYZ\":[" + String(reading.x) + "," + String(reading.y) + "," + String(reading.z) +
@@ -3525,8 +3587,8 @@ void setup() {
   server.on("/api/calibrate-lock-settings", HTTP_POST, [](AsyncWebServerRequest *request) {
     Logger::info("=== METER & LOCK: Starting professional calibration workflow ===");
 
-    Logger::info("[METER_LOCK] 📋 Place Vivid White sample on sensor for metering...");
-    Logger::info("[METER_LOCK] ⏳ Starting auto-exposure to find optimal settings...");
+    Logger::info("[METER_LOCK] ?? Place Vivid White sample on sensor for metering...");
+    Logger::info("[METER_LOCK] ? Starting auto-exposure to find optimal settings...");
 
     // Step 1: METER - Use the auto-exposure system to find the optimal settings for the white reference
     SensorData optimalData = readOptimalSensorData();
@@ -3536,12 +3598,12 @@ void setup() {
     settings.lockedGain = static_cast<TCS3430AutoGain::Gain>(colorSensor.getGain());
     settings.areSettingsLocked = true;
 
-    Logger::info("✅ SETTINGS LOCKED for this calibration session:");
-    Logger::info("[METER_LOCK] 🔒 Integration Time: " + String(settings.lockedIntegrationTime, 1) + "ms");
-    Logger::info("[METER_LOCK] 🔒 Gain: " + String(static_cast<int>(settings.lockedGain)) + "x");
-    Logger::info("[METER_LOCK] 📊 White reference XYZ: (" + String(optimalData.x) + "," + String(optimalData.y) + "," + String(optimalData.z) + ")");
-    Logger::info("[METER_LOCK] 🎯 All calibration points will now use these exact settings");
-    Logger::info("[METER_LOCK] 📋 Next: Proceed with calibrating all color points using /api/calibrate/{color}");
+    Logger::info("? SETTINGS LOCKED for this calibration session:");
+    Logger::info("[METER_LOCK] ?? Integration Time: " + String(settings.lockedIntegrationTime, 1) + "ms");
+    Logger::info("[METER_LOCK] ?? Gain: " + String(static_cast<int>(settings.lockedGain)) + "x");
+    Logger::info("[METER_LOCK] ?? White reference XYZ: (" + String(optimalData.x) + "," + String(optimalData.y) + "," + String(optimalData.z) + ")");
+    Logger::info("[METER_LOCK] ?? All calibration points will now use these exact settings");
+    Logger::info("[METER_LOCK] ?? Next: Proceed with calibrating all color points using /api/calibrate/{color}");
 
     String response = "{\"status\":\"success\",\"message\":\"Sensor settings metered and locked for calibration session\"," +
                      String("\"lockedIntegrationTime\":") + String(settings.lockedIntegrationTime, 1) + "," +
@@ -3556,12 +3618,12 @@ void setup() {
   // Professional "Unlock" endpoint to end calibration session
   server.on("/api/calibrate-unlock-settings", HTTP_POST, [](AsyncWebServerRequest *request) {
     Logger::info("=== UNLOCK: Ending calibration session ===");
-    Logger::info("[UNLOCK] 🔓 Settings unlocked - returning to dynamic auto-exposure mode");
+    Logger::info("[UNLOCK] ?? Settings unlocked - returning to dynamic auto-exposure mode");
 
     settings.areSettingsLocked = false;
 
-    Logger::info("[UNLOCK] ✅ System is now in dynamic auto-exposure mode");
-    Logger::info("[UNLOCK] 🔄 Auto-exposure will adjust settings based on lighting conditions");
+    Logger::info("[UNLOCK] ? System is now in dynamic auto-exposure mode");
+    Logger::info("[UNLOCK] ?? Auto-exposure will adjust settings based on lighting conditions");
 
     String response = "{\"status\":\"success\",\"message\":\"Settings unlocked. System is now in dynamic auto-exposure mode.\"}";
     request->send(200, "application/json", response);
@@ -3571,17 +3633,17 @@ void setup() {
   // Intelligent Vivid White adjustment endpoint
   server.on("/api/adjust-for-vivid-white", HTTP_POST, [](AsyncWebServerRequest *request) {
     Logger::info("=== INTELLIGENT VIVID WHITE ADJUSTMENT ===");
-    Logger::info("[VIVID_ADJUST] 🎯 Target: RGB(247,248,244) for Vivid White sample");
-    Logger::info("[VIVID_ADJUST] 📋 Place Vivid White sample on sensor and keep it there");
-    Logger::info("[VIVID_ADJUST] 🔧 Starting intelligent adjustment process...");
+    Logger::info("[VIVID_ADJUST] ?? Target: RGB(247,248,244) for Vivid White sample");
+    Logger::info("[VIVID_ADJUST] ?? Place Vivid White sample on sensor and keep it there");
+    Logger::info("[VIVID_ADJUST] ?? Starting intelligent adjustment process...");
 
     // Take initial reading
     SensorData initialReading = readOptimalSensorData();
     uint8_t currentR, currentG, currentB;
-    convertXyZtoRgbProfessional(initialReading.x, initialReading.y, initialReading.z,
+    convertXyZtoRgbUnified(initialReading.x, initialReading.y, initialReading.z,
                                initialReading.ir1, initialReading.ir2, currentR, currentG, currentB);
 
-    Logger::info("[VIVID_ADJUST] 📊 Initial reading: XYZ(" + String(initialReading.x) + "," + String(initialReading.y) + "," + String(initialReading.z) + ") → RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
+    Logger::info("[VIVID_ADJUST] ?? Initial reading: XYZ(" + String(initialReading.x) + "," + String(initialReading.y) + "," + String(initialReading.z) + ") ? RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
 
     // Target RGB values
     const uint8_t targetR = 247, targetG = 248, targetB = 244;
@@ -3590,21 +3652,21 @@ void setup() {
     int errorB = (int)currentB - targetB;
     int totalError = abs(errorR) + abs(errorG) + abs(errorB);
 
-    Logger::info("[VIVID_ADJUST] 📏 Initial error: R" + String(errorR > 0 ? "+" : "") + String(errorR) + " G" + String(errorG > 0 ? "+" : "") + String(errorG) + " B" + String(errorB > 0 ? "+" : "") + String(errorB) + " (total: " + String(totalError) + " points)");
+    Logger::info("[VIVID_ADJUST] ?? Initial error: R" + String(errorR > 0 ? "+" : "") + String(errorR) + " G" + String(errorG > 0 ? "+" : "") + String(errorG) + " B" + String(errorB > 0 ? "+" : "") + String(errorB) + " (total: " + String(totalError) + " points)");
 
     String adjustmentLog = "";
     bool adjustmentMade = false;
 
     // Strategy: If RGB values are too high (saturated), reduce sensor sensitivity
     if (currentR >= 250 && currentG >= 250 && currentB >= 250) {
-      Logger::info("[VIVID_ADJUST] ⚠️ RGB values saturated - reducing sensor sensitivity");
+      Logger::info("[VIVID_ADJUST] ?? RGB values saturated - reducing sensor sensitivity");
 
       // Step 1: Reduce LED brightness
       if (settings.ledBrightness > 30) {
         int newBrightness = max(30, settings.ledBrightness - 20);
         settings.ledBrightness = newBrightness;
         analogWrite(leDpin, settings.ledBrightness);
-        Logger::info("[VIVID_ADJUST] 🔧 Reduced LED brightness: " + String(settings.ledBrightness + 20) + " → " + String(newBrightness));
+        Logger::info("[VIVID_ADJUST] ?? Reduced LED brightness: " + String(settings.ledBrightness + 20) + " ? " + String(newBrightness));
         adjustmentLog += "LED brightness reduced to " + String(newBrightness) + "; ";
         adjustmentMade = true;
         delay(500); // Allow LED change to take effect
@@ -3615,7 +3677,7 @@ void setup() {
       if (currentIntTime > 50.0f) {
         float newIntTime = max(50.0f, currentIntTime * 0.7f);
         colorSensor.integrationTime(newIntTime);
-        Logger::info("[VIVID_ADJUST] 🔧 Reduced integration time: " + String(currentIntTime, 1) + "ms → " + String(newIntTime, 1) + "ms");
+        Logger::info("[VIVID_ADJUST] ?? Reduced integration time: " + String(currentIntTime, 1) + "ms ? " + String(newIntTime, 1) + "ms");
         adjustmentLog += "Integration time reduced to " + String(newIntTime, 1) + "ms; ";
         adjustmentMade = true;
         delay(200);
@@ -3623,14 +3685,14 @@ void setup() {
     }
     // Strategy: If RGB values are too low, increase sensor sensitivity
     else if (currentR < 200 || currentG < 200 || currentB < 200) {
-      Logger::info("[VIVID_ADJUST] 📈 RGB values too low - increasing sensor sensitivity");
+      Logger::info("[VIVID_ADJUST] ?? RGB values too low - increasing sensor sensitivity");
 
       // Step 1: Increase LED brightness
       if (settings.ledBrightness < 150) {
         int newBrightness = min(150, settings.ledBrightness + 20);
         settings.ledBrightness = newBrightness;
         analogWrite(leDpin, settings.ledBrightness);
-        Logger::info("[VIVID_ADJUST] 🔧 Increased LED brightness: " + String(settings.ledBrightness - 20) + " → " + String(newBrightness));
+        Logger::info("[VIVID_ADJUST] ?? Increased LED brightness: " + String(settings.ledBrightness - 20) + " ? " + String(newBrightness));
         adjustmentLog += "LED brightness increased to " + String(newBrightness) + "; ";
         adjustmentMade = true;
         delay(500);
@@ -3641,7 +3703,7 @@ void setup() {
       if (currentIntTime < 300.0f) {
         float newIntTime = min(300.0f, currentIntTime * 1.3f);
         colorSensor.integrationTime(newIntTime);
-        Logger::info("[VIVID_ADJUST] 🔧 Increased integration time: " + String(currentIntTime, 1) + "ms → " + String(newIntTime, 1) + "ms");
+        Logger::info("[VIVID_ADJUST] ?? Increased integration time: " + String(currentIntTime, 1) + "ms ? " + String(newIntTime, 1) + "ms");
         adjustmentLog += "Integration time increased to " + String(newIntTime, 1) + "ms; ";
         adjustmentMade = true;
         delay(200);
@@ -3653,7 +3715,7 @@ void setup() {
       delay(1000); // Allow all changes to stabilize
       SensorData newReading = readOptimalSensorData();
       uint8_t newR, newG, newB;
-      convertXyZtoRgbProfessional(newReading.x, newReading.y, newReading.z,
+      convertXyZtoRgbUnified(newReading.x, newReading.y, newReading.z,
                                  newReading.ir1, newReading.ir2, newR, newG, newB);
 
       int newErrorR = (int)newR - targetR;
@@ -3661,32 +3723,32 @@ void setup() {
       int newErrorB = (int)newB - targetB;
       int newTotalError = abs(newErrorR) + abs(newErrorG) + abs(newErrorB);
 
-      Logger::info("[VIVID_ADJUST] 📊 After adjustment: XYZ(" + String(newReading.x) + "," + String(newReading.y) + "," + String(newReading.z) + ") → RGB(" + String(newR) + "," + String(newG) + "," + String(newB) + ")");
-      Logger::info("[VIVID_ADJUST] 📏 New error: R" + String(newErrorR > 0 ? "+" : "") + String(newErrorR) + " G" + String(newErrorG > 0 ? "+" : "") + String(newErrorG) + " B" + String(newErrorB > 0 ? "+" : "") + String(newErrorB) + " (total: " + String(newTotalError) + " points)");
+      Logger::info("[VIVID_ADJUST] ?? After adjustment: XYZ(" + String(newReading.x) + "," + String(newReading.y) + "," + String(newReading.z) + ") ? RGB(" + String(newR) + "," + String(newG) + "," + String(newB) + ")");
+      Logger::info("[VIVID_ADJUST] ?? New error: R" + String(newErrorR > 0 ? "+" : "") + String(newErrorR) + " G" + String(newErrorG > 0 ? "+" : "") + String(newErrorG) + " B" + String(newErrorB > 0 ? "+" : "") + String(newErrorB) + " (total: " + String(newTotalError) + " points)");
 
       if (newTotalError < totalError) {
-        Logger::info("[VIVID_ADJUST] ✅ Improvement achieved! Error reduced from " + String(totalError) + " to " + String(newTotalError) + " points");
+        Logger::info("[VIVID_ADJUST] ? Improvement achieved! Error reduced from " + String(totalError) + " to " + String(newTotalError) + " points");
       } else {
-        Logger::warn("[VIVID_ADJUST] ⚠️ No improvement. Error changed from " + String(totalError) + " to " + String(newTotalError) + " points");
+        Logger::warn("[VIVID_ADJUST] ?? No improvement. Error changed from " + String(totalError) + " to " + String(newTotalError) + " points");
       }
 
       currentR = newR; currentG = newG; currentB = newB;
       totalError = newTotalError;
     } else {
-      Logger::info("[VIVID_ADJUST] ℹ️ No automatic adjustments made - values already in reasonable range");
+      Logger::info("[VIVID_ADJUST] ?? No automatic adjustments made - values already in reasonable range");
     }
 
     // Provide next steps
     String nextSteps = "";
     if (totalError <= 5) {
       nextSteps = "Excellent! Ready to lock settings with /api/calibrate-lock-settings";
-      Logger::info("[VIVID_ADJUST] ✅ READY TO LOCK! Error is " + String(totalError) + " points (≤5 target achieved)");
+      Logger::info("[VIVID_ADJUST] ? READY TO LOCK! Error is " + String(totalError) + " points (=5 target achieved)");
     } else if (totalError <= 15) {
       nextSteps = "Good progress. You can lock settings or make manual adjustments";
-      Logger::info("[VIVID_ADJUST] ✅ GOOD PROGRESS! Error is " + String(totalError) + " points. Consider locking or fine-tuning");
+      Logger::info("[VIVID_ADJUST] ? GOOD PROGRESS! Error is " + String(totalError) + " points. Consider locking or fine-tuning");
     } else {
       nextSteps = "More adjustment needed. Try manual LED brightness or integration time changes";
-      Logger::info("[VIVID_ADJUST] ⚠️ MORE WORK NEEDED. Error is " + String(totalError) + " points. Manual adjustment recommended");
+      Logger::info("[VIVID_ADJUST] ?? MORE WORK NEEDED. Error is " + String(totalError) + " points. Manual adjustment recommended");
     }
 
     String response = "{\"status\":\"success\",\"message\":\"Vivid White adjustment completed\"," +
@@ -3720,14 +3782,14 @@ void setup() {
   // Initialize the new Color Calibration System
   Logger::info("Initializing Color Calibration System...");
   if (ColorCalibration::initialize()) {
-    Logger::info("✅ ColorCalibration library initialized successfully");
+    Logger::info("? ColorCalibration library initialized successfully");
 
     // Initialize calibration endpoints
     calibrationEndpoints.initialize();
-    Logger::info("✅ CalibrationEndpoints initialized - new calibration API available");
-    Logger::info("🎯 5-Point Matrix Calibration System is now active");
+    Logger::info("? CalibrationEndpoints initialized - new calibration API available");
+    Logger::info("?? 5-Point Matrix Calibration System is now active");
   } else {
-    Logger::error("❌ Failed to initialize ColorCalibration library - using legacy system only");
+    Logger::error("? Failed to initialize ColorCalibration library - using legacy system only");
   }
 
   server.begin();
@@ -3790,22 +3852,22 @@ void loop() {
   if (now - lastDetailedLog > 20000 && detailedLoggingEnabled) {
     bool isCalibrated = ColorCalibration::isCalibrated();
     Serial.println("\n" + String('*').substring(0, 60));
-    Logger::info("🔍 [MAIN_LOOP] Live reading analysis starting...");
+    Logger::info("?? [MAIN_LOOP] Live reading analysis starting...");
     delay(300);
-    Logger::info("[MAIN_LOOP] 📊 Calibration: " + String(isCalibrated ? "✅ ACTIVE" : "❌ INACTIVE"));
+    Logger::info("[MAIN_LOOP] ?? Calibration: " + String(isCalibrated ? "? ACTIVE" : "? INACTIVE"));
     delay(300);
-    Logger::info("[MAIN_LOOP] 🔬 Sensor XYZ: (" + String(SENSOR_DATA.x) + "," + String(SENSOR_DATA.y) + "," + String(SENSOR_DATA.z) + ")");
+    Logger::info("[MAIN_LOOP] ?? Sensor XYZ: (" + String(SENSOR_DATA.x) + "," + String(SENSOR_DATA.y) + "," + String(SENSOR_DATA.z) + ")");
     delay(300);
     lastDetailedLog = now;
   }
 
-  convertXyZtoRgbProfessional(SENSOR_DATA.x, SENSOR_DATA.y, SENSOR_DATA.z, SENSOR_DATA.ir1,
-                              SENSOR_DATA.ir2, r, g, b);
+  convertXyZtoRgbUnified(SENSOR_DATA.x, SENSOR_DATA.y, SENSOR_DATA.z, SENSOR_DATA.ir1,
+                        SENSOR_DATA.ir2, r, g, b);
 
   // Show result with delay for readability
   if (now - lastDetailedLog < 1000 && detailedLoggingEnabled) { // Within 1 second of detailed log
     delay(300); // Delay before showing result
-    Logger::info("[MAIN_LOOP] 📤 Final RGB: (" + String(r) + "," + String(g) + "," + String(b) + ")");
+    Logger::info("[MAIN_LOOP] ?? Final RGB: (" + String(r) + "," + String(g) + "," + String(b) + ")");
     delay(300);
     Serial.println(String('*').substring(0, 60) + "\n");
   }
@@ -4077,11 +4139,12 @@ void handleDebugVividColors(AsyncWebServerRequest *request) {
   uint8_t g3 = 0;
   uint8_t b3 = 0;
 
-  // Method 1: DFRobot standard calibration
-  convertXyZtoRgbProfessional(X, Y, Z, 0, 0, r1, g1, b1);  // Using professional conversion
+  // DEPRECATED: Multiple competing calibration methods - replaced with unified system
+  // Method 1: Legacy test (for comparison only)
+  convertXyZtoRgbUnified(X, Y, Z, 0, 0, r1, g1, b1);
 
-  // Method 2: Placeholder calibration (ready for vivid white implementation)
-  convertXyZtoRgbProfessional(X, Y, Z, IR1, IR2, r2, g2, b2);
+  // Method 2: Unified conversion (authoritative)
+  convertXyZtoRgbUnified(X, Y, Z, IR1, IR2, r2, g2, b2);
 
   // Method 3: Enhanced vivid color calibration (temporary test)
   float const X_NORM = X / 65535.0f;
@@ -4167,7 +4230,7 @@ void handleFixBlueChannel(AsyncWebServerRequest *request) {
   uint8_t r = 0;
   uint8_t g = 0;
   uint8_t b = 0;
-  convertXyZtoRgbProfessional(X, Y, Z, 0, 0, r, g, b);  // Using professional conversion
+  convertXyZtoRgbUnified(X, Y, Z, 0, 0, r, g, b);  // Using professional conversion
 
   JsonResponseBuilder builder;
   builder.addField(JSON_FIELD_STATUS, JSON_STATUS_SUCCESS);
@@ -4248,7 +4311,7 @@ void handleFixVividColors(AsyncWebServerRequest *request) {
   uint8_t r = 0;
   uint8_t g = 0;
   uint8_t b = 0;
-  convertXyZtoRgbProfessional(X, Y, Z, IR1, IR2, r, g, b);
+  convertXyZtoRgbUnified(X, Y, Z, IR1, IR2, r, g, b);
 
   JsonResponseBuilder builder;
   builder.addField(JSON_FIELD_STATUS, JSON_STATUS_SUCCESS);
@@ -4431,13 +4494,13 @@ SensorData readOptimalSensorData(int maxAttempts) {
   bool shouldLogDetails = (currentTime - lastDetailedLog) > 60000; // 60 seconds
 
   if (shouldLogDetails) {
-    Logger::info("🎯 [AUTO_EXPOSURE] Starting three-step auto-exposure algorithm...");
+    Logger::info("?? [AUTO_EXPOSURE] Starting three-step auto-exposure algorithm...");
     lastDetailedLog = currentTime;
   }
 
   for (int attempt = 0; attempt < maxAttempts; ++attempt) {
     if (shouldLogDetails) {
-      Logger::debug("🔄 [AUTO_EXPOSURE] Test shot " + String(attempt + 1) + "/" + String(maxAttempts));
+      Logger::debug("?? [AUTO_EXPOSURE] Test shot " + String(attempt + 1) + "/" + String(maxAttempts));
     }
 
     // STEP 1: Take a Quick "Test Shot" to measure the light
@@ -4445,7 +4508,7 @@ SensorData readOptimalSensorData(int maxAttempts) {
     uint16_t maxChannelValue = max({currentData.X, currentData.Y, currentData.Z});
 
     if (shouldLogDetails) {
-      Logger::debug("📈 [AUTO_EXPOSURE] Test result: X=" + String(currentData.X) +
+      Logger::debug("?? [AUTO_EXPOSURE] Test result: X=" + String(currentData.X) +
                     " Y=" + String(currentData.Y) + " Z=" + String(currentData.Z) +
                     " Max=" + String(maxChannelValue));
     }
@@ -4455,8 +4518,8 @@ SensorData readOptimalSensorData(int maxAttempts) {
     // --- The "Just Right" Case - Updated with new optimal window ---
     if (maxChannelValue >= OPTIMAL_WINDOW_LOW && maxChannelValue <= OPTIMAL_WINDOW_HIGH) {
       if (shouldLogDetails) {
-        Logger::info("✅ [AUTO_EXPOSURE] Optimal exposure found! Max channel: " + String(maxChannelValue));
-        Logger::info("🎯 [AUTO_EXPOSURE] Final settings: IntTime=" + String(colorSensor.getIntegrationTime(), 1) +
+        Logger::info("? [AUTO_EXPOSURE] Optimal exposure found! Max channel: " + String(maxChannelValue));
+        Logger::info("?? [AUTO_EXPOSURE] Final settings: IntTime=" + String(colorSensor.getIntegrationTime(), 1) +
                      "ms, Gain=" + String(static_cast<int>(colorSensor.getGain())) + "x");
       }
       // The settings are now perfect. Take the final, clean, averaged reading and return.
@@ -4466,7 +4529,7 @@ SensorData readOptimalSensorData(int maxAttempts) {
     // --- The "Too Bright" (Overexposed) Case - PROPORTIONAL CONTROL ---
     if (maxChannelValue > OPTIMAL_WINDOW_HIGH) {
       if (shouldLogDetails) {
-        Logger::debug("📉 [AUTO_EXPOSURE] Overexposed (max=" + String(maxChannelValue) + "), reducing sensitivity...");
+        Logger::debug("?? [AUTO_EXPOSURE] Overexposed (max=" + String(maxChannelValue) + "), reducing sensitivity...");
       }
 
       // STEP 3: Proportional Correction (Reduce Sensitivity)
@@ -4482,8 +4545,8 @@ SensorData readOptimalSensorData(int maxAttempts) {
         float newIntegration = max(25.0f, currentIntegration * adjustmentFactor);
         colorSensor.integrationTime(newIntegration);
         if (shouldLogDetails) {
-          Logger::debug("⏱️ [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
-                       "ms → " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
+          Logger::debug("?? [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
+                       "ms ? " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
         }
       } else if (currentGain > TCS3430AutoGain::Gain::GAIN_1X) {
         // If integration time is at minimum, step the gain down
@@ -4492,11 +4555,11 @@ SensorData readOptimalSensorData(int maxAttempts) {
         // Reset integration time to allow proportional control
         colorSensor.integrationTime(100.0f);
         if (shouldLogDetails) {
-          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain down to " + String(static_cast<int>(newGain)) + "x, reset integration");
+          Logger::debug("?? [AUTO_EXPOSURE] Stepped gain down to " + String(static_cast<int>(newGain)) + "x, reset integration");
         }
       } else {
         if (shouldLogDetails) {
-          Logger::error("⚠️ [AUTO_EXPOSURE] SATURATION UNCORRECTABLE. Scene is too bright even at minimum settings.");
+          Logger::error("?? [AUTO_EXPOSURE] SATURATION UNCORRECTABLE. Scene is too bright even at minimum settings.");
         }
         // We can't do anything else. Return the saturated reading as a failure signal.
         return {currentData.X, currentData.Y, currentData.Z, currentData.IR1, currentData.IR2};
@@ -4508,7 +4571,7 @@ SensorData readOptimalSensorData(int maxAttempts) {
     // --- The "Too Dark" (Underexposed) Case - PROPORTIONAL CONTROL ---
     if (maxChannelValue < OPTIMAL_WINDOW_LOW) {
       if (shouldLogDetails) {
-        Logger::debug("📈 [AUTO_EXPOSURE] Underexposed (max=" + String(maxChannelValue) + "), increasing sensitivity...");
+        Logger::debug("?? [AUTO_EXPOSURE] Underexposed (max=" + String(maxChannelValue) + "), increasing sensitivity...");
       }
 
       // STEP 3: Proportional Correction (Increase Sensitivity)
@@ -4524,8 +4587,8 @@ SensorData readOptimalSensorData(int maxAttempts) {
         float newIntegration = min(300.0f, currentIntegration * adjustmentFactor);
         colorSensor.integrationTime(newIntegration);
         if (shouldLogDetails) {
-          Logger::debug("⏱️ [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
-                       "ms → " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
+          Logger::debug("?? [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
+                       "ms ? " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
         }
       } else if (currentGain < TCS3430AutoGain::Gain::GAIN_64X) {
         // If integration time is maxed out, step the gain up
@@ -4534,11 +4597,11 @@ SensorData readOptimalSensorData(int maxAttempts) {
         // Reset integration time to allow proportional control
         colorSensor.integrationTime(75.0f);
         if (shouldLogDetails) {
-          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain up to " + String(static_cast<int>(newGain)) + "x, reset integration");
+          Logger::debug("?? [AUTO_EXPOSURE] Stepped gain up to " + String(static_cast<int>(newGain)) + "x, reset integration");
         }
       } else {
         if (shouldLogDetails) {
-          Logger::warn("⚠️ [AUTO_EXPOSURE] MAX SENSITIVITY REACHED. Scene may be too dark.");
+          Logger::warn("?? [AUTO_EXPOSURE] MAX SENSITIVITY REACHED. Scene may be too dark.");
         }
         // We can't get any more sensitive. Return the best possible averaged reading.
         return readAveragedSensorData();
@@ -4548,7 +4611,7 @@ SensorData readOptimalSensorData(int maxAttempts) {
 
   // If we reach here, we couldn't achieve optimal exposure within maxAttempts
   if (shouldLogDetails) {
-    Logger::error("⚠️ [AUTO_EXPOSURE] Failed to find optimal settings after " + String(maxAttempts) + " attempts.");
+    Logger::error("?? [AUTO_EXPOSURE] Failed to find optimal settings after " + String(maxAttempts) + " attempts.");
   }
 
   return readAveragedSensorData(); // Fallback: return the last known reading.
@@ -4565,7 +4628,7 @@ SensorData readOptimalSensorData(int maxAttempts) {
  * @return true if all validation tests pass
  */
 bool validateAutoExposureSystem() {
-  Logger::info("🧪 [VALIDATION] Starting auto-exposure system validation...");
+  Logger::info("?? [VALIDATION] Starting auto-exposure system validation...");
 
   bool allTestsPassed = true;
   int testCount = 0;
@@ -4573,23 +4636,23 @@ bool validateAutoExposureSystem() {
 
   // Test 1: Basic functionality test
   testCount++;
-  Logger::info("📋 [VALIDATION] Test 1: Basic auto-exposure functionality");
+  Logger::info("?? [VALIDATION] Test 1: Basic auto-exposure functionality");
 
   SensorData testData1 = readOptimalSensorData(5);
   uint16_t maxChannel1 = max({testData1.x, testData1.y, testData1.z});
 
   if (maxChannel1 >= OPTIMAL_WINDOW_LOW && maxChannel1 <= OPTIMAL_WINDOW_HIGH) {
-    Logger::info("✅ [VALIDATION] Test 1 PASSED: Optimal exposure achieved (max=" + String(maxChannel1) + ")");
+    Logger::info("? [VALIDATION] Test 1 PASSED: Optimal exposure achieved (max=" + String(maxChannel1) + ")");
     passedTests++;
   } else {
-    Logger::warn("❌ [VALIDATION] Test 1 FAILED: Suboptimal exposure (max=" + String(maxChannel1) +
+    Logger::warn("? [VALIDATION] Test 1 FAILED: Suboptimal exposure (max=" + String(maxChannel1) +
                   ", target: " + String(OPTIMAL_WINDOW_LOW) + "-" + String(OPTIMAL_WINDOW_HIGH) + ")");
     allTestsPassed = false;
   }
 
   // Test 2: Consistency test - multiple readings should be stable
   testCount++;
-  Logger::info("📋 [VALIDATION] Test 2: Reading consistency");
+  Logger::info("?? [VALIDATION] Test 2: Reading consistency");
 
   SensorData testData2a = readOptimalSensorData(3);
   delay(500);
@@ -4601,31 +4664,31 @@ bool validateAutoExposureSystem() {
   uint16_t maxDiff = max({diff_x, diff_y, diff_z});
 
   if (maxDiff < 2000) { // Allow reasonable variation
-    Logger::info("✅ [VALIDATION] Test 2 PASSED: Consistent readings (max diff=" + String(maxDiff) + ")");
+    Logger::info("? [VALIDATION] Test 2 PASSED: Consistent readings (max diff=" + String(maxDiff) + ")");
     passedTests++;
   } else {
-    Logger::warn("❌ [VALIDATION] Test 2 FAILED: Inconsistent readings (max diff=" + String(maxDiff) + ")");
+    Logger::warn("? [VALIDATION] Test 2 FAILED: Inconsistent readings (max diff=" + String(maxDiff) + ")");
     allTestsPassed = false;
   }
 
   // Test 3: Saturation prevention test
   testCount++;
-  Logger::info("📋 [VALIDATION] Test 3: Saturation prevention");
+  Logger::info("?? [VALIDATION] Test 3: Saturation prevention");
 
   SensorData testData3 = readOptimalSensorData(8);
   uint16_t maxChannel3 = max({testData3.x, testData3.y, testData3.z});
 
   if (maxChannel3 < 65000) {
-    Logger::info("✅ [VALIDATION] Test 3 PASSED: No saturation detected (max=" + String(maxChannel3) + ")");
+    Logger::info("? [VALIDATION] Test 3 PASSED: No saturation detected (max=" + String(maxChannel3) + ")");
     passedTests++;
   } else {
-    Logger::warn("❌ [VALIDATION] Test 3 FAILED: Saturation detected (max=" + String(maxChannel3) + ")");
+    Logger::warn("? [VALIDATION] Test 3 FAILED: Saturation detected (max=" + String(maxChannel3) + ")");
     allTestsPassed = false;
   }
 
   // Test 4: Performance test - should complete within reasonable time
   testCount++;
-  Logger::info("📋 [VALIDATION] Test 4: Performance test");
+  Logger::info("?? [VALIDATION] Test 4: Performance test");
 
   unsigned long startTime = millis();
   SensorData testData4 = readOptimalSensorData(10);
@@ -4633,24 +4696,24 @@ bool validateAutoExposureSystem() {
   unsigned long duration = endTime - startTime;
 
   if (duration < 10000) { // Should complete within 10 seconds
-    Logger::info("✅ [VALIDATION] Test 4 PASSED: Completed in " + String(duration) + "ms");
+    Logger::info("? [VALIDATION] Test 4 PASSED: Completed in " + String(duration) + "ms");
     passedTests++;
   } else {
-    Logger::warn("❌ [VALIDATION] Test 4 FAILED: Too slow (" + String(duration) + "ms)");
+    Logger::warn("? [VALIDATION] Test 4 FAILED: Too slow (" + String(duration) + "ms)");
     allTestsPassed = false;
   }
 
   // Summary
-  Logger::info("🧪 [VALIDATION] Auto-exposure system validation complete:");
+  Logger::info("?? [VALIDATION] Auto-exposure system validation complete:");
   Logger::info("   Total Tests: " + String(testCount));
   Logger::info("   Passed: " + String(passedTests));
   Logger::info("   Failed: " + String(testCount - passedTests));
   Logger::info("   Success Rate: " + String((passedTests * 100) / testCount) + "%");
 
   if (allTestsPassed) {
-    Logger::info("✅ [VALIDATION] ALL TESTS PASSED - Auto-exposure system is working correctly!");
+    Logger::info("? [VALIDATION] ALL TESTS PASSED - Auto-exposure system is working correctly!");
   } else {
-    Logger::warn("❌ [VALIDATION] SOME TESTS FAILED - Please review the auto-exposure system");
+    Logger::warn("? [VALIDATION] SOME TESTS FAILED - Please review the auto-exposure system");
   }
 
   return allTestsPassed;
@@ -4836,7 +4899,7 @@ void logPeriodicStatus(const SensorData& data, const ColorRGB& color, TimingStat
   }
 
     char statusMsg[256];
-    sprintf(statusMsg, "XYZ: %d,%d,%d | RGB: %d,%d,%d | Color: %s | Last search: %lu�s",
+    sprintf(statusMsg, "XYZ: %d,%d,%d | RGB: %d,%d,%d | Color: %s | Last search: %lu?s",
             data.x, data.y, data.z, color.r, color.g, color.b,
             colorLookup.currentColorName.c_str(), currentColorData.colorSearchDuration);
     Logger::info(statusMsg);
@@ -5244,8 +5307,8 @@ void handleFixBlackReadings(AsyncWebServerRequest *request) {
 // Professional "Metering Before Measuring" Auto-Adjust White Calibration
 void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
   Logger::info("=== Starting AUTO-ADJUST White Calibration ===");
-  Logger::info("🎯 Professional 'Metering Before Measuring' Workflow");
-  Logger::info("📸 Like a photographer metering a white wedding dress before the shot");
+  Logger::info("?? Professional 'Metering Before Measuring' Workflow");
+  Logger::info("?? Like a photographer metering a white wedding dress before the shot");
   Logger::info("");
   Logger::info("Step 1: METERING... Finding optimal sensor settings for white reference");
 
@@ -5254,8 +5317,8 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
   // Call the Vivid White-specific auto-adjust function to find optimal settings for target RGB(247,248,244)
   if (!autoAdjustSensorForVividWhite(x, y, z, 15)) { // Allow full adjustment cycles for calibration
     // The auto-adjust failed - object too close (saturating) or too far (too dark)
-    Logger::error("❌ Auto-adjust failed. Sensor could not find optimal settings.");
-    Logger::error("💡 Suggestions:");
+    Logger::error("? Auto-adjust failed. Sensor could not find optimal settings.");
+    Logger::error("?? Suggestions:");
     Logger::error("   - If too bright: Move white object further from sensor");
     Logger::error("   - If too dark: Move white object closer to sensor");
     Logger::error("   - Ensure adequate lighting conditions");
@@ -5271,9 +5334,9 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
 
   // --- DYNAMIC AUTO-EXPOSURE PHASE ---
   // REMOVED: Settings lock infrastructure - now using dynamic auto-exposure for every measurement
-  Logger::info("✅ METERING SUCCESSFUL! Sensor optimized for white reference");
-  Logger::info("   📊 Current settings will be used for this measurement only");
-  Logger::info("   🔄 Future measurements will use dynamic auto-exposure");
+  Logger::info("? METERING SUCCESSFUL! Sensor optimized for white reference");
+  Logger::info("   ?? Current settings will be used for this measurement only");
+  Logger::info("   ?? Future measurements will use dynamic auto-exposure");
   Logger::info("");
 
   // --- MEASUREMENT PHASE ---
@@ -5282,7 +5345,7 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
   // Take the final, definitive reading for the white point using optimal auto-exposure
   SensorData whiteData = readOptimalSensorData();
 
-  Logger::info("📊 Final White Reference Reading:");
+  Logger::info("?? Final White Reference Reading:");
   Logger::info("   X: " + String(whiteData.x) + " | Y: " + String(whiteData.y) + " | Z: " + String(whiteData.z));
 
   // Add this definitive point to the ColorCalibration library
@@ -5290,7 +5353,7 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
   bool success = ColorCalibration::getManager().addOrUpdateCalibrationPoint(colorName, whiteData.x, whiteData.y, whiteData.z);
 
   if (!success) {
-    Logger::error("❌ Failed to add white calibration point to ColorCalibration library");
+    Logger::error("? Failed to add white calibration point to ColorCalibration library");
 
     JsonResponseBuilder builder;
     builder.addField("status", "error");
@@ -5300,9 +5363,9 @@ void handleCalibrateWhiteAutoAdjust(AsyncWebServerRequest *request) {
     return;
   }
 
-  Logger::info("✅ White calibration point successfully stored in ColorCalibration library");
-  Logger::info("🎯 AUTO-ADJUST White Calibration COMPLETE!");
-  Logger::info("📋 Next: Calibrate other colors (they will use the same locked settings)");
+  Logger::info("? White calibration point successfully stored in ColorCalibration library");
+  Logger::info("?? AUTO-ADJUST White Calibration COMPLETE!");
+  Logger::info("?? Next: Calibrate other colors (they will use the same locked settings)");
 
   // Respond with rich success message
   JsonResponseBuilder builder;
@@ -5493,7 +5556,7 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
   uint8_t currentR = 0;
   uint8_t currentG = 0;
   uint8_t currentB = 0;
-  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, currentR, currentG, currentB);
+  convertXyZtoRgbUnified(x, y, z, ir1, ir2, currentR, currentG, currentB);
 
   Logger::info("Current vivid white sample produces RGB(" + String(currentR) + "," + String(currentG) + "," + String(currentB) + ")");
   Logger::info("Target vivid white should be RGB(" + String(settings.vividWhiteTargetR) + "," + String(settings.vividWhiteTargetG) + "," + String(settings.vividWhiteTargetB) + ")");
@@ -5515,7 +5578,7 @@ void handleCalibrateVividWhite(AsyncWebServerRequest *request) {
   uint8_t testR = 0;
   uint8_t testG = 0;
   uint8_t testB = 0;
-  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, testR, testG, testB);
+  convertXyZtoRgbUnified(x, y, z, ir1, ir2, testR, testG, testB);
 
   Logger::info("Vivid white calibration complete!");
   Logger::info("Before adjustment: RGB(" + String(currentR) + "," + String(currentG) + "," +
@@ -5644,7 +5707,7 @@ void handleOptimizeLEDForYellow(AsyncWebServerRequest *request) {
   uint8_t finalR;
   uint8_t finalG;
   uint8_t finalB;
-  convertXyZtoRgbProfessional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
+  convertXyZtoRgbUnified(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
 
   auto const finalTotal = static_cast<float>(finalX + finalY + finalZ);
   float const finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
@@ -5699,7 +5762,7 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   // Target yellow characteristics for optimal detection
   const float TARGET_XY_RATIO = 0.92f;        // X+Y should be 92% of total (strong yellow)
   const float TARGET_SIGNAL_STRENGTH = 8000.0f; // Target Y value for good signal
-  const float SIGNAL_TOLERANCE = 0.3f;        // �30% tolerance for signal strength
+  const float SIGNAL_TOLERANCE = 0.3f;        // ?30% tolerance for signal strength
   const uint16_t MIN_SIGNAL = 2000;           // Minimum acceptable signal
   const uint16_t MAX_SIGNAL = 45000;          // Maximum to avoid saturation
 
@@ -5845,7 +5908,7 @@ void handleOptimizeSensorForYellow(AsyncWebServerRequest *request) {
   uint8_t finalR;
   uint8_t finalG;
   uint8_t finalB;
-  convertXyZtoRgbProfessional(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
+  convertXyZtoRgbUnified(finalX, finalY, finalZ, finalIR1, finalIR2, finalR, finalG, finalB);
 
   auto const finalTotal = static_cast<float>(finalX + finalY + finalZ);
   float const finalXYRatio = (static_cast<float>(finalX + finalY)) / finalTotal;
@@ -5953,7 +6016,7 @@ void handleTuneBlack(AsyncWebServerRequest *request) {
   uint8_t testR = 0;
   uint8_t testG = 0;
   uint8_t testB = 0;
-  convertXyZtoRgbProfessional(X, Y, Z, IR1, IR2, testR, testG, testB);
+  convertXyZtoRgbUnified(X, Y, Z, IR1, IR2, testR, testG, testB);
 
   // Success criteria: RGB values should be = 5 for black calibration
   int const MAX_RGB = max({testR, testG, testB});
@@ -6052,7 +6115,7 @@ void handleDiagnoseCalibration(AsyncWebServerRequest *request) {
   uint8_t currentR = 0;
   uint8_t currentG = 0;
   uint8_t currentB = 0;
-  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, currentR, currentG, currentB);
+  convertXyZtoRgbUnified(x, y, z, ir1, ir2, currentR, currentG, currentB);
 
   JsonResponseBuilder builder;
   builder.addField("status", "success");
@@ -6124,7 +6187,7 @@ void handleOptimizeAccuracy(AsyncWebServerRequest *request) {
   uint8_t testR = 0;
   uint8_t testG = 0;
   uint8_t testB = 0;
-  convertXyZtoRgbProfessional(x, y, z, ir1, ir2, testR, testG, testB);
+  convertXyZtoRgbUnified(x, y, z, ir1, ir2, testR, testG, testB);
 
   JsonResponseBuilder builder;
   builder.addField("status", "success");
@@ -6216,7 +6279,7 @@ void handleTestAllImprovements(AsyncWebServerRequest *request) {
   uint8_t testR = 0;
   uint8_t testG = 0;
   uint8_t testB = 0;
-  convertXyZtoRgbProfessional(avgX, avgY, avgZ, testIR1, testIR2, testR, testG, testB);
+  convertXyZtoRgbUnified(avgX, avgY, avgZ, testIR1, testIR2, testR, testG, testB);
   bool const RGB_IN_RANGE = (testR > 0 && testG > 0 && testB > 0);
 
   // Calculate overall score
