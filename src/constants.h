@@ -36,7 +36,7 @@
 #define TEST_SCORE_POOR 20
 #define TEST_SCORE_VERY_POOR 10
 
-// Vivid White Target RGB Values
+// Vivid White Target RGB Values - RESTORED TO ORIGINAL
 #define VIVID_WHITE_TARGET_R 247
 #define VIVID_WHITE_TARGET_G 248
 #define VIVID_WHITE_TARGET_B 244

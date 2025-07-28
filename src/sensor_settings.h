@@ -86,11 +86,11 @@
 #define SENSOR_INTEGRATION_TIME 0x20  // ⚙️ TCS3430 integration time - 90ms reduced for white calibration
 #define SENSOR_SATURATION_THRESHOLD 60000  // 🚨 Saturation detection limit - lowered for better detection
 
-// Intelligent Auto-Adjustment Constants
-#define SATURATION_THRESHOLD 65000        // 🚨 Raw sensor value considered saturated
-#define OPTIMAL_TARGET_VALUE 35000        // 🎯 Ideal target for brightest channel (lowered from 40000)
-#define OPTIMAL_WINDOW_HIGH (OPTIMAL_TARGET_VALUE + 15000)  // 50000 - Upper bound (wider range)
-#define OPTIMAL_WINDOW_LOW  (OPTIMAL_TARGET_VALUE - 20000)  // 15000 - Lower bound (more tolerant)
+// Intelligent Auto-Adjustment Constants - AGGRESSIVE ANTI-SATURATION TUNING
+#define SATURATION_THRESHOLD 60000        // 🚨 Lowered saturation threshold for earlier intervention
+#define OPTIMAL_TARGET_VALUE 35000        // 🎯 Raised target for better signal quality while maintaining headroom
+#define OPTIMAL_WINDOW_HIGH 60000         // 60000 - Increased upper bound for brighter scenes
+#define OPTIMAL_WINDOW_LOW  15000         // 15000 - Lower bound (maintained for dark scenes)
 #define LED_PIN 5                          // 💡 LED pin number (default: 5)
 #define LED_BRIGHTNESS 100  // 🔆 LED brightness 0-255 - Reduced for white calibration
 

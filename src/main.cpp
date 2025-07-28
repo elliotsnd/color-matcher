@@ -538,7 +538,7 @@ struct RuntimeSettings {
 
   // REMOVED: Legacy calibration data - now using ColorCalibration library exclusively
 
-  // Target RGB values for vivid white sample
+  // Target RGB values for vivid white sample - RESTORED TO ORIGINAL
   uint8_t vividWhiteTargetR = 247;
   uint8_t vividWhiteTargetG = 248;
   uint8_t vividWhiteTargetB = 244;
@@ -649,10 +649,10 @@ void emergencyDesaturation() {
 bool autoAdjustSensorForVividWhite(uint16_t& x, uint16_t& y, uint16_t& z, int maxAttempts = 15) {
   Logger::info("[VIVID_WHITE_AUTO] Starting auto-adjustment for Vivid White target RGB(247,248,244)");
 
-  // Target RGB values for Vivid White
-  const uint8_t TARGET_R = 247;
-  const uint8_t TARGET_G = 248;
-  const uint8_t TARGET_B = 244;
+  // Target RGB values for Conservative White (updated for calibration stability)
+  const uint8_t TARGET_R = VIVID_WHITE_TARGET_R;
+  const uint8_t TARGET_G = VIVID_WHITE_TARGET_G;
+  const uint8_t TARGET_B = VIVID_WHITE_TARGET_B;
 
   float bestError = 999999.0f;
   TCS3430AutoGain::Gain bestGain = TCS3430AutoGain::Gain::GAIN_16X;
@@ -4323,8 +4323,8 @@ SensorData readOptimalSensorData(int maxAttempts) {
 
     // STEP 2: Analyze the Result
 
-    // --- The "Just Right" Case ---
-    if (maxChannelValue >= 25000 && maxChannelValue <= 50000) {
+    // --- The "Just Right" Case - Updated with new optimal window ---
+    if (maxChannelValue >= OPTIMAL_WINDOW_LOW && maxChannelValue <= OPTIMAL_WINDOW_HIGH) {
       if (shouldLogDetails) {
         Logger::info("✅ [AUTO_EXPOSURE] Optimal exposure found! Max channel: " + String(maxChannelValue));
         Logger::info("🎯 [AUTO_EXPOSURE] Final settings: IntTime=" + String(colorSensor.getIntegrationTime(), 1) +
@@ -4334,28 +4334,36 @@ SensorData readOptimalSensorData(int maxAttempts) {
       return readAveragedSensorData();
     }
 
-    // --- The "Too Bright" (Overexposed) Case ---
-    if (maxChannelValue > 50000) {
+    // --- The "Too Bright" (Overexposed) Case - PROPORTIONAL CONTROL ---
+    if (maxChannelValue > OPTIMAL_WINDOW_HIGH) {
       if (shouldLogDetails) {
         Logger::debug("📉 [AUTO_EXPOSURE] Overexposed (max=" + String(maxChannelValue) + "), reducing sensitivity...");
       }
 
-      // STEP 3: Make an Aggressive Correction (Reduce Sensitivity)
+      // STEP 3: Proportional Correction (Reduce Sensitivity)
       float currentIntegration = colorSensor.getIntegrationTime();
       TCS3430AutoGain::Gain currentGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(colorSensor.getGain()));
 
+      // Calculate proportional adjustment factor
+      float targetRatio = (float)OPTIMAL_TARGET_VALUE / (float)maxChannelValue;
+      float adjustmentFactor = targetRatio * 0.8f; // 80% of calculated to prevent overshoot
+
       if (currentIntegration > 25.0f) {
-        // First, halve the integration time. This is the fastest and most granular control.
-        colorSensor.integrationTime(currentIntegration / 2.0f);
+        // Proportional integration time reduction
+        float newIntegration = max(25.0f, currentIntegration * adjustmentFactor);
+        colorSensor.integrationTime(newIntegration);
         if (shouldLogDetails) {
-          Logger::debug("⏱️ [AUTO_EXPOSURE] Halved integration time to " + String(currentIntegration / 2.0f, 1) + "ms");
+          Logger::debug("⏱️ [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
+                       "ms → " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
         }
       } else if (currentGain > TCS3430AutoGain::Gain::GAIN_1X) {
-        // If integration time is already at its minimum, step the gain down.
+        // If integration time is at minimum, step the gain down
         TCS3430AutoGain::Gain newGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentGain) - 1);
         colorSensor.gain(newGain);
+        // Reset integration time to allow proportional control
+        colorSensor.integrationTime(100.0f);
         if (shouldLogDetails) {
-          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain down to " + String(static_cast<int>(newGain)) + "x");
+          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain down to " + String(static_cast<int>(newGain)) + "x, reset integration");
         }
       } else {
         if (shouldLogDetails) {
@@ -4368,28 +4376,36 @@ SensorData readOptimalSensorData(int maxAttempts) {
     }
 
 
-    // --- The "Too Dark" (Underexposed) Case ---
-    if (maxChannelValue < 25000) {
+    // --- The "Too Dark" (Underexposed) Case - PROPORTIONAL CONTROL ---
+    if (maxChannelValue < OPTIMAL_WINDOW_LOW) {
       if (shouldLogDetails) {
         Logger::debug("📈 [AUTO_EXPOSURE] Underexposed (max=" + String(maxChannelValue) + "), increasing sensitivity...");
       }
 
-      // STEP 3: Make an Aggressive Correction (Increase Sensitivity)
+      // STEP 3: Proportional Correction (Increase Sensitivity)
       float currentIntegration = colorSensor.getIntegrationTime();
       TCS3430AutoGain::Gain currentGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(colorSensor.getGain()));
 
-      if (currentIntegration < 400.0f) {
-        // First, double the integration time.
-        colorSensor.integrationTime(currentIntegration * 2.0f);
+      // Calculate proportional adjustment factor (avoid division by zero)
+      float targetRatio = maxChannelValue > 100 ? (float)OPTIMAL_TARGET_VALUE / (float)maxChannelValue : 3.0f;
+      float adjustmentFactor = min(3.0f, targetRatio * 0.8f); // Cap at 3x increase, 80% of calculated
+
+      if (currentIntegration < 300.0f) { // Reduced max integration time for calibration stability
+        // Proportional integration time increase
+        float newIntegration = min(300.0f, currentIntegration * adjustmentFactor);
+        colorSensor.integrationTime(newIntegration);
         if (shouldLogDetails) {
-          Logger::debug("⏱️ [AUTO_EXPOSURE] Doubled integration time to " + String(currentIntegration * 2.0f, 1) + "ms");
+          Logger::debug("⏱️ [AUTO_EXPOSURE] Proportional integration time: " + String(currentIntegration, 1) +
+                       "ms → " + String(newIntegration, 1) + "ms (factor: " + String(adjustmentFactor, 2) + ")");
         }
       } else if (currentGain < TCS3430AutoGain::Gain::GAIN_64X) {
-        // If integration time is maxed out, step the gain up.
+        // If integration time is maxed out, step the gain up
         TCS3430AutoGain::Gain newGain = static_cast<TCS3430AutoGain::Gain>(static_cast<int>(currentGain) + 1);
         colorSensor.gain(newGain);
+        // Reset integration time to allow proportional control
+        colorSensor.integrationTime(75.0f);
         if (shouldLogDetails) {
-          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain up to " + String(static_cast<int>(newGain)) + "x");
+          Logger::debug("⚙️ [AUTO_EXPOSURE] Stepped gain up to " + String(static_cast<int>(newGain)) + "x, reset integration");
         }
       } else {
         if (shouldLogDetails) {
@@ -4433,11 +4449,12 @@ bool validateAutoExposureSystem() {
   SensorData testData1 = readOptimalSensorData(5);
   uint16_t maxChannel1 = max({testData1.x, testData1.y, testData1.z});
 
-  if (maxChannel1 >= 25000 && maxChannel1 <= 50000) {
+  if (maxChannel1 >= OPTIMAL_WINDOW_LOW && maxChannel1 <= OPTIMAL_WINDOW_HIGH) {
     Logger::info("✅ [VALIDATION] Test 1 PASSED: Optimal exposure achieved (max=" + String(maxChannel1) + ")");
     passedTests++;
   } else {
-    Logger::warn("❌ [VALIDATION] Test 1 FAILED: Suboptimal exposure (max=" + String(maxChannel1) + ")");
+    Logger::warn("❌ [VALIDATION] Test 1 FAILED: Suboptimal exposure (max=" + String(maxChannel1) +
+                  ", target: " + String(OPTIMAL_WINDOW_LOW) + "-" + String(OPTIMAL_WINDOW_HIGH) + ")");
     allTestsPassed = false;
   }
 

@@ -1,0 +1,59 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts
+.pio/
+build/
+dist/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Analysis reports
+analysis-reports/
+__pycache__/
+
+# ESP32 specific files (not needed for web interface)
+src/main.cpp*
+lib/TCS3430AutoGain/
+lib/ColorScience/
+lib/EnvironmentalManager/
+platformio.ini
+partitions*.csv
+
+# Test files
+test/
+examples/
+
+# Scripts not needed in container
+*.ps1
+*.bat
+*.sh
+upload*
+build_*
+run-*
+setup-*
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.backup*

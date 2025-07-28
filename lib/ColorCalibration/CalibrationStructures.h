@@ -207,21 +207,32 @@ private:
         float gf = m[1][0] * normalizedX + m[1][1] * normalizedY + m[1][2] * normalizedZ;
         float bf = m[2][0] * normalizedX + m[2][1] * normalizedY + m[2][2] * normalizedZ;
 
-        // Convert to 0-255 range
+        // === ANTI-SATURATION PRE-SCALING ===
+        // Check if any channel would exceed 1.0 and scale down proportionally to prevent saturation
+        float maxChannel = fmax(fmax(rf, gf), bf);
+        if (maxChannel > 1.0f) {
+            float scaleFactor = 0.95f / maxChannel; // Scale to 95% of max to provide small safety margin
+            rf *= scaleFactor;
+            gf *= scaleFactor;
+            bf *= scaleFactor;
+            // Note: This preserves color ratios while preventing over-saturation
+        }
+
+        // Convert to 0-255 range (now guaranteed to be ≤ 255)
         float r255 = rf * 255.0f;
         float g255 = gf * 255.0f;
         float b255 = bf * 255.0f;
 
         // Smart scaling: If any channel exceeds 255, scale all proportionally
-        float maxChannel = fmax(fmax(r255, g255), b255);
-        if (maxChannel > 255.0f) {
-            float scaleFactor = 255.0f / maxChannel;
+        float maxRGB = fmax(fmax(r255, g255), b255);
+        if (maxRGB > 255.0f) {
+            float scaleFactor = 255.0f / maxRGB;
             r255 *= scaleFactor;
             g255 *= scaleFactor;
             b255 *= scaleFactor;
             // Only log when scaling actually occurs (rare)
             Serial.println("[CCM_SCALING] 🎨 RGB scaling applied: factor=" + String(scaleFactor, 3) +
-                          " (was " + String(maxChannel, 1) + ", now " + String(fmax(fmax(r255, g255), b255), 1) + ")");
+                          " (was " + String(maxRGB, 1) + ", now " + String(fmax(fmax(r255, g255), b255), 1) + ")");
         }
 
         // Apply final bounds checking (should not be needed after scaling)
@@ -288,6 +299,15 @@ private:
         float linearG = m[1][0] * normalizedX + m[1][1] * normalizedY + m[1][2] * normalizedZ;
         float linearB = m[2][0] * normalizedX + m[2][1] * normalizedY + m[2][2] * normalizedZ;
 
+        // === ANTI-SATURATION PRE-SCALING (Professional Pipeline) ===
+        float maxLinear = fmax(fmax(linearR, linearG), linearB);
+        if (maxLinear > 1.0f) {
+            float scaleFactor = 0.95f / maxLinear;
+            linearR *= scaleFactor;
+            linearG *= scaleFactor;
+            linearB *= scaleFactor;
+        }
+
         // --- Stage 6: Apply sRGB Gamma Correction ---
         float gammaR = applySRGBGamma(fmax(0.0f, fmin(1.0f, linearR)));
         float gammaG = applySRGBGamma(fmax(0.0f, fmin(1.0f, linearG)));
@@ -344,13 +364,22 @@ private:
         float linearG = m[1][0] * compensatedX + m[1][1] * compensatedY + m[1][2] * compensatedZ;
         float linearB = m[2][0] * compensatedX + m[2][1] * compensatedY + m[2][2] * compensatedZ;
 
+        // === ANTI-SATURATION PRE-SCALING (Black Compensation Pipeline) ===
+        float maxLinear = fmax(fmax(linearR, linearG), linearB);
+        if (maxLinear > 1.0f) {
+            float scaleFactor = 0.95f / maxLinear;
+            linearR *= scaleFactor;
+            linearG *= scaleFactor;
+            linearB *= scaleFactor;
+        }
+
         // --- Step 3: Normalize Linear Values ---
         // Prevent clipping by finding the maximum value and normalizing
-        float maxLinear = fmax(1.0f, fmax(linearR / 255.0f, fmax(linearG / 255.0f, linearB / 255.0f)));
+        float maxNormalized = fmax(1.0f, fmax(linearR / 255.0f, fmax(linearG / 255.0f, linearB / 255.0f)));
 
-        float normR = fmax(0.0f, fmin(1.0f, (linearR / 255.0f) / maxLinear));
-        float normG = fmax(0.0f, fmin(1.0f, (linearG / 255.0f) / maxLinear));
-        float normB = fmax(0.0f, fmin(1.0f, (linearB / 255.0f) / maxLinear));
+        float normR = fmax(0.0f, fmin(1.0f, (linearR / 255.0f) / maxNormalized));
+        float normG = fmax(0.0f, fmin(1.0f, (linearG / 255.0f) / maxNormalized));
+        float normB = fmax(0.0f, fmin(1.0f, (linearB / 255.0f) / maxNormalized));
 
         // --- Step 4: Apply sRGB Gamma Correction ---
         // Convert from linear light space to sRGB gamma space
@@ -471,8 +500,13 @@ struct TargetColors {
     static constexpr uint8_t YELLOW_G = 220;
     static constexpr uint8_t YELLOW_B = 50;
 
+    // Matrix conditioning grey point - ACTUAL TARGET GREY RGB(136,138,137)
+    static constexpr uint8_t GREY_R = 136;
+    static constexpr uint8_t GREY_G = 138;
+    static constexpr uint8_t GREY_B = 137;
+
     // REMOVED COLOR DEFINITIONS (no longer supported):
-    // GREY_R/G/B, RED_REFERENCE_R/G/B, GREEN_REFERENCE_R/G/B,
+    // RED_REFERENCE_R/G/B, GREEN_REFERENCE_R/G/B,
     // HIGHGATE_R/G/B, DOMINO_R/G/B, TRANQUIL_RETREAT_R/G/B, GREY_CABIN_R/G/B
 };
 

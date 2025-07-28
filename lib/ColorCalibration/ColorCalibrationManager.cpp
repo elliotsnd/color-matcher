@@ -516,7 +516,12 @@ bool ColorCalibrationManager::getTargetColor(const String& colorName, uint8_t& r
         return true;
     }
 
-    // REMOVED: Legacy grey color (no longer supported in 6-color system)
+    if (colorName == "grey") {
+        r = TargetColors::GREY_R;
+        g = TargetColors::GREY_G;
+        b = TargetColors::GREY_B;
+        return true;
+    }
 
     if (colorName == "yellow") {
         r = TargetColors::YELLOW_R;
