@@ -522,12 +522,12 @@ enum class CalibrationColor : uint8_t {
     RED = 2,        // Red reference (RGB: 200, 30, 30)
     GREEN = 3,      // Green reference (RGB: 30, 200, 30)
     BLUE = 4,       // Blue reference (RGB: 30, 30, 200)
-    YELLOW = 5,     // Yellow reference (RGB: 230, 220, 50)
-    NONE = 6        // No color selected
+    GREY = 5,       // Grey reference (RGB: 136, 138, 137) - matrix conditioning
+    YELLOW = 6,     // Yellow reference (RGB: 230, 220, 50)
+    NONE = 7        // No color selected
 
     // REMOVED COLORS (no longer supported):
-    // GREY = 2, HOG_BRISTLE = 5, HIGHGATE = 6, GREY_PORT = 7,
-    // DOMINO = 8, TRANQUIL_RETREAT = 9, GREY_CABIN = 10
+    // HOG_BRISTLE, HIGHGATE, GREY_PORT, DOMINO, TRANQUIL_RETREAT, GREY_CABIN
 };
 
 /**
@@ -547,12 +547,13 @@ enum class AutoCalibrationState {
  * Tracks the progress and status of the 6-color calibration process.
  */
 struct CalibrationStatus {
-    // Calibration status for 6 colors only
+    // Calibration status for 7 colors (including grey for matrix conditioning)
     bool blackCalibrated;   ///< Black reference calibrated
     bool whiteCalibrated;   ///< Vivid White calibrated (replaces oversaturated white)
     bool redCalibrated;     ///< Red reference calibrated
     bool greenCalibrated;   ///< Green reference calibrated
     bool blueCalibrated;    ///< Blue reference calibrated
+    bool greyCalibrated;    ///< Grey reference calibrated (matrix conditioning)
     bool yellowCalibrated;  ///< Yellow reference calibrated
 
     // Overall status
@@ -566,7 +567,7 @@ struct CalibrationStatus {
      */
     CalibrationStatus() : blackCalibrated(false), whiteCalibrated(false),
                          redCalibrated(false), greenCalibrated(false),
-                         blueCalibrated(false), yellowCalibrated(false),
+                         blueCalibrated(false), greyCalibrated(false), yellowCalibrated(false),
                          totalPoints(0), progress(0),
                          calibrationComplete(false), ccmValid(false) {}
 
@@ -585,8 +586,9 @@ struct CalibrationStatus {
         if (redCalibrated) count++;
         if (greenCalibrated) count++;
         if (blueCalibrated) count++;
+        if (greyCalibrated) count++;
         if (yellowCalibrated) count++;
-        return (count * 100) / 6; // 6 total colors
+        return (count * 100) / 7; // 7 total colors (including grey)
     }
 
     /**

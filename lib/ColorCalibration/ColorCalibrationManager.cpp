@@ -560,8 +560,9 @@ bool ColorCalibrationManager::startAutoCalibration() {
         CalibrationColor::RED,          // Step 3: Red reference
         CalibrationColor::GREEN,        // Step 4: Green reference
         CalibrationColor::BLUE,         // Step 5: Blue reference
-        CalibrationColor::YELLOW        // Step 6: Yellow reference
-        // REMOVED: GREY, HOG_BRISTLE, HIGHGATE, GREY_PORT, DOMINO, TRANQUIL_RETREAT, GREY_CABIN
+        CalibrationColor::GREY,         // Step 6: Grey reference (matrix conditioning)
+        CalibrationColor::YELLOW        // Step 7: Yellow reference
+        // REMOVED: HOG_BRISTLE, HIGHGATE, GREY_PORT, DOMINO, TRANQUIL_RETREAT, GREY_CABIN
     };
 
     // Initialize auto-calibration status
@@ -768,6 +769,12 @@ bool ColorCalibrationManager::getColorInfo(CalibrationColor color, String& name,
             r = TargetColors::BLUE_R;
             g = TargetColors::BLUE_G;
             b = TargetColors::BLUE_B;
+            return true;
+        case CalibrationColor::GREY:
+            name = "Grey";
+            r = TargetColors::GREY_R;
+            g = TargetColors::GREY_G;
+            b = TargetColors::GREY_B;
             return true;
         case CalibrationColor::YELLOW:
             name = "Yellow";
