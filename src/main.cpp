@@ -642,27 +642,27 @@ uint16_t getCurrentIntegrationTime() {
  * @return SensorData with optimized readings that avoid saturation
  */
 SensorData readUnifiedAutoExposure() {
-  const uint16_t SATURATION_THRESHOLD = 60000;  // 92% of 65535
-  const uint16_t OPTIMAL_TARGET = 35000;        // Target signal level
-  const uint16_t MIN_SIGNAL = 5000;             // Minimum acceptable signal
-  const int MAX_ATTEMPTS = 3;                   // Limit adjustment attempts
+  // Use existing macros from sensor_settings.h
+  const uint16_t SATURATION_LIMIT = SATURATION_THRESHOLD;  // 60000 - from sensor_settings.h
+  const uint16_t OPTIMAL_TARGET = OPTIMAL_TARGET_VALUE;    // 35000 - from sensor_settings.h
+  const uint16_t MIN_SIGNAL = 5000;                        // Minimum acceptable signal
+  const int MAX_ATTEMPTS = 3;                              // Limit adjustment attempts
 
   // Start with current settings
   SensorData data = readAveragedSensorData();
   uint16_t maxChannel = max(data.x, max(data.y, data.z));
 
   // If readings are already good, return immediately
-  if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_THRESHOLD) {
+  if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_LIMIT) {
     return data;
   }
 
-  // Perform dynamic calibration check
-  extern ColorCalibrationManager calibrationManager;
-  calibrationManager.recalibrateDarkOffsetIfNeeded(getCurrentGain(), getCurrentIntegrationTime());
+  // Dynamic calibration integration will be added when ColorCalibration library supports it
+  // For now, the unified auto-exposure system handles sensor optimization independently
 
   for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     // Check if adjustment is needed
-    if (maxChannel > SATURATION_THRESHOLD) {
+    if (maxChannel > SATURATION_LIMIT) {
       // Too bright - reduce sensitivity
       float currentIntegration = colorSensor.getIntegrationTime();
       if (currentIntegration > 25.0f) {
@@ -709,7 +709,7 @@ SensorData readUnifiedAutoExposure() {
     maxChannel = max(data.x, max(data.y, data.z));
 
     // Check if we've reached acceptable range
-    if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_THRESHOLD) {
+    if (maxChannel >= MIN_SIGNAL && maxChannel <= SATURATION_LIMIT) {
       break;
     }
   }
